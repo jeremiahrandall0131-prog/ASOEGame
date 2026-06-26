@@ -2540,7 +2540,7 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
   const NO_DRAGON_MODES = new Set(['classic','classic-hard','empire','empire-hard','classic-random','classic-hard-random','empire-random','empire-hard-random','chaos']);
   const noDragons = NO_DRAGON_MODES.has(modeKey);
   // Chaos: compute opponent lineup once on mount
-  const opponentLineup = React.useMemo(() => chaosRung ? buildChaosLineup(chaosRung.house, chaosRung.topN, chaosRung.fromBottom, chaosRung.pinned) : null, []);
+  const opponentLineup = React.useMemo(() => chaosRung ? buildChaosLineup(chaosRung.house, chaosRung.topN, chaosRung.fromBottom, chaosRung.pinned, chaosRung.members) : null, []);
   const opponentBoard = React.useMemo(() => {
     if (!opponentLineup || !mode) return null;
     return buildBoard(resolvedPositions || mode.positions).map(slot => ({
@@ -2569,6 +2569,38 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
   const cpuActive = cpuPlayers[activeIdx] || false;
   const currentBoard = gs.boards[activeIdx] || [];
   const rerollsLeft = gs.rerolls[activeIdx] ?? 0;
+
+  // ── Chaos safety net ────────────────────────────────────────────────────────
+  // Chaos has NO rerolls and must end on a legal board (Ruler & Consort opposite gender,
+  // Heir younger than both). In the supremely rare case where every character placed so far
+  // is the SAME gender and only the final slot remains, force that last roll to the OPPOSITE
+  // gender so a legal Ruler/Consort pair is possible — and restrict it to houses that still
+  // offer a character OLD enough to leave a valid (younger) Heir on the board. Together these
+  // guarantee the player can always finalize a fully legal board after a freak run of rolls.
+  const chaosSafety = (() => {
+    if (!chaosRung) return null;
+    const placed = currentBoard.filter(s => s.character).map(s => s.character);
+    const emptyCount = currentBoard.filter(s => !s.character).length;
+    if (placed.length < 1 || emptyCount !== 1) return null; // only on the very last draw
+    const g0 = placed[0].gender;
+    if (!placed.every(c => c.gender === g0)) return null;    // already mixed → no force needed
+    const youngest = Math.min(...placed.map(c => window.getEffectiveAge(c)));
+    return { forceGender: g0 === 'M' ? 'F' : 'M', youngest };
+  })();
+  const chaosSafetyCombos = (() => {
+    if (!chaosSafety) return null;
+    const blocked = window.getVariantBlockList ? window.getVariantBlockList(gs.draftedIds) : new Set(gs.draftedIds);
+    const allExcluded = new Set([...blocked, ...chaosExcludeIds]);
+    const combos = new Set();
+    for (const c of CHARACTERS) {
+      if (c.gender !== chaosSafety.forceGender) continue;
+      if (!(c.unlimited || !allExcluded.has(c.id))) continue;
+      if (noDragons && c.isDragon) continue;
+      if (window.getEffectiveAge(c) <= chaosSafety.youngest) continue; // must leave room for a younger heir
+      for (const house of (c.houses || [])) if (house !== chaosRung.house) combos.add(`${house}|${c.gender}`);
+    }
+    return combos.size ? combos : null; // if nothing qualifies, fall back to the normal pool
+  })();
   const PLAYER_COLORS = ['var(--p1)', 'var(--p2)', '#2d9c4f', '#d4a017'];
   const playerColor = PLAYER_COLORS[activeIdx] || 'var(--p1)';
   const activePlayerLabel = cpuActive ? `CPU ${getCpuNum(cpuPlayers, activeIdx)}` : `PLAYER ${activeIdx + 1}`;
@@ -3477,10 +3509,10 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
                 onRerollGender={handleRerollGender}
                 onRedraw={handleRedraw}
                 isHard={mode.isHard}
-                lockedGender={gs.lockedGender}
+                lockedGender={gs.lockedGender || (chaosSafety ? chaosSafety.forceGender : null)}
                 excludeHouse={chaosRung?.house || rerollExcludeHouse}
                 cpuSpinTrigger={cpuSpinTrigger}
-                availableCombos={getAvailableCombos(gs.draftedIds, chaosExcludeIds, chaosRung?.house)}
+                availableCombos={chaosSafetyCombos || getAvailableCombos(gs.draftedIds, chaosExcludeIds, chaosRung?.house)}
               />
             )}
         </div>
@@ -6469,7 +6501,7 @@ function LadderScreen({ onBack, onChallenge, progress }) {
   const allLineups = React.useMemo(() => {
     const result = {};
     for (const rung of rungs) {
-      result[rung.id] = buildChaosLineup(rung.house, rung.topN, rung.fromBottom, rung.pinned);
+      result[rung.id] = buildChaosLineup(rung.house, rung.topN, rung.fromBottom, rung.pinned, rung.members);
     }
     return result;
   }, []);
@@ -6482,22 +6514,25 @@ function LadderScreen({ onBack, onChallenge, progress }) {
     const r  = CHARACTERS.find(c => c.id === lineup['R']);
     const co = CHARACTERS.find(c => c.id === lineup['Con']);
     const hr = CHARACTERS.find(c => c.id === lineup['Hr']);
+    // Show the full name (minus any trailing "(epithet)") — a bare first word like "The",
+    // "Khal" or "Grey" doesn't identify The Night King, Khal Drogo or Grey Worm.
+    const pName = c => c ? c.name.replace(/\s*\([^)]*\)\s*$/, '').trim() : '?';
     return (
       <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(0,0,0,0.2)', borderRadius: 6 }}>
         <div style={{ fontSize: '0.58rem', color: 'var(--text2)', fontFamily: 'Cinzel,serif', marginBottom: 5, letterSpacing: '0.06em' }}>LINEUP PREVIEW</div>
-        <div style={{ display: 'flex', justifyContent: 'space-around', marginBottom: 4 }}>
-          <div style={{ textAlign: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-around', marginBottom: 4, gap: 6 }}>
+          <div style={{ textAlign: 'center', flex: 1 }}>
             <div style={{ fontSize: '0.55rem', color: 'var(--text2)', marginBottom: 2 }}>RULER</div>
-            <div style={{ fontSize: '0.68rem', color: '#d4a0f0', fontFamily: 'Cinzel,serif' }}>{r?.name?.split(' ')[0] || '?'}</div>
+            <div style={{ fontSize: '0.68rem', color: '#d4a0f0', fontFamily: 'Cinzel,serif' }}>{pName(r)}</div>
           </div>
-          <div style={{ textAlign: 'center' }}>
+          <div style={{ textAlign: 'center', flex: 1 }}>
             <div style={{ fontSize: '0.55rem', color: 'var(--text2)', marginBottom: 2 }}>CONSORT</div>
-            <div style={{ fontSize: '0.68rem', color: '#d4a0f0', fontFamily: 'Cinzel,serif' }}>{co?.name?.split(' ')[0] || '?'}</div>
+            <div style={{ fontSize: '0.68rem', color: '#d4a0f0', fontFamily: 'Cinzel,serif' }}>{pName(co)}</div>
           </div>
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: '0.55rem', color: 'var(--text2)', marginBottom: 2 }}>HEIR</div>
-          <div style={{ fontSize: '0.68rem', color: '#d4a0f0', fontFamily: 'Cinzel,serif' }}>{hr?.name?.split(' ')[0] || '?'}</div>
+          <div style={{ fontSize: '0.68rem', color: '#d4a0f0', fontFamily: 'Cinzel,serif' }}>{pName(hr)}</div>
         </div>
       </div>
     );
@@ -8091,6 +8126,17 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
     onEnd(result);
   }
 
+  // Quitting mid-game forfeits any Gold wagered on this game (the wager is otherwise only
+  // settled win/lose at the end, so an early exit must still cost the player their bet).
+  function handleQuit() {
+    if (wager > 0) {
+      const newSave = { ...save, gold: Math.max(0, (save.gold||0) - wager) };
+      saveCollSave(newSave);
+      onUpdate(newSave);
+    }
+    onEnd(null);
+  }
+
   const filledPositions = Object.keys(playerBoard).length;
   const T = window.COLLECTOR_TIERS || {};
 
@@ -8100,10 +8146,10 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.82)', zIndex:300, display:'flex', alignItems:'center', justifyContent:'center' }}>
           <div style={{ background:'#120d06', border:'1px solid rgba(255,215,0,0.35)', borderRadius:14, padding:'28px 24px', maxWidth:270, width:'85%', textAlign:'center', boxShadow:'0 8px 40px rgba(0,0,0,0.9)' }}>
             <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.15rem', fontWeight:700, color:'#f0c84a', marginBottom:8 }}>Quit Game?</div>
-            <div style={{ fontSize:'0.78rem', color:'var(--text2)', marginBottom:22, lineHeight:1.5 }}>All progress will be lost.</div>
+            <div style={{ fontSize:'0.78rem', color:'var(--text2)', marginBottom:22, lineHeight:1.5 }}>{wager > 0 ? `All progress will be lost — and your ${wager}G wager forfeited.` : 'All progress will be lost.'}</div>
             <div style={{ display:'flex', gap:10 }}>
               <button className="btn btn-ghost" style={{ flex:1, fontSize:'0.8rem' }} onClick={() => setConfirmQuit(false)}>Keep Playing</button>
-              <button style={{ flex:1, padding:'9px 4px', fontSize:'0.8rem', fontFamily:'Cinzel,serif', fontWeight:700, background:'#7a1010', color:'#fff', border:'1px solid #b01a1a', borderRadius:7, cursor:'pointer', letterSpacing:'0.06em' }} onClick={() => onEnd(null)}>QUIT</button>
+              <button style={{ flex:1, padding:'9px 4px', fontSize:'0.8rem', fontFamily:'Cinzel,serif', fontWeight:700, background:'#7a1010', color:'#fff', border:'1px solid #b01a1a', borderRadius:7, cursor:'pointer', letterSpacing:'0.06em' }} onClick={handleQuit}>QUIT</button>
             </div>
           </div>
         </div>

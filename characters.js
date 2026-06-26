@@ -1,4 +1,4 @@
-﻿// All ASOIAF character data â€” loaded as a plain script before the Babel React app
+// All ASOIAF character data â€” loaded as a plain script before the Babel React app
 const S = (r,h,hr,c,kg,kgc,sc,bank,ally,con) => ({R:r,H:h,Hr:hr,AC:c,KG:kg,KGC:kgc,SC:sc,Bank:bank,Ally:ally,Con:con});
 const DS = (hs,gm,moc,mol,mos,mow,sq) => ({Hs:hs,GM:gm,MoC:moc,MoL:mol,MoS:mos,MoW:mow,Sq:sq});
 
@@ -800,9 +800,13 @@ window.getEffectiveAge = function(char) {
 };
 
 // â”€â”€ Chaos Ladder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-window.buildChaosLineup = function(house, topN, fromBottom, pinned) {
+window.buildChaosLineup = function(house, topN, fromBottom, pinned, members) {
   const SK = ['R','H','Hr','AC','KG','KGC','SC','Bank','Ally','Con'];
-  const chars = window.CHARACTERS.filter(c => c.houses.includes(house));
+  // A rung may supply an explicit cross-house roster (`members`) — e.g. the "Seven Realms"
+  // showcase board — otherwise the roster is everyone in `house`.
+  const chars = (members && members.length)
+    ? members.map(id => window.CHARACTERS.find(c => c.id === id)).filter(Boolean)
+    : window.CHARACTERS.filter(c => c.houses.includes(house));
   if (chars.length === 0) return {};
   const tot = c => SK.reduce((s, k) => s + (c.scores[k] || 0), 0);
   const sorted = [...chars].sort((a, b) => tot(b) - tot(a));
@@ -825,114 +829,140 @@ window.buildChaosLineup = function(house, topN, fromBottom, pinned) {
   const age = c => window.getEffectiveAge(c);
   const sc  = (c, pos) => window.getSlotScore({ character: c, scoreKey: pos });
   const lineup = {}, used = new Set();
+  const charOf = id => id ? chars.find(c => c.id === id) : null; // search full roster (Con/Hr may come from outside the pool)
 
-  // Pre-assign pinned positions (R first so gender/age constraints resolve correctly)
+  // Hard legality check — mirrors checkBoardConstraints exactly: CONSORT must be the
+  // opposite gender of RULER, and HEIR must be strictly younger than BOTH ruler and
+  // consort. Applied to pins AND every fill so the opponent board can NEVER be illegal
+  // (no same-gender ruler/consort, no heir older than its ruler or consort).
+  const legal = (c, pos) => {
+    if (pos === 'Con') {
+      const r = charOf(lineup['R']);   if (r && c.gender === r.gender) return false;
+      const h = charOf(lineup['Hr']);  if (h && age(c) <= age(h)) return false;
+    } else if (pos === 'Hr') {
+      const r = charOf(lineup['R']);    if (r && age(c) >= age(r))  return false;
+      const co = charOf(lineup['Con']); if (co && age(c) >= age(co)) return false;
+    }
+    return true;
+  };
+  // Best unused, legal candidate for a position from a given list.
+  const pick = (list, pos) => list.filter(c => !used.has(c.id) && legal(c, pos)).sort((a, b) => sc(b, pos) - sc(a, pos))[0] || null;
+  const assign = (pos, c) => { if (c) { lineup[pos] = c.id; used.add(c.id); } };
+
+  // Pre-assign pinned positions (R first so Con/Hr resolve against it). An illegal pin
+  // (e.g. a consort the same gender as the ruler, or an heir older than them) is SKIPPED
+  // rather than forced, so a data slip can never produce an illegal board.
   if (pinned) {
     for (const pos of ['R','Con','Hr','H','AC','KGC','KG','SC','Bank','Ally']) {
       if (pinned[pos]) {
         const c = pool.find(ch => ch.id === pinned[pos]);
-        if (c) { lineup[pos] = c.id; used.add(c.id); }
+        if (c && !used.has(c.id) && legal(c, pos)) assign(pos, c);
       }
     }
   }
 
-  const positions = new Set(SK.filter(p => !lineup[p]));
-  while (positions.size > 0) {
-    let bestScore = -1, bestChar = null, bestPos = null;
-    for (const pos of positions) {
-      if (pos === 'Hr' && !lineup['R']) continue;
-      if (pos === 'Con' && !lineup['R']) continue;
-      const rulerChar   = lineup['R']   ? pool.find(c => c.id === lineup['R'])   : null;
-      const consortChar = lineup['Con'] ? pool.find(c => c.id === lineup['Con']) : null;
-      const heirChar    = lineup['Hr']  ? pool.find(c => c.id === lineup['Hr'])  : null;
-      for (const c of pool) {
-        if (used.has(c.id)) continue;
-        if (pos === 'Con' && rulerChar && c.gender === rulerChar.gender) continue;
-        if (pos === 'Con' && heirChar  && age(c) <= age(heirChar)) continue;
-        if (pos === 'Hr') {
-          if (rulerChar   && age(c) >= age(rulerChar))   continue;
-          if (consortChar && age(c) >= age(consortChar)) continue;
-        }
-        const score = sc(c, pos);
-        if (score > bestScore) { bestScore = score; bestChar = c; bestPos = pos; }
-      }
+  // Fill the CONSTRAINED slots first, falling back to the FULL house roster when the
+  // restricted pool has no valid candidate — otherwise the greedy fill below could spend
+  // the house's only opposite-gender / young-enough character on another position and
+  // strand the Consort or Heir. This guarantees every fillable position gets filled.
+  if (!lineup['R']) assign('R', pick(pool, 'R'));
+  if (!lineup['Con'] && !lineup['Hr']) {
+    // Neither pinned: choose a Consort that still leaves a valid Heir (a younger consort
+    // can otherwise strand the heir — e.g. House Frey's only women are its youngest members).
+    const r = charOf(lineup['R']);
+    const seen = new Set();
+    const cons = [...pool, ...chars]
+      .filter(c => !used.has(c.id) && legal(c, 'Con'))
+      .sort((a, b) => sc(b, 'Con') - sc(a, 'Con'))
+      .filter(c => (seen.has(c.id) ? false : seen.add(c.id)));
+    let chosenCon = null;
+    for (const con of cons) {
+      const hrExists = [...pool, ...chars].some(c => !used.has(c.id) && c.id !== con.id && (!r || age(c) < age(r)) && age(c) < age(con));
+      if (hrExists) { chosenCon = con; break; }
     }
-    if (!bestChar) {
-      for (const pos of positions) {
-        const best = pool.filter(c => !used.has(c.id)).sort((a, b) => sc(b, pos) - sc(a, pos))[0];
-        if (best) { lineup[pos] = best.id; used.add(best.id); }
-        positions.delete(pos);
-      }
-      break;
+    assign('Con', chosenCon || cons[0] || null);
+    assign('Hr', pick(pool, 'Hr') || pick(chars, 'Hr'));
+  } else {
+    if (!lineup['Con']) assign('Con', pick(pool, 'Con') || pick(chars, 'Con'));
+    if (!lineup['Hr'])  assign('Hr',  pick(pool, 'Hr')  || pick(chars, 'Hr'));
+  }
+
+  // Fill the remaining (unconstrained) positions greedily — pool first, full roster only
+  // if the pool is exhausted — so every position that CAN be filled, is.
+  const remaining = new Set(SK.filter(p => !lineup[p]));
+  while (remaining.size > 0) {
+    let best = null, bestPos = null, bestScore = -1;
+    for (const pos of remaining) {
+      const c = pick(pool, pos) || pick(chars, pos);
+      if (c) { const s = sc(c, pos); if (s > bestScore) { bestScore = s; best = c; bestPos = pos; } }
     }
-    lineup[bestPos] = bestChar.id;
-    used.add(bestChar.id);
-    positions.delete(bestPos);
+    if (!best) break; // house roster exhausted — nothing legal left to place
+    assign(bestPos, best);
+    remaining.delete(bestPos);
   }
   return lineup;
 };
 
-// Each rung's opponent board is built by buildChaosLineup(house, topN, fromBottom, pinned).
-// Rungs are ordered by ASCENDING opponent score (strictly increasing ~35→94), so each is harder
-// than the last while staying hidden until the end. Houses are spaced out — no same-house rungs
-// appear back-to-back (the sole exception is the two tiny Arryn rungs at the very bottom, whose
-// scores are too close for any other house to slot between). Each house's APEX rung features its
-// highest-ranking lord and is that house's highest/last rung (e.g. Walder Frey, Tywin, Stannis,
-// Doran, Corlys, Mance). Lower rungs use lesser lords + restricted (fromBottom) pools. Targaryen's
-// rungs are deliberately spread across the whole ladder (lesser kings & cadet branches lower down)
-// so only 'Fire Made Flesh' (Aegon I, Visenya, Daenerys) sits at the very top. Every house has >=2
-// rungs; Targaryen (6), Stark (5) and Bannermen (4) have the most.
+// Each rung's opponent board is built by buildChaosLineup(house, topN, fromBottom, pinned, members).
+// EVERY position on every board is filled with a legal character (Consort opposite gender of Ruler,
+// Heir strictly younger than both) — the lone exception is House Night's Watch, whose sworn celibate
+// brothers (all male) can have no Consort. Rungs are ordered by ASCENDING opponent score (strictly
+// increasing ~40→94), no same-house rungs appear back-to-back, and each house's APEX (highest/last)
+// rung features its top lord (Walder Frey, Tywin, Stannis, Doran, Corlys, Mance, Ned Stark, Aegon I).
+// Houses too small to field a full legal board (Arryn 7 chars, Hightower 9) are folded into the
+// 'Seven Realms' showcase rung (an explicit cross-house `members` roster). Targaryen rungs span the
+// whole ladder so only 'Fire Made Flesh' (Aegon I, Visenya, Daenerys) sits at the very top.
 window.CHAOS_RUNGS = [
-  {id:1,  house:'Targaryen',       topN:17, fromBottom:true, label:"The Dragonless",                emoji:'🐉'},
-  {id:2,  house:'Arryn',           topN:5,  fromBottom:true, label:"The Knights of the Vale",       emoji:'🦅', pinned:{R:'sweetrobin'}},
-  {id:3,  house:'Arryn',           topN:7,                   label:"As High as Honor",              emoji:'🦅', pinned:{R:'jon-arryn'}},
-  {id:4,  house:'Frey',            topN:10, fromBottom:true, label:"Lame Lothar's Schemes",         emoji:'🏰', pinned:{R:'lothar',Hr:'perwyn'}},
-  {id:5,  house:'Bannermen',       topN:16, fromBottom:true, label:"Hedge Knights and Sellswords",  emoji:'🏹'},
-  {id:6,  house:'Frey',            topN:12,                  label:"The Lord of the Crossing",      emoji:'🏰', pinned:{R:'walder-frey'}},
-  {id:7,  house:'Baratheon',       topN:10, fromBottom:true, label:"The Storm Lord's Brood",        emoji:'🦌', pinned:{R:'borros'}},
-  {id:8,  house:'Velaryon',        topN:10, fromBottom:true, label:"Oakenfist's Fleet",             emoji:'🌊', pinned:{R:'alyn-velaryon',Con:'alyssa-vel-aenys',Hr:'addam-v-drag'}},
-  {id:9,  house:'Targaryen',       topN:24, fromBottom:true, label:"Maegor's Iron Reign",           emoji:'🔥', pinned:{R:'maegor-i'}},
-  {id:10, house:'Stark',           topN:13, fromBottom:true, label:"The Northern Muster",           emoji:'🐺'},
-  {id:11, house:'Other',           topN:12, fromBottom:true, label:"Sellswords and Savages",        emoji:'⛓️', pinned:{R:'bronn',Con:'chella',Hr:'gendry'}},
-  {id:12, house:"Night's Watch",   topN:8,  fromBottom:true, label:"The Shadow Tower",              emoji:'🛡️', pinned:{R:'denys-mallister',Hr:'qhorin-nw'}},
-  {id:13, house:'Hightower',       topN:6,  fromBottom:true, label:"The Tower of Oldtown",          emoji:'🗼', pinned:{R:'daeron-daring',Con:'lynesse'}},
-  {id:14, house:"Night's Watch",   topN:21,                  label:"Sworn Brothers of the Wall",    emoji:'🛡️', pinned:{R:'jeor',Hr:'jon-snow-nw'}},
-  {id:15, house:'Tully',           topN:10, fromBottom:true, label:"Family, Duty, Honor",           emoji:'🐟', pinned:{R:'brynden-blackfish',Hr:'kermit'}},
-  {id:16, house:'Blackfyre',       topN:8,  fromBottom:true, label:"Bittersteel's Host",            emoji:'⚔️', pinned:{R:'bittersteel',Con:'calla-blackfyre',Hr:'haegon-blackfyre'}},
-  {id:17, house:'Greyjoy',         topN:8,  fromBottom:true, label:"The Drowned God's Faithful",    emoji:'🦑', pinned:{R:'balon',Con:'alannys-harlaw',Hr:'theon'}},
-  {id:18, house:'Other',           topN:17,                  label:"Black Harren's Hall",           emoji:'⛓️', pinned:{R:'harren-hoare',Hr:'timett'}},
-  {id:19, house:'Bannermen',       topN:26, fromBottom:true, label:"Lords of Harrenhal",            emoji:'🏹', pinned:{R:'lyonel-strong',Con:'rohanne-webber',Hr:'harwin-strong'}},
-  {id:20, house:'Targaryen',       topN:34, fromBottom:true, label:"The Cadet Branches",            emoji:'🐉', pinned:{R:'aegon-iv'}},
-  {id:21, house:'Hightower',       topN:9,                   label:"We Light the Way",              emoji:'🗼', pinned:{R:'otto'}},
-  {id:22, house:'Lannister',       topN:14, fromBottom:true, label:"The Laughing Lion",             emoji:'🦁', pinned:{R:'tytos-lann'}},
-  {id:23, house:'Greyjoy',         topN:12,                  label:"The Crow's Eye",                emoji:'🦑', pinned:{R:'euron'}},
-  {id:24, house:'Magic',           topN:8,  fromBottom:true, label:"Whispers of the Weirwood",      emoji:'❄️', pinned:{R:'jaqen-magic',Con:'alys-rivers-magic',Hr:'the-waif'}},
-  {id:25, house:'Baratheon',       topN:14,                  label:"The Demon of the Trident",      emoji:'🦌', pinned:{R:'robert',Con:'elenda-caron',Hr:'joffrey-bl'}},
-  {id:26, house:'Beyond the Wall', topN:8,  fromBottom:true, label:"Raiders of the Frozen Shore",   emoji:'🌲', pinned:{R:'magnar-thenn',Con:'morna-white-mask',Hr:'orell'}},
-  {id:27, house:'Blackfyre',       topN:11,                  label:"The Black Dragon Rises",        emoji:'🐉', pinned:{R:'daemon-blackfyre',Hr:'young-griff'}},
-  {id:28, house:'Velaryon',        topN:14,                  label:"The Sea Snake's Domain",        emoji:'🌊', pinned:{R:'corlys',Con:'rhaenys-qwnw',Hr:'jacaerys-vel'}},
-  {id:29, house:'Bannermen',       topN:55, fromBottom:true, label:"The Lords Bannermen",           emoji:'🏹', pinned:{R:'randyll',Con:'maege-mormont',Hr:'sam-tarly-bann'}},
-  {id:30, house:'Magic',           topN:18,                  label:"The Long Night Wakes",          emoji:'❄️', pinned:{R:'night-king',Con:'melisandre',Hr:'arya-faceless'}},
-  {id:31, house:'Lannister',       topN:18, fromBottom:true, label:"Lions of Lannisport",           emoji:'🦁', pinned:{R:'jason-lannister',Con:'johanna-lannister',Hr:'gerion'}},
-  {id:32, house:'Targaryen',       topN:44, fromBottom:true, label:"The Mad Kings",                 emoji:'🔥', pinned:{R:'aerys-ii'}},
-  {id:33, house:'Stark',           topN:18, fromBottom:true, label:"The Lord of Winterfell",        emoji:'🐺', pinned:{R:'rickard-stark',Hr:'brandon-stark'}},
-  {id:34, house:'Essos',           topN:12, fromBottom:true, label:"The Free Cities' Coin",         emoji:'🏺', pinned:{R:'racallio-ryndoon',Con:'larra-rogare',Hr:'daario'}},
-  {id:35, house:'Beyond the Wall', topN:18,                  label:"The King-Beyond-the-Wall",      emoji:'🌲', pinned:{R:'mance',Con:'val',Hr:'ygritte'}},
-  {id:36, house:'Martell',         topN:12, fromBottom:true, label:"The Red Viper's Venom",         emoji:'☀️', pinned:{R:'oberyn',Con:'nymeria-martell',Hr:'nymeria-sand'}},
-  {id:37, house:'Tyrell',          topN:8,  fromBottom:true, label:"The Reach Musters",             emoji:'🌹', pinned:{R:'luthor',Con:'alerie-ht',Hr:'mace'}},
-  {id:38, house:'Baratheon',       topN:17,                  label:"The One True King",             emoji:'🦌', pinned:{R:'stannis'}},
-  {id:39, house:'Martell',         topN:16,                  label:"Unbowed, Unbent, Unbroken",     emoji:'☀️', pinned:{R:'doran',Con:'meria',Hr:'arianne'}},
-  {id:40, house:'Tyrell',          topN:10,                  label:"The Queen of Thorns",           emoji:'🌹', pinned:{R:'willas'}},
-  {id:41, house:'Tully',           topN:17,                  label:"Lord of Riverrun",              emoji:'🐟', pinned:{R:'hoster',Hr:'edmure'}},
-  {id:42, house:'Essos',           topN:18, fromBottom:true, label:"Khalasar of the Plains",        emoji:'🐎', pinned:{R:'khal-jhaqo',Hr:'khal-pono'}},
-  {id:43, house:'Stark',           topN:22, fromBottom:true, label:"The Old Wolf of the North",     emoji:'🐺', pinned:{R:'cregan',Con:'sansa-qitn',Hr:'jon-snow-stark'}},
-  {id:44, house:'Targaryen',       topN:54, fromBottom:true, label:"The Dance of the Dragons",      emoji:'🔥', pinned:{R:'daemon-targaryen',Con:'rhaenyra',Hr:'aegon-ii'}},
-  {id:45, house:'Lannister',       topN:22,                  label:"Hear Me Roar",                  emoji:'🦁', pinned:{R:'tywin',Con:'joanna',Hr:'tyrion'}},
-  {id:46, house:'Stark',           topN:22, fromBottom:true, label:"Winter is Coming",              emoji:'🐺', pinned:{R:'eddard',Con:'catelyn',Hr:'robb'}},
-  {id:47, house:'Essos',           topN:30,                  label:"Ten Thousand Ships",            emoji:'🏺', pinned:{R:'nymeria-ny-sar',Hr:'grey-worm'}},
-  {id:48, house:'Stark',           topN:29,                  label:"The Kings of Winter",           emoji:'🐺', pinned:{R:'brandon-builder',Hr:'theon-hungry-wolf'}},
-  {id:49, house:'Bannermen',       topN:104,                 label:"The Mightiest Lords",           emoji:'🏹', pinned:{R:'benedict-justman',Con:'brienne',Hr:'lyanna-mormont'}},
-  {id:50, house:'Targaryen',       topN:75,                  label:"Fire Made Flesh",               emoji:'🔥', pinned:{R:'aegon-i',Con:'visenya',Hr:'daenerys'}},
+  {id:1, house:'Frey', topN:10, fromBottom:true, label:"Lame Lothar's Schemes", emoji:'🏰', pinned:{R:'lothar'}},
+  {id:2, house:'Targaryen', topN:17, fromBottom:true, label:"The Dragonless", emoji:'🐉'},
+  {id:3, house:'Frey', topN:12, label:"The Lord of the Crossing", emoji:'🏰', pinned:{R:'walder-frey'}},
+  {id:4, house:'Bannermen', topN:18, fromBottom:true, label:"Hedge Knights and Sellswords", emoji:'🏹'},
+  {id:5, house:'Baratheon', topN:10, fromBottom:true, label:"The Storm Lord's Brood", emoji:'🦌', pinned:{R:'borros'}},
+  {id:6, house:'Velaryon', topN:10, fromBottom:true, label:"Oakenfist's Fleet", emoji:'🌊', pinned:{R:'alyn-velaryon',Con:'alyssa-vel-aenys',Hr:'addam-v-drag'}},
+  {id:7, house:'Other', topN:12, fromBottom:true, label:"Sellswords and Savages", emoji:'⛓️', pinned:{R:'bronn',Con:'chella',Hr:'gendry'}},
+  {id:8, house:'Bannermen', topN:20, fromBottom:true, label:"The Bronze Host", emoji:'🏹', pinned:{R:'yohn-royce'}},
+  {id:9, house:"Night's Watch", topN:21, label:"Sworn Brothers of the Wall", emoji:'🛡️', pinned:{R:'jeor',Hr:'jon-snow-nw'}},
+  {id:10, house:'Greyjoy', topN:12, label:"The Crow's Eye", emoji:'🦑', pinned:{R:'euron'}},
+  {id:11, house:'Tully', topN:10, fromBottom:true, label:"Family, Duty, Honor", emoji:'🐟', pinned:{R:'brynden-blackfish'}},
+  {id:12, house:'Blackfyre', topN:8, fromBottom:true, label:"Bittersteel's Host", emoji:'⚔️', pinned:{R:'bittersteel',Con:'calla-blackfyre',Hr:'haegon-blackfyre'}},
+  {id:13, house:'Targaryen', topN:24, fromBottom:true, label:"Maegor's Iron Reign", emoji:'🔥', pinned:{R:'maegor-i'}},
+  {id:14, house:'Greyjoy', topN:8, fromBottom:true, label:"The Drowned God's Faithful", emoji:'🦑', pinned:{R:'balon',Con:'alannys-harlaw',Hr:'theon'}},
+  {id:15, house:'Other', topN:17, label:"Black Harren's Hall", emoji:'⛓️', pinned:{R:'harren-hoare',Hr:'timett'}},
+  {id:16, house:'Stark', topN:14, fromBottom:true, label:"The Northern Muster", emoji:'🐺'},
+  {id:17, house:'Bannermen', topN:26, fromBottom:true, label:"Lords of Harrenhal", emoji:'🏹', pinned:{R:'lyonel-strong',Con:'rohanne-webber',Hr:'harwin-strong'}},
+  {id:18, house:'Lannister', topN:14, fromBottom:true, label:"The Laughing Lion", emoji:'🦁', pinned:{R:'tytos-lann'}},
+  {id:19, house:'Magic', topN:8, fromBottom:true, label:"Whispers of the Weirwood", emoji:'❄️', pinned:{R:'jaqen-magic',Con:'alys-rivers-magic',Hr:'the-waif'}},
+  {id:20, house:'Baratheon', topN:14, label:"The Demon of the Trident", emoji:'🦌', pinned:{R:'robert',Con:'elenda-caron',Hr:'joffrey-bl'}},
+  {id:21, house:'Beyond the Wall', topN:8, fromBottom:true, label:"Raiders of the Frozen Shore", emoji:'🌲', pinned:{R:'magnar-thenn',Con:'morna-white-mask',Hr:'orell'}},
+  {id:22, house:'Blackfyre', topN:11, label:"The Black Dragon Rises", emoji:'🐉', pinned:{R:'daemon-blackfyre',Hr:'young-griff'}},
+  {id:23, house:'Targaryen', topN:34, fromBottom:true, label:"The Cadet Branches", emoji:'🐉', pinned:{R:'aegon-iv'}},
+  {id:24, house:'Velaryon', topN:14, label:"The Sea Snake's Domain", emoji:'🌊', pinned:{R:'corlys',Con:'rhaenys-qwnw',Hr:'jacaerys-vel'}},
+  {id:25, house:'Bannermen', topN:55, fromBottom:true, label:"The Lords Bannermen", emoji:'🏹', pinned:{R:'randyll',Con:'maege-mormont',Hr:'sam-tarly-bann'}},
+  {id:26, house:'Magic', topN:18, label:"The Long Night Wakes", emoji:'❄️', pinned:{R:'night-king',Con:'melisandre',Hr:'arya-faceless'}},
+  {id:27, house:'Lannister', topN:18, fromBottom:true, label:"Lions of Lannisport", emoji:'🦁', pinned:{R:'jason-lannister',Con:'johanna-lannister',Hr:'gerion'}},
+  {id:28, house:'Stark', topN:18, fromBottom:true, label:"The Lord of Winterfell", emoji:'🐺', pinned:{R:'rickard-stark',Hr:'brandon-stark'}},
+  {id:29, house:'Essos', topN:12, fromBottom:true, label:"The Free Cities' Coin", emoji:'🏺', pinned:{R:'racallio-ryndoon',Con:'larra-rogare',Hr:'daario'}},
+  {id:30, house:'Beyond the Wall', topN:18, label:"The King-Beyond-the-Wall", emoji:'🌲', pinned:{R:'mance',Con:'val',Hr:'ygritte'}},
+  {id:31, house:'Targaryen', topN:44, fromBottom:true, label:"The Mad Kings", emoji:'🔥', pinned:{R:'aerys-ii'}},
+  {id:32, house:'Martell', topN:12, fromBottom:true, label:"The Red Viper's Venom", emoji:'☀️', pinned:{R:'oberyn',Con:'nymeria-martell',Hr:'nymeria-sand'}},
+  {id:33, house:'Tyrell', topN:10, label:"The Queen of Thorns", emoji:'🌹', pinned:{R:'willas'}},
+  {id:34, house:'Lannister', topN:18, fromBottom:true, label:"The Grey Lion", emoji:'🦁', pinned:{R:'damon-grey-lion'}},
+  {id:35, house:'Tyrell', topN:8, fromBottom:true, label:"The Reach Musters", emoji:'🌹', pinned:{R:'luthor',Con:'alerie-ht',Hr:'mace'}},
+  {id:36, house:'Baratheon', topN:17, label:"The One True King", emoji:'🦌', pinned:{R:'stannis'}},
+  {id:37, house:'Martell', topN:16, label:"Unbowed, Unbent, Unbroken", emoji:'☀️', pinned:{R:'doran',Con:'meria',Hr:'arianne'}},
+  {id:38, house:'Targaryen', topN:50, fromBottom:true, label:"The Dance of the Dragons", emoji:'🔥', pinned:{R:'rhaenyra',Con:'daemon-targaryen',Hr:'aegon-ii'}},
+  {id:39, house:'Essos', topN:18, fromBottom:true, label:"The Great Khal", emoji:'🐎', pinned:{R:'khal-drogo'}},
+  {id:40, house:'Tully', topN:17, label:"Lord of Riverrun", emoji:'🐟', pinned:{R:'hoster'}},
+  {id:41, house:'Seven Realms', members:['otto','daeron-daring','gerold-hightower','alicent','jon-arryn','jon-snow-targ','orys','kevan','mors-martell','asha'], label:"Seven Realms", emoji:'👑', pinned:{R:'otto'}},
+  {id:42, house:'Stark', topN:22, fromBottom:true, label:"The Old Wolf of the North", emoji:'🐺', pinned:{R:'cregan',Con:'sansa-qitn',Hr:'jon-snow-stark'}},
+  {id:43, house:'Targaryen', topN:40, fromBottom:true, label:"The Last Dragon", emoji:'🐉', pinned:{R:'rhaegar'}},
+  {id:44, house:'Essos', topN:18, fromBottom:true, label:"Khalasar of the Plains", emoji:'🐎', pinned:{R:'khal-jhaqo',Hr:'khal-pono'}},
+  {id:45, house:'Lannister', topN:22, label:"Hear Me Roar", emoji:'🦁', pinned:{R:'tywin',Con:'joanna',Hr:'tyrion'}},
+  {id:46, house:'Stark', topN:22, fromBottom:true, label:"Winter is Coming", emoji:'🐺', pinned:{R:'eddard',Con:'catelyn',Hr:'robb'}},
+  {id:47, house:'Essos', topN:30, label:"Ten Thousand Ships", emoji:'🏺', pinned:{R:'nymeria-ny-sar',Hr:'grey-worm'}},
+  {id:48, house:'Stark', topN:29, label:"The Kings of Winter", emoji:'🐺', pinned:{R:'brandon-builder'}},
+  {id:49, house:'Bannermen', topN:104, label:"The Mightiest Lords", emoji:'🏹', pinned:{R:'benedict-justman',Con:'brienne',Hr:'lyanna-mormont'}},
+  {id:50, house:'Targaryen', topN:75, label:"Fire Made Flesh", emoji:'🔥', pinned:{R:'aegon-i',Con:'visenya',Hr:'daenerys'}},
 ];
 
 window.checkBoardConstraints = function(board) {
