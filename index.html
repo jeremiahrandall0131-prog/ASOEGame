@@ -8621,7 +8621,7 @@ const FirebaseSync = (() => {
 })();
 
 // ─── Account Screen ───────────────────────────────────────────────────────────
-function AccountScreen({ onBack }) {
+function AccountScreen({ onBack, startup, onContinue }) {
   const [user, setUser] = useState(() => FirebaseSync.getUser());
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(null);
@@ -8646,8 +8646,8 @@ function AccountScreen({ onBack }) {
   return (
     <div className="app screen-enter">
       <div className="nav-bar">
-        <div className="nav-side"><button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button></div>
-        <div className="nav-title" style={{ flex: 1, textAlign: 'center' }}>ACCOUNT</div>
+        <div className="nav-side">{!startup && <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>}</div>
+        <div className="nav-title" style={{ flex: 1, textAlign: 'center' }}>{startup ? 'WELCOME' : 'ACCOUNT'}</div>
         <div className="nav-side" />
       </div>
       <div className="scroll" style={{ flex: 1, padding: '24px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
@@ -8683,6 +8683,15 @@ function AccountScreen({ onBack }) {
           </>
         )}
         {status && <div style={{ fontSize: '0.72rem', color: 'var(--gold)', textAlign: 'center', marginTop: 4 }}>{status}</div>}
+        {startup && (
+          <button
+            className={user ? 'btn btn-gold' : 'btn btn-ghost'}
+            style={{ marginTop: 8, padding: '12px 28px', fontSize: '0.82rem', letterSpacing: '0.08em', minWidth: 200 }}
+            onClick={onContinue}
+          >
+            {user ? 'Continue →' : 'Skip for now →'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -8954,7 +8963,8 @@ function ToastContainer() {
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 function App() {
-  const [screen, setScreen] = useState(() => localStorage.getItem('asoe-tutorial-done') ? 'home' : 'tutorial');
+  // Always open on the account/login screen, then the opening tutorial — every launch, regardless of past plays.
+  const [screen, setScreen] = useState('account');
   const [homeInitialView, setHomeInitialView] = useState(null);
   const [gameConfig, setGameConfig] = useState(null);
   const [gameResult, setGameResult] = useState(null);
@@ -9088,6 +9098,9 @@ function App() {
     <>
       <ToastContainer />
       <div key={screen} className="screen-enter" style={{ height: '100%' }}>
+      {screen === 'account' && (
+        <AccountScreen startup onContinue={() => setScreen('tutorial')} onBack={() => setScreen('tutorial')} />
+      )}
       {screen === 'tutorial' && (
         <TutorialScreen onDone={() => setScreen('home')} />
       )}
