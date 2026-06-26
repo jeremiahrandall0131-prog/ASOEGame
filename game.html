@@ -8183,7 +8183,8 @@ const FirebaseSync = (() => {
   }
 
   async function pushSave(saveId) {
-    if (!_user || !_db || !saveId) return;
+    console.log('[Sync] pushSave called', { saveId, hasUser: !!_user, hasDb: !!_db });
+    if (!_user || !_db || !saveId) { console.warn('[Sync] pushSave aborted — missing user/db/saveId'); return; }
     try {
       const meta = getSaveMeta().find(s => s.id === saveId);
       const payload = { uid: _user.uid, saveId, updatedAt: Date.now(), createdAt: meta?.created || Date.now(), saveName: meta?.name || `Save ${saveId}` };
@@ -8201,7 +8202,8 @@ const FirebaseSync = (() => {
         try { payload.dailyCompletions[dateKey] = JSON.parse(dailyRaw); } catch {}
       }
       await _db.collection('saves').doc(_docId(saveId)).set(payload, { merge: true });
-    } catch(e) { console.warn('FirebaseSync push failed', e); }
+      console.log('[Sync] pushSave SUCCESS', _docId(saveId));
+    } catch(e) { console.warn('[Sync] pushSave FAILED', e); }
   }
 
   return { init, signIn, signOut, getUser, onAuthChange, pushSave, pushCollector };
