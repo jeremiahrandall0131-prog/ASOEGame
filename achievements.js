@@ -259,7 +259,6 @@ window.ACHIEVEMENTS = [
   { id:'ach_nw_hand',        name:'Black Hand',               icon:'🧊', rarity:'epic',      desc:'Place a Night\'s Watch character as Hand of the King.', cat:'Epic' },
   { id:'ach_nw_all5',        name:'The Sworn Brotherhood',    icon:'🧊', rarity:'legendary', desc:'Fill all 5 Classic slots with Night\'s Watch characters.', cat:'Legendary' },
   { id:'ach_jon_nw_ruler',   name:'Lord Commander Rules',     icon:'🧊', rarity:'epic',      desc:'Place the Night\'s Watch Jon Snow as Ruler.', cat:'Characters' },
-  { id:'ach_nw_3chars',      name:'Brothers in Black',        icon:'🧊', rarity:'rare',      desc:'Draft 3+ Night\'s Watch characters in a single Classic game.', cat:'Rare' },
 
   // ── ERA ACHIEVEMENTS ──────────────────────────────────────────────────────────
   { id:'ach_conquest_board', name:'The Conquest Court',       icon:'🐉', rarity:'epic',      desc:'Fill Classic with characters all born before 2 AC (Conquest era).', cat:'Epic' },
@@ -455,7 +454,6 @@ window.ACHIEVEMENTS = [
   { id:'ach_25_hard',       name:'Hardened Drafter',          icon:'💀', rarity:'rare',      desc:'Play 25 Classic Hard games.', cat:'Hard' },
   { id:'ach_50_hard',       name:'Iron Veteran',              icon:'💀', rarity:'epic',      desc:'Play 50 Classic Hard games.', cat:'Legendary' },
   { id:'ach_5_dynasty',     name:'Dynasty Initiate',          icon:'👑', rarity:'common',    desc:'Play 5 Dynasty Mode games.', cat:'Dynasty' },
-  { id:'ach_5_vs',          name:'First Rivalry',             icon:'⚔️', rarity:'common',    desc:'Play 5 Versus games.', cat:'Easy' },
   { id:'ach_50_vs',         name:'Tournament Champion',       icon:'⚔️', rarity:'epic',      desc:'Play 50 Versus games.', cat:'Legendary' },
   { id:'ach_50_cpu_g',      name:'CPU Slayer',                icon:'🤖', rarity:'rare',      desc:'Play 50 games against the CPU.', cat:'Hard' },
   { id:'ach_100_cpu_g',     name:'The Eternal Rival',         icon:'🤖', rarity:'legendary', desc:'Play 100 games against the CPU.', cat:'Legendary' },
@@ -570,7 +568,6 @@ window.ACHIEVEMENTS = [
   { id:'ach_jon_dany',      name:'Ice and Fire United',       icon:'❄️', rarity:'epic',      desc:'Place any Jon Snow AND Daenerys on the same Classic board.', cat:'Epic' },
   { id:'ach_robb_jon',      name:'Brothers of the North',     icon:'🐺', rarity:'uncommon',  desc:'Place Robb Stark AND any Jon Snow on the same board.', cat:'Uncommon' },
   { id:'ach_aegon1_visenya',name:'The Conquerors Bond',       icon:'🐉', rarity:'rare',      desc:'Place both Aegon the Conqueror AND Visenya Targaryen on the same board.', cat:'Rare' },
-  { id:'ach_jorah_lyanna_m',name:'Mormont Pride',             icon:'🐻', rarity:'rare',      desc:'Place both Jorah Mormont AND Lyanna Mormont on the same board.', cat:'Rare' },
 
   // ── NEW HOUSE PACKS CLASSIC ───────────────────────────────────────────────────
   { id:'ach_all_velaryon',  name:'The Sea Lords Court',       icon:'🌊', rarity:'rare',      desc:'Fill all 5 Classic slots with Velaryon characters exclusively.', cat:'Rare' },
@@ -650,6 +647,7 @@ window.ACHIEVEMENTS = [
 (function() {
   if (!window.CHARACTERS) return;
   const coveredIds = new Set(ACHIEVEMENTS.map(a => a.id));
+  const coveredDescs = new Set(ACHIEVEMENTS.map(a => a.desc));
 
   function rulerName(c) {
     const R = c.scores.R, n = c.name.split(' ')[0];
@@ -700,19 +698,22 @@ window.ACHIEVEMENTS = [
 
   for (const c of window.CHARACTERS) {
     const rid = 'ach_dyn_ruler_' + c.id;
-    if (!coveredIds.has(rid)) {
+    const rulerDesc = 'Place ' + c.name + ' as Ruler.';
+    if (!coveredIds.has(rid) && !coveredDescs.has(rulerDesc)) {
       window.ACHIEVEMENTS.push({ id:rid, name:rulerName(c), icon:c.gender==='F'?'👸':'♚', rarity:rulerRarity(c),
-        desc:'Place ' + c.name + ' as Ruler.', cat:'Rulers' });
+        desc:rulerDesc, cat:'Rulers' });
     }
     const hid = 'ach_dyn_hand_' + c.id;
-    if (!coveredIds.has(hid)) {
+    const handDesc = 'Place ' + c.name + ' as Hand of the King.';
+    if (!coveredIds.has(hid) && !coveredDescs.has(handDesc)) {
       window.ACHIEVEMENTS.push({ id:hid, name:handName(c), icon:'✋', rarity:handRarity(c),
-        desc:'Place ' + c.name + ' as Hand of the King.', cat:'Hands' });
+        desc:handDesc, cat:'Hands' });
     }
     const eid = 'ach_dyn_heir_' + c.id;
-    if (!coveredIds.has(eid)) {
+    const heirDesc = 'Place ' + c.name + ' as Heir.';
+    if (!coveredIds.has(eid) && !coveredDescs.has(heirDesc)) {
       window.ACHIEVEMENTS.push({ id:eid, name:heirName(c), icon:'🌱', rarity:heirRarity(c),
-        desc:'Place ' + c.name + ' as Heir.', cat:'Heirs' });
+        desc:heirDesc, cat:'Heirs' });
     }
     const aid = 'ach_dyn_any_' + c.id;
     if (!coveredIds.has(aid)) {
