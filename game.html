@@ -224,6 +224,9 @@ const AudioManager = (() => {
   let _reverb = null, _reverbBuffer = null, _dist = null, _rvGainMenu = null, _rvGainGame = null;
   let _musicPlaying = false, _gamePlaying = false, _muted = false, _initialized = false;
   let _volume = 0.85;
+  // Suppress looping theme music in the local dev/preview window (localhost) so it can't
+  // overlap with the deployed game open in another window. The live site is unaffected.
+  const _isPreview = typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)$/.test(location.hostname || '');
   let _nextLoopTime = 0, _loopTimer = null;
   let _gameNextLoopTime = 0, _gameLoopTimer = null;
   // Dynasty theme state — declared early so _hardStopDynastyMusic can be called before dynasty section
@@ -1049,6 +1052,7 @@ const AudioManager = (() => {
   }
 
   function startMenuMusic() {
+    if (_isPreview) { _stopAll(); return; } // no theme music in the local preview window
     _hardStopGameMusic();    // stop non-menu themes immediately
     _hardStopDynastyMusic();
     _hardStopCollectorMusic();
@@ -1059,16 +1063,19 @@ const AudioManager = (() => {
 
   function startGameMusic() {
     _stopAll();
+    if (_isPreview) return; // no theme music in the local preview window
     _startGameLoop(1.8);
   }
 
   function startDynastyMusic() {
     _stopAll();
+    if (_isPreview) return; // no theme music in the local preview window
     _startDynastyLoop(2.5);
   }
 
   function startCollectorMusic() {
     _stopAll();
+    if (_isPreview) return; // no theme music in the local preview window
     _startCollectorLoop(1.8);
   }
 
@@ -7198,6 +7205,7 @@ function CollectorMyDeck({ save, onUpdate }) {
   const [filterTier, setFilterTier] = React.useState('all');
   const [selected, setSelected] = React.useState(null);
   const [showAuction, setShowAuction] = React.useState(false);
+  const [identityView, setIdentityView] = React.useState(null); // selected charId in "Sort: Identity" mode
 
   const ownedCards = (save.owned||[]).map(id=>getCollCard(id)).filter(Boolean);
   let cards = [...ownedCards];
@@ -7206,6 +7214,16 @@ function CollectorMyDeck({ save, onUpdate }) {
   else if (sort === 'tier') cards.sort((a,b) => COLL_TIER_ORDER.indexOf(b.tier) - COLL_TIER_ORDER.indexOf(a.tier) || b.overall - a.overall);
   else if (sort === 'name') cards.sort((a,b) => a.name.localeCompare(b.name));
   else if (sort === 'house') cards.sort((a,b) => (a.houses?.[0]||'').localeCompare(b.houses?.[0]||'') || b.overall - a.overall);
+
+  // "Sort: Identity" — group the player's cards by character so they can drill into one
+  // character and see every variant of that identity they own.
+  const identityGroups = {};
+  cards.forEach(c => { (identityGroups[c.charId] = identityGroups[c.charId] || []).push(c); });
+  const identities = Object.keys(identityGroups).map(charId => {
+    const variants = identityGroups[charId].slice().sort((a,b) => b.overall - a.overall);
+    return { charId, variants, count: variants.length, name: (CHARACTERS.find(ch => ch.id === charId) || {}).name || variants[0].name };
+  }).sort((a,b) => a.name.localeCompare(b.name));
+  const currentIdentity = (sort === 'identity' && identityView) ? identities.find(i => i.charId === identityView) : null;
 
   function handleAuction(card) {
     if ((save.owned||[]).length <= 20) { alert('You must keep at least 20 cards in your deck!'); return; }
@@ -7240,11 +7258,12 @@ function CollectorMyDeck({ save, onUpdate }) {
           {ownedCards.length} CARDS · AVG <span style={{ color:'var(--gold)' }}>{avgOvr}</span> · DECK TIER: <CollTierBadge tier={deckTier} />
         </div>
         <div style={{ marginLeft:'auto', display:'flex', gap:4 }}>
-          <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={sort} onChange={e=>setSort(e.target.value)}>
+          <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={sort} onChange={e=>{ setSort(e.target.value); setIdentityView(null); }}>
             <option value="overall">Sort: Overall</option>
             <option value="tier">Sort: Tier</option>
-            <option value="name">Sort: Name</option>
+            <option value="name">Sort: A-Z</option>
             <option value="house">Sort: House</option>
+            <option value="identity">Sort: Identity</option>
           </select>
           <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={filterTier} onChange={e=>setFilterTier(e.target.value)}>
             <option value="all">All Tiers</option>
@@ -7279,11 +7298,47 @@ function CollectorMyDeck({ save, onUpdate }) {
       )}
 
       <div className="scroll" style={{ flex:1 }}>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
-          {cards.map(card => (
-            <CollCardDisplay key={card.id} card={card} compact onClick={() => setSelected(card)} isOwned={true} />
-          ))}
-        </div>
+        {sort === 'identity' ? (
+          currentIdentity ? (
+            <>
+              <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setIdentityView(null)}>← All Characters</button>
+                <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.82rem', color:'var(--gold)', fontWeight:700 }}>{currentIdentity.name} · {currentIdentity.count} variant{currentIdentity.count!==1?'s':''}</span>
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
+                {currentIdentity.variants.map(card => (
+                  <CollCardDisplay key={card.id} card={card} compact onClick={() => setSelected(card)} isOwned={true} />
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:8, fontStyle:'italic' }}>Tap a character to see every variant of them you own.</div>
+              {identities.length === 0 ? (
+                <div style={{ fontSize:'0.7rem', color:'var(--text2)', textAlign:'center', marginTop:30 }}>No cards to show.</div>
+              ) : (
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
+                  {identities.map(idn => (
+                    <div key={idn.charId} onClick={() => setIdentityView(idn.charId)}
+                      style={{ cursor:'pointer', border:'1px solid var(--border)', borderRadius:8, padding:'10px 12px', background:'var(--bg2)', display:'flex', flexDirection:'column', gap:4 }}>
+                      <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.76rem', color:'var(--gold)', fontWeight:700, lineHeight:1.2 }}>{idn.name}</div>
+                      <div style={{ fontSize:'0.58rem', color:'var(--text2)' }}>{idn.count} variant{idn.count!==1?'s':''} owned</div>
+                      <div style={{ display:'flex', flexWrap:'wrap', gap:'3px 5px', marginTop:2 }}>
+                        {idn.variants.map(v => <CollTierBadge key={v.id} tier={v.tier} />)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )
+        ) : (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
+            {cards.map(card => (
+              <CollCardDisplay key={card.id} card={card} compact onClick={() => setSelected(card)} isOwned={true} />
+            ))}
+          </div>
+        )}
       </div>
 
       {selected && (
@@ -9415,7 +9470,7 @@ function App() {
         />
       )}
       {screen === 'collector' && (
-        <CollectorHub onHome={nav('home')} />
+        <CollectorHub onHome={nav('home', 'modes')} />
       )}
       {screen === 'ladder' && (
         <LadderScreen
