@@ -1697,15 +1697,16 @@ function createSaveSlot(slotId) {
   const meta = getSaveMeta().filter(s => s.id !== slotId);
   meta.push({ id: slotId, created: Date.now(), lastPlayed: Date.now() });
   setSaveMeta(meta); setActiveSaveId(slotId);
+  // Register the new save in the cloud immediately so it syncs to other devices.
+  try { FirebaseSync.pushSave(slotId); } catch (e) {}
 }
-function deleteSaveSlot(slotId) {
-  // Wipe EVERY piece of data belonging to this save so nothing carries over to a future
-  // save or another slot: history, achievements, chaos progress/completions, averages,
-  // and the per-save collector deck/gold/stats.
+// Wipe EVERY piece of local data for a save (history, achievements, chaos progress/
+// completions, averages, the per-save collector deck/gold/stats, and dynamic daily_<date>
+// keys). Used both for a user-initiated delete AND when a cloud pull learns the save was
+// deleted on another device — so it does NOT touch the cloud itself.
+function removeLocalSaveData(slotId) {
   const names = ['history','achievements','chaosProgress','chaosCompletions','p1Averages','collector'];
   names.forEach(k => localStorage.removeItem(sk(slotId, k)));
-  // Sweep dynamic per-save keys (e.g. daily_<date>). Slot 1 uses bare/legacy key names;
-  // slots 2+ namespace everything under an "asoe-s<id>-" prefix.
   const prefix = (slotId === 1) ? null : `asoe-s${slotId}-`;
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const key = localStorage.key(i);
@@ -1714,6 +1715,11 @@ function deleteSaveSlot(slotId) {
   }
   setSaveMeta(getSaveMeta().filter(s => s.id !== slotId));
   if (getActiveSaveId() === slotId) localStorage.removeItem('asoe-active-save');
+}
+function deleteSaveSlot(slotId) {
+  removeLocalSaveData(slotId);
+  // Propagate the deletion to the cloud so other signed-in devices drop it too.
+  try { FirebaseSync.deleteSave(slotId); } catch (e) {}
 }
 function renameSaveSlot(slotId, name) {
   const meta = getSaveMeta();
@@ -8685,6 +8691,7 @@ const FirebaseSync = (() => {
   };
   const SYNC_KEYS = ['history', 'achievements', 'chaosProgress', 'chaosCompletions', 'p1Averages'];
   let _auth = null, _db = null, _user = null;
+  let _sessionId = null, _sessionUnsub = null;
   const _listeners = [];
 
   function init() {
@@ -8696,8 +8703,38 @@ const FirebaseSync = (() => {
     _auth.onAuthStateChanged(user => {
       _user = user;
       _listeners.forEach(fn => fn(user));
-      if (user) _pullAll();
+      if (user) { _claimSession(); _pullAll(); }
+      else { _releaseSession(); }
     });
+  }
+
+  // ── Single active session ──────────────────────────────────────────────────
+  // Only one device may be signed in at a time. On sign-in we claim the session by writing a
+  // fresh id to saves/<uid>_session and listening for changes; if another device later claims
+  // it, this device is signed out. (Stored in the existing `saves` collection — with no
+  // saveId field the save-sync ignores it, so no extra Firestore rules are required.)
+  function _sessionDocRef() { return _db.collection('saves').doc(`${_user.uid}_session`); }
+  function _newSessionId() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
+  async function _claimSession() {
+    if (!_user || !_db) return;
+    const sid = _newSessionId();
+    _sessionId = sid;
+    try { await _sessionDocRef().set({ uid: _user.uid, sessionId: sid, updatedAt: Date.now() }); } catch (e) {}
+    if (_sessionUnsub) { try { _sessionUnsub(); } catch (e) {} _sessionUnsub = null; }
+    try {
+      _sessionUnsub = _sessionDocRef().onSnapshot(doc => {
+        const d = doc.data();
+        if (d && d.sessionId && _sessionId && d.sessionId !== _sessionId) {
+          _releaseSession();
+          window.dispatchEvent(new CustomEvent('asoe-session-ended'));
+          signOut();
+        }
+      }, () => {});
+    } catch (e) {}
+  }
+  function _releaseSession() {
+    if (_sessionUnsub) { try { _sessionUnsub(); } catch (e) {} _sessionUnsub = null; }
+    _sessionId = null;
   }
 
   function onAuthChange(fn) { _listeners.push(fn); }
@@ -8718,6 +8755,7 @@ const FirebaseSync = (() => {
         const data = doc.data();
         const saveId = data.saveId;
         if (!saveId) return;
+        if (data.deleted) { removeLocalSaveData(saveId); return; } // deleted on another device → drop locally
         // Ensure save slot exists locally
         const meta = getSaveMeta();
         if (!meta.find(s => s.id === saveId)) {
@@ -8774,7 +8812,7 @@ const FirebaseSync = (() => {
     if (!_user || !_db || !saveId) return;
     try {
       const meta = getSaveMeta().find(s => s.id === saveId);
-      const payload = { uid: _user.uid, saveId, updatedAt: Date.now(), createdAt: meta?.created || Date.now(), saveName: meta?.name || `Save ${saveId}` };
+      const payload = { uid: _user.uid, saveId, deleted: false, updatedAt: Date.now(), createdAt: meta?.created || Date.now(), saveName: meta?.name || `Save ${saveId}` };
       for (const key of SYNC_KEYS) {
         const raw = localStorage.getItem(sk(saveId, key));
         if (raw !== null) {
@@ -8794,7 +8832,17 @@ const FirebaseSync = (() => {
     } catch(e) { console.warn('FirebaseSync push failed', e); }
   }
 
-  return { init, signIn, signOut, getUser, onAuthChange, pushSave, pushCollector };
+  // Tombstone a deleted save in the cloud so every other signed-in device drops it on its
+  // next pull, and clear its cloud collector data.
+  async function deleteSave(saveId) {
+    if (!_user || !_db || !saveId) return;
+    try {
+      await _db.collection('saves').doc(_docId(saveId)).set({ uid: _user.uid, saveId, deleted: true, deletedAt: Date.now() });
+      await _db.collection('collector').doc(_docId(saveId)).delete();
+    } catch(e) { console.warn('FirebaseSync delete failed', e); }
+  }
+
+  return { init, signIn, signOut, getUser, onAuthChange, pushSave, pushCollector, deleteSave };
 })();
 
 // ─── Account Screen ───────────────────────────────────────────────────────────
@@ -9169,6 +9217,7 @@ function App() {
   const [currentChaosRung, setCurrentChaosRung] = useState(boot.currentChaosRung || null);
   const [chaosEndResult, setChaosEndResult] = useState(null);
   const [syncKey, setSyncKey] = useState(0);
+  const [sessionEnded, setSessionEnded] = useState(false);
 
   useEffect(() => {
     FirebaseSync.init();
@@ -9179,10 +9228,13 @@ function App() {
         const v = parseInt(localStorage.getItem(sk(id, 'chaosProgress')) || '0', 10);
         setChaosProgress(isNaN(v) ? 0 : Math.min(v, 50));
       }
+      setSaveId(getActiveSaveId()); // a pull may have added or removed saves
       setSyncKey(k => k + 1);
     }
+    function onSessionEnded() { setSessionEnded(true); }
     window.addEventListener('asoe-cloud-sync', onSync);
-    return () => window.removeEventListener('asoe-cloud-sync', onSync);
+    window.addEventListener('asoe-session-ended', onSessionEnded);
+    return () => { window.removeEventListener('asoe-cloud-sync', onSync); window.removeEventListener('asoe-session-ended', onSessionEnded); };
   }, []);
 
   // Keep a resume snapshot of any in-progress game; clear it once the game ends or the
@@ -9307,6 +9359,19 @@ function App() {
   return (
     <>
       <ToastContainer />
+      {sessionEnded && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.92)', zIndex:99999, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+          <div style={{ background:'#120d06', border:'1px solid var(--gold)', borderRadius:14, padding:'28px 24px', maxWidth:320, width:'88%', textAlign:'center', boxShadow:'0 8px 40px rgba(0,0,0,0.9)' }}>
+            <div style={{ fontSize:'2.2rem', marginBottom:8 }}>📱</div>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.15rem', color:'var(--gold2)', fontWeight:700, marginBottom:8 }}>Signed Out</div>
+            <div style={{ fontSize:'0.8rem', color:'var(--text2)', lineHeight:1.6, marginBottom:20 }}>Your account was opened on another device. Only one device can be signed in at a time.</div>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              <button className="btn btn-gold" onClick={() => { setSessionEnded(false); try { FirebaseSync.signIn(); } catch(e){} }}>Sign In Again Here</button>
+              <button className="btn btn-ghost" onClick={() => setSessionEnded(false)}>Continue Offline</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div key={screen} className="screen-enter" style={{ height: '100%' }}>
       {screen === 'account' && (
         <AccountScreen startup onContinue={() => setScreen('tutorial')} onBack={() => setScreen('tutorial')} />
