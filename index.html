@@ -793,7 +793,7 @@ const AudioManager = (() => {
   }
 
   // ── Collector Theme: "The Vault Eternal" ─────────────────────────────────────
-  // A major · BPM 90 · Upbeat Asgardian grandeur — the highest, brightest theme in the game
+  // A major · BPM 90 · Upbeat, gilded grandeur — the highest, brightest theme in the game
   // Instruments: recorder (sine, soaring melody) · harp (cascade arpeggios) · piano bass · divine bells
   const COLL_VOL  = 0.21;
   const CBPM      = 90;
@@ -1728,7 +1728,7 @@ const SOUNDTRACK_OPTS = [
   { key: 'menu',      label: 'Menu Theme',          desc: 'Plays the menu theme everywhere' },
   { key: 'game',      label: 'Game Theme',           desc: 'Plays the in-game theme everywhere' },
   { key: 'dynasty',   label: 'Dynasty Theme',        desc: '"The Conqueror\'s Crown" plays everywhere' },
-  { key: 'collector', label: 'Collector Theme',      desc: '"The Vault Eternal" — bright Asgardian grandeur' },
+  { key: 'collector', label: 'Collector Theme',      desc: '"The Vault Eternal" — bright, gilded grandeur' },
 ];
 function SettingsButton() {
   const [open, setOpen] = useState(false);
@@ -1847,8 +1847,8 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
   const modeCards = [
     { key: 'classic-group', name: 'CLASSIC',      sub: 'Classic · Hard · Random · Fate',  img: 'Classic.png',        img2: null },
     { key: 'empire-group',  name: 'EMPIRE',       sub: 'Empire · Hard · Random · Fate',   img: 'Empire.png',         img2: null },
-    { key: 'chaos',         name: 'CHAOS LADDER', sub: chaosProgress >= 50 ? '⚔ ALL 50 RUNGS ⚔' : `RUNG ${chaosProgress + 1} OF 50`, img: 'Chaos Ladder.png', img2: null },
     { key: 'dynasty',       name: 'DYNASTY',      sub: '50 rounds · no rerolls',          img: 'Dynasty.png',        img2: 'Dynasty Second Screen.png' },
+    { key: 'chaos',         name: 'CHAOS LADDER', sub: chaosProgress >= 50 ? '⚔ ALL 50 RUNGS ⚔' : `RUNG ${chaosProgress + 1} OF 50`, img: 'Chaos Ladder.png', img2: null },
     { key: 'collectors',    name: 'COLLECTOR',    sub: 'Cards · Gold · Deck',             img: 'Collectors Mode.png', img2: null },
   ];
   // currentMode: pickedMode (set when entering setup from a sub-selector) wins;
