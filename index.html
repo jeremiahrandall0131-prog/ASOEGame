@@ -1683,6 +1683,7 @@ const LEGACY_KEYS = {
   history: 'asoe-history', achievements: 'asoe-achievements',
   chaosProgress: 'chaos-progress', chaosCompletions: 'chaos-completions',
   p1Averages: 'asoe-p1-averages',
+  collector: 'asoe-collector-v1', // slot 1 reuses the legacy global collector key; slots 2+ get prefixed, per-save collector data
 };
 function sk(saveId, name) {
   if (!saveId || saveId === 1) return LEGACY_KEYS[name] || name;
@@ -1698,8 +1699,19 @@ function createSaveSlot(slotId) {
   setSaveMeta(meta); setActiveSaveId(slotId);
 }
 function deleteSaveSlot(slotId) {
-  const keys = ['history','achievements','chaosProgress','chaosCompletions','p1Averages'];
-  keys.forEach(k => localStorage.removeItem(sk(slotId, k)));
+  // Wipe EVERY piece of data belonging to this save so nothing carries over to a future
+  // save or another slot: history, achievements, chaos progress/completions, averages,
+  // and the per-save collector deck/gold/stats.
+  const names = ['history','achievements','chaosProgress','chaosCompletions','p1Averages','collector'];
+  names.forEach(k => localStorage.removeItem(sk(slotId, k)));
+  // Sweep dynamic per-save keys (e.g. daily_<date>). Slot 1 uses bare/legacy key names;
+  // slots 2+ namespace everything under an "asoe-s<id>-" prefix.
+  const prefix = (slotId === 1) ? null : `asoe-s${slotId}-`;
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+    if (prefix ? key.startsWith(prefix) : key.startsWith('daily_')) localStorage.removeItem(key);
+  }
   setSaveMeta(getSaveMeta().filter(s => s.id !== slotId));
   if (getActiveSaveId() === slotId) localStorage.removeItem('asoe-active-save');
 }
@@ -1711,6 +1723,40 @@ function renameSaveSlot(slotId, name) {
 function touchSave(saveId) {
   const meta = getSaveMeta(); const idx = meta.findIndex(s => s.id === saveId);
   if (idx >= 0) { meta[idx].lastPlayed = Date.now(); setSaveMeta(meta); }
+}
+
+// ─── Live session: resume an in-progress game after a mobile background reload ──
+// Phones suspend and often discard backgrounded tabs to save battery; when the player
+// returns, the browser reloads the page from scratch and the in-memory game is lost.
+// We snapshot the active game to localStorage so we can drop the player straight back
+// where they were instead of the home screen. Cleared the moment a game ends or they
+// leave to any non-game screen.
+const LIVE_KEY = 'asoe-live-session';
+const LIVE_GS_KEY = 'asoe-live-gs';
+const LIVE_MAX_AGE = 24 * 60 * 60 * 1000; // ignore snapshots older than a day
+function saveLive(data) {
+  try { localStorage.setItem(LIVE_KEY, JSON.stringify({ ...data, ts: Date.now() })); } catch (e) {}
+}
+function loadLive() {
+  try {
+    const l = JSON.parse(localStorage.getItem(LIVE_KEY) || 'null');
+    if (!l || !l.ts || Date.now() - l.ts > LIVE_MAX_AGE) return null;
+    return l;
+  } catch (e) { return null; }
+}
+function saveLiveGs(modeKey, gs) {
+  try { localStorage.setItem(LIVE_GS_KEY, JSON.stringify({ modeKey, gs, ts: Date.now() })); } catch (e) {}
+}
+function loadLiveGs(modeKey) {
+  try {
+    const s = JSON.parse(localStorage.getItem(LIVE_GS_KEY) || 'null');
+    if (!s || s.modeKey !== modeKey || !s.ts || Date.now() - s.ts > LIVE_MAX_AGE) return null;
+    if (!s.gs || !Array.isArray(s.gs.boards) || !s.gs.boards.length) return null; // sanity-check shape
+    return s.gs;
+  } catch (e) { return null; }
+}
+function clearLive() {
+  try { localStorage.removeItem(LIVE_KEY); localStorage.removeItem(LIVE_GS_KEY); } catch (e) {}
 }
 
 // ─── Soundtrack override (session-only, resets on reload) ─────────────────────
@@ -2505,7 +2551,9 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
   const opponentScore = opponentBoard ? calcScore(opponentBoard) : 0;
   // Characters in the preset lineup are excluded from the player's draft pool
   const chaosExcludeIds = opponentLineup ? Object.values(opponentLineup) : [];
-  const [gs, setGs] = useState(() => makeInitialState(modeKey, numPlayers, resolvedPositions));
+  const [gs, setGs] = useState(() => loadLiveGs(modeKey) || makeInitialState(modeKey, numPlayers, resolvedPositions));
+  // Snapshot the live game on every change so a mobile background-reload resumes mid-game.
+  useEffect(() => { saveLiveGs(modeKey, gs); }, [gs]);
   const [showScores, setShowScores] = useState(initShowScores);
   const [viewTab, setViewTab] = useState('roll');
   const [dynastyBoardGroup, setDynastyBoardGroup] = useState('House');
@@ -6709,7 +6757,9 @@ function checkChaosAchievements(rung, newProgress, saveId) {
 
 // ─── COLLECTOR MODE ──────────────────────────────────────────────────────────
 
-const COLL_KEY = 'asoe-collector-v1';
+// Collector data is stored PER SAVE (slot 1 keeps the legacy 'asoe-collector-v1' key
+// via LEGACY_KEYS; slots 2+ get 'asoe-s<id>-collector'). Never share across saves.
+function collKey() { return sk(getActiveSaveId(), 'collector'); }
 const COLL_POS = [
   { id:'ruler',        label:'Ruler' },
   { id:'consort',      label:'Consort' },
@@ -6737,12 +6787,12 @@ function collDefaultSave() {
            stats:{ games:0, wins:0, totalScore:0, cardPlays:{}, cardScores:{} } };
 }
 function loadCollSave() {
-  try { return { ...collDefaultSave(), ...JSON.parse(localStorage.getItem(COLL_KEY)||'{}') }; }
+  try { return { ...collDefaultSave(), ...JSON.parse(localStorage.getItem(collKey())||'{}') }; }
   catch { return collDefaultSave(); }
 }
 function saveCollSave(s) {
   const stamped = { ...s, updatedAt: Date.now() };
-  localStorage.setItem(COLL_KEY, JSON.stringify(stamped));
+  localStorage.setItem(collKey(), JSON.stringify(stamped));
   FirebaseSync.pushCollector();
 }
 
@@ -8571,23 +8621,27 @@ const FirebaseSync = (() => {
   async function pushCollector() {
     if (!_user || !_db) return;
     try {
-      const raw = localStorage.getItem(COLL_KEY);
+      const sid = getActiveSaveId() || 1;
+      const raw = localStorage.getItem(collKey());
       if (!raw) return;
       const data = JSON.parse(raw);
-      await _db.collection('collector').doc(_user.uid).set({ uid: _user.uid, updatedAt: Date.now(), ...data }, { merge: true });
+      // Per-save cloud doc so one save's collection never overwrites another's.
+      await _db.collection('collector').doc(_docId(sid)).set({ uid: _user.uid, saveId: sid, updatedAt: Date.now(), ...data }, { merge: true });
     } catch(e) { console.warn('FirebaseSync collector push failed', e); }
   }
 
   async function _pullCollector() {
     if (!_user || !_db) return;
     try {
-      const doc = await _db.collection('collector').doc(_user.uid).get();
+      const sid = getActiveSaveId() || 1;
+      const localKey = collKey();
+      const doc = await _db.collection('collector').doc(_docId(sid)).get();
       if (doc.exists) {
-        const { uid, updatedAt, ...data } = doc.data();
-        const local = JSON.parse(localStorage.getItem(COLL_KEY) || '{}');
+        const { uid, saveId, updatedAt, ...data } = doc.data();
+        const local = JSON.parse(localStorage.getItem(localKey) || '{}');
         // Cloud wins if it has a later updatedAt, otherwise keep local
         if (!local.updatedAt || updatedAt > (local.updatedAt || 0)) {
-          localStorage.setItem(COLL_KEY, JSON.stringify({ ...collDefaultSave(), ...data }));
+          localStorage.setItem(localKey, JSON.stringify({ ...collDefaultSave(), ...data }));
         }
       }
     } catch(e) { console.warn('FirebaseSync collector pull failed', e); }
@@ -8963,10 +9017,24 @@ function ToastContainer() {
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 function App() {
-  // Always open on the account/login screen, then the opening tutorial — every launch, regardless of past plays.
-  const [screen, setScreen] = useState('account');
+  // Resume an in-progress game if the page was reloaded mid-game (e.g. a phone discarded the
+  // backgrounded tab); otherwise open on the account/login screen, then the opening tutorial.
+  const bootRef = useRef();
+  if (!bootRef.current) {
+    const l = loadLive();
+    let b = { screen: 'account' };
+    if (l && l.screen === 'game' && l.gameConfig) b = { screen: 'game', gameConfig: l.gameConfig };
+    else if (l && l.screen === 'chaosGame' && l.chaosRungId != null) {
+      const rung = (window.CHAOS_RUNGS || []).find(r => r.id === l.chaosRungId);
+      if (rung) b = { screen: 'chaosGame', currentChaosRung: rung };
+    }
+    else if (l && l.screen === 'collector') b = { screen: 'collector' };
+    bootRef.current = b;
+  }
+  const boot = bootRef.current;
+  const [screen, setScreen] = useState(boot.screen);
   const [homeInitialView, setHomeInitialView] = useState(null);
-  const [gameConfig, setGameConfig] = useState(null);
+  const [gameConfig, setGameConfig] = useState(boot.gameConfig || null);
   const [gameResult, setGameResult] = useState(null);
   const [newAchievements, setNewAchievements] = useState([]);
   const [saveId, setSaveId] = useState(() => getActiveSaveId());
@@ -8975,7 +9043,7 @@ function App() {
     const v = parseInt(localStorage.getItem(sk(id, 'chaosProgress')) || '0', 10);
     return isNaN(v) ? 0 : Math.min(v, 50);
   });
-  const [currentChaosRung, setCurrentChaosRung] = useState(null);
+  const [currentChaosRung, setCurrentChaosRung] = useState(boot.currentChaosRung || null);
   const [chaosEndResult, setChaosEndResult] = useState(null);
   const [syncKey, setSyncKey] = useState(0);
 
@@ -8993,6 +9061,15 @@ function App() {
     window.addEventListener('asoe-cloud-sync', onSync);
     return () => window.removeEventListener('asoe-cloud-sync', onSync);
   }, []);
+
+  // Keep a resume snapshot of any in-progress game; clear it once the game ends or the
+  // player leaves to a non-game screen (home, results, ladder, etc.).
+  useEffect(() => {
+    if (screen === 'game' && gameConfig) saveLive({ screen, gameConfig });
+    else if (screen === 'chaosGame' && currentChaosRung) saveLive({ screen, chaosRungId: currentChaosRung.id });
+    else if (screen === 'collector') saveLive({ screen });
+    else clearLive();
+  }, [screen, gameConfig, currentChaosRung]);
 
   function handleSaveChange(newId, goTo) {
     if (goTo) setHomeInitialView(goTo);
