@@ -8194,7 +8194,8 @@ const FirebaseSync = (() => {
           try { payload[key] = JSON.parse(raw); } catch { payload[key] = raw; }
         }
       }
-      if (Array.isArray(payload.history)) payload.history = payload.history.slice(-50);
+      // Firestore forbids nested arrays — serialize history as a JSON string
+      if (Array.isArray(payload.history)) payload.history = JSON.stringify(payload.history.slice(-50));
       const dateKey = getDailyDateKey();
       const dailyRaw = localStorage.getItem(sk(saveId, `daily_${dateKey}`));
       if (dailyRaw) {
