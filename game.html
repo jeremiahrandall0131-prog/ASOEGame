@@ -9175,8 +9175,18 @@ function App() {
   }
 
   function handleGameEnd(result) {
-    if (!result) { applyNavMusic(); setScreen('home'); return; }
+    // Returning to the carousel (not the title/main menu) after a game; quitting too.
+    if (!result) { applyNavMusic(); setHomeInitialView('modes'); setScreen('home'); return; }
     let unlocked = [];
+    // A completed game legitimizes the save: make sure it's registered in the save list and
+    // marked as the most-recently-played slot so CONTINUE/LOAD reliably show it.
+    if (saveId) {
+      const meta = getSaveMeta();
+      if (!meta.find(s => s.id === saveId)) {
+        meta.push({ id: saveId, created: Date.now(), lastPlayed: Date.now(), name: `Save ${saveId}` });
+        setSaveMeta(meta); setActiveSaveId(saveId);
+      } else touchSave(saveId);
+    }
     try {
       const histKey = sk(saveId, 'history');
       const existing = JSON.parse(localStorage.getItem(histKey) || '[]');
@@ -9279,7 +9289,7 @@ function App() {
             else setScreen('ladder');
           }}
           onLadder={nav('ladder')}
-          onHome={nav('home')}
+          onHome={nav('home', 'modes')}
         />
       )}
       {screen === 'game' && gameConfig && (
@@ -9301,7 +9311,7 @@ function App() {
           showScores={gameConfig.showScores}
           newAchievements={newAchievements}
           saveId={saveId}
-          onHome={nav('home')}
+          onHome={nav('home', 'modes')}
           onPlayAgain={() => { if (gameConfig?.mode === 'dynasty') AudioManager.startDynastyMusic(); else AudioManager.startGameMusic(); setGameResult(null); setNewAchievements([]); setScreen('game'); }}
         />
       )}
