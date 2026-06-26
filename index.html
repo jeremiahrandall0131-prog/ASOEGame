@@ -8120,7 +8120,7 @@ const FirebaseSync = (() => {
   function getUser() { return _user; }
   function signIn() {
     const provider = new firebase.auth.GoogleAuthProvider();
-    return _auth.signInWithRedirect(provider);
+    return _auth.signInWithPopup(provider);
   }
   function signOut() { return _auth.signOut(); }
 
