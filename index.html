@@ -1853,10 +1853,11 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
   ];
   // currentMode: pickedMode (set when entering setup from a sub-selector) wins;
   // for classic-group/empire-group pages use the first variant so sidebar sub-views work
+  const curCard = modeCards[modePage] || modeCards[0]; // guard against out-of-range page
   const currentMode = pickedMode
-    || (modeCards[modePage].key === 'classic-group' ? classicModes[0] : null)
-    || (modeCards[modePage].key === 'empire-group'  ? empireModes[0]  : null)
-    || modeCards[modePage];
+    || (curCard.key === 'classic-group' ? classicModes[0] : null)
+    || (curCard.key === 'empire-group'  ? empireModes[0]  : null)
+    || curCard;
 
   const goSub = (v) => { setViewFrom(view === 'setup' ? 'setup' : 'modes'); setView(v); };
   const IconSidebar = () => (
@@ -2351,7 +2352,7 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
   }
 
   // ── Mode carousel (default) ───────────────────────────────────────────────
-  const mode = modeCards[modePage];
+  const mode = modeCards[modePage] || modeCards[0]; // guard against out-of-range page
   const handlePlay = () => {
     if (mode.key === 'classic-group') { setView('classic-select'); return; }
     if (mode.key === 'empire-group')  { setView('empire-select');  return; }
@@ -2370,7 +2371,7 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
 
       {/* Huge side arrows */}
       {modePage > 0 && (
-        <button onClick={() => setModePage(p => p - 1)} style={{
+        <button onClick={() => setModePage(p => Math.max(0, p - 1))} style={{
           position: 'absolute', left: '10%', top: '50%', transform: 'translateY(-50%)', zIndex: 10,
           background: 'none', border: 'none', cursor: 'pointer',
           fontSize: '8rem', lineHeight: 1, color: 'rgba(240,200,74,0.9)',
@@ -2378,7 +2379,7 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
         }}>‹</button>
       )}
       {modePage < modeCards.length - 1 && (
-        <button onClick={() => setModePage(p => p + 1)} style={{
+        <button onClick={() => setModePage(p => Math.min(modeCards.length - 1, p + 1))} style={{
           position: 'absolute', right: '14%', top: '50%', transform: 'translateY(-50%)', zIndex: 10,
           background: 'none', border: 'none', cursor: 'pointer',
           fontSize: '8rem', lineHeight: 1, color: 'rgba(240,200,74,0.9)',
@@ -2570,12 +2571,31 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
     return combos;
   }
 
-  // Roll a random house+gender exactly like the player's slot machine does, restricted to non-empty pools
+  // Roll a house+gender restricted to non-empty pools. For higher difficulty the
+  // CPU's spin is biased toward houses whose best available character best fills
+  // one of its still-empty slots — a moderate weighting (with a base weight) so
+  // the spin stays varied and the game beatable, not a deterministic best-pick.
   function cpuRandomRoll() {
     const combos = getAvailableCombos(gs.draftedIds, chaosExcludeIds, chaosRung?.house);
     const available = HOUSES.filter(h => (!chaosRung || h.name !== chaosRung.house) && (combos.has(`${h.name}|M`) || combos.has(`${h.name}|F`)));
     if (available.length === 0) return null;
-    const h = available[Math.floor(Math.random() * available.length)];
+    const board = gs.boards[gs.activePlayerIdx] || [];
+    const emptySlots = board.filter(s => !s.character && !s.dragonOnly);
+    const blocked = window.getVariantBlockList ? window.getVariantBlockList(gs.draftedIds) : new Set(gs.draftedIds);
+    const houseBest = h => {
+      if (!emptySlots.length) return 1;
+      let best = 0;
+      const chars = CHARACTERS.filter(c => (c.houses||[]).includes(h.name) && (c.unlimited || !blocked.has(c.id)) && (!noDragons || !c.isDragon));
+      for (const c of chars) for (const sl of emptySlots) {
+        const sc = getSlotScore({ character: c, scoreKey: sl.scoreKey }) * (SLOT_PRIORITY[sl.scoreKey] || 1);
+        if (sc > best) best = sc;
+      }
+      return best;
+    };
+    const weights = available.map(h => houseBest(h) + 8); // +8 base keeps weaker houses in play
+    const total = weights.reduce((a, b) => a + b, 0);
+    let r = Math.random() * total, h = available[available.length - 1];
+    for (let i = 0; i < available.length; i++) { r -= weights[i]; if (r <= 0) { h = available[i]; break; } }
     const hasM = combos.has(`${h.name}|M`), hasF = combos.has(`${h.name}|F`);
     const g = h.alwaysMale ? 'M' : h.noGenderRoll ? null : (hasM && hasF ? (Math.random() < 0.5 ? 'M' : 'F') : hasM ? 'M' : 'F');
     return { house: h.name, gender: g, emoji: h.emoji, color: h.color };
@@ -5865,7 +5885,6 @@ function checkAchievements(gameData, allHistory, saveId) {
       ach_dynasty_25_games:      allHistory.filter(g => g.modeKey === 'dynasty').length >= 25,
       ach_dynasty_50_games:      allHistory.filter(g => g.modeKey === 'dynasty').length >= 50,
       // New dynasty achievements
-      ach_dynasty_5_games:       allHistory.filter(g => g.modeKey === 'dynasty').length >= 5,
       ach_dynasty_200:           dynastyScore >= 200,
       ach_dynasty_210:           dynastyScore >= 210,
       ach_dynasty_council_20:    dynGroupScore('Council') >= 20,
@@ -5901,32 +5920,32 @@ function checkAchievements(gameData, allHistory, saveId) {
     });
   }
 
-  // Auto-check dynamically generated achievements
+  // Auto-check dynamically generated achievements. The id encodes one charId,
+  // but characters that share a display name collapse to a single achievement,
+  // so we match by NAME — any variant (e.g. any Jon Snow) earns it.
+  const _nameById = window.__achNameById || (window.__achNameById =
+    Object.fromEntries((window.CHARACTERS || []).map(c => [c.id, c.name])));
+  const _nm = cid => _nameById[cid];
   for (const a of ACHIEVEMENTS) {
     if (a.id.startsWith('ach_dyn_ruler_')) {
-      const cid = a.id.slice('ach_dyn_ruler_'.length);
-      checks[a.id] = slotCharEither('ruler')?.id === cid;
+      checks[a.id] = !!slotCharEither('ruler') && slotCharEither('ruler').name === _nm(a.id.slice('ach_dyn_ruler_'.length));
     } else if (a.id.startsWith('ach_dyn_hand_')) {
-      const cid = a.id.slice('ach_dyn_hand_'.length);
-      checks[a.id] = slotCharEither('hand')?.id === cid;
+      checks[a.id] = !!slotCharEither('hand') && slotCharEither('hand').name === _nm(a.id.slice('ach_dyn_hand_'.length));
     } else if (a.id.startsWith('ach_dyn_heir_')) {
-      const cid = a.id.slice('ach_dyn_heir_'.length);
-      checks[a.id] = slotCharEither('heir')?.id === cid;
+      checks[a.id] = !!slotCharEither('heir') && slotCharEither('heir').name === _nm(a.id.slice('ach_dyn_heir_'.length));
     } else if (a.id.startsWith('ach_dyn_any_')) {
-      const cid = a.id.slice('ach_dyn_any_'.length);
-      checks[a.id] = chars.some(c => c.id === cid);
+      const nm = _nm(a.id.slice('ach_dyn_any_'.length));
+      checks[a.id] = chars.some(c => c.name === nm);
     } else if (a.id.startsWith('ach_dyn_consort_')) {
-      const cid = a.id.slice('ach_dyn_consort_'.length);
-      checks[a.id] = slotChar('d-consort')?.id === cid;
+      checks[a.id] = slotChar('d-consort')?.name === _nm(a.id.slice('ach_dyn_consort_'.length));
     } else if (a.id.startsWith('ach_dyn_gm_')) {
-      const cid = a.id.slice('ach_dyn_gm_'.length);
-      checks[a.id] = slotChar('d-gm')?.id === cid;
+      checks[a.id] = slotChar('d-gm')?.name === _nm(a.id.slice('ach_dyn_gm_'.length));
     } else if (a.id.startsWith('ach_dyn_warden_')) {
-      const cid = a.id.slice('ach_dyn_warden_'.length);
-      checks[a.id] = ['d-warden-1','d-warden-2','d-warden-3','d-warden-4'].some(pid => slotChar(pid)?.id === cid);
+      const nm = _nm(a.id.slice('ach_dyn_warden_'.length));
+      checks[a.id] = ['d-warden-1','d-warden-2','d-warden-3','d-warden-4'].some(pid => slotChar(pid)?.name === nm);
     } else if (a.id.startsWith('ach_dyn_army_')) {
-      const cid = a.id.slice('ach_dyn_army_'.length);
-      checks[a.id] = isDynasty && ['d-army-cmd','d-kg-cmd'].some(pid => slotChar(pid)?.id === cid);
+      const nm = _nm(a.id.slice('ach_dyn_army_'.length));
+      checks[a.id] = isDynasty && ['d-army-cmd','d-kg-cmd'].some(pid => slotChar(pid)?.name === nm);
     }
   }
 
@@ -6072,9 +6091,11 @@ function checkCollectorAchievements(newSave, result) {
   return newlyUnlocked;
 }
 
-const HAND_CRAFTED_CATS = ['Easy','Medium','Hard','Uncommon','Rare','Epic','Legendary','Dynasty','Characters','Rulers','Hands','Heirs','Chaos Ladder','Collector'];
+const HAND_CRAFTED_CATS = ['Easy','Medium','Hard','Uncommon','Rare','Epic','Legendary','Dynasty','Dynasty Consorts','Dynasty Council','Dynasty Army','Characters','Rulers','Hands','Heirs','Chaos Ladder','Collector'];
 const CAT_ORDER = Object.fromEntries(HAND_CRAFTED_CATS.map((c, i) => [c, i]));
-const DISPLAY_ACHIEVEMENTS = ACHIEVEMENTS.filter(a => !a.id.startsWith('ach_dyn_'));
+// Every achievement is viewable, paginated 20/page and filterable by category —
+// including the per-character Rulers/Hands/Heirs/Characters/Dynasty achievements.
+const DISPLAY_ACHIEVEMENTS = ACHIEVEMENTS;
 
 const RARITY_SORT = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4 };
 const DISPLAY_ACHIEVEMENTS_SORTED = [...DISPLAY_ACHIEVEMENTS].sort((a, b) => {
@@ -6091,6 +6112,7 @@ function AchievementsScreen({ onBack, embedded, saveId }) {
   const [showCompletedOnly, setShowCompletedOnly] = useState(false);
   const PAGE_SIZE = 20;
   const [page, setPage] = useState(0);
+  const [search, setSearch] = useState('');
 
   // Special tabs: __unlocked__ shows earned, __locked__ shows unearned
   const isUnlockedTab = activeCat === '__unlocked__';
@@ -6103,12 +6125,16 @@ function AchievementsScreen({ onBack, embedded, saveId }) {
         ? DISPLAY_ACHIEVEMENTS_SORTED
         : DISPLAY_ACHIEVEMENTS_SORTED.filter(a => a.cat === activeCat);
   const filtered = (!isUnlockedTab && !isLockedTab && showCompletedOnly) ? base.filter(a => !!unlocked[a.id]) : base;
+  // Character / text search — matches achievement name or description (the desc
+  // contains the character name, e.g. "Place Jon Snow as Ruler").
+  const q = search.trim().toLowerCase();
+  const searched = q ? filtered.filter(a => a.name.toLowerCase().includes(q) || a.desc.toLowerCase().includes(q)) : filtered;
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalPages = Math.ceil(searched.length / PAGE_SIZE);
+  const paginated = searched.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   const total = ACHIEVEMENTS.length;
-  const earned = Object.keys(unlocked).length;
+  const earned = allUnlockedAchs.length; // only currently-valid achievements (ignore stale/removed ids)
 
   const rarityColor = { legendary: '#f0c44a', epic: '#a855f7', rare: '#3b82f6', uncommon: '#22c55e', common: 'var(--text2)' };
 
@@ -6130,6 +6156,13 @@ function AchievementsScreen({ onBack, embedded, saveId }) {
             )}
             <div style={{ fontSize: '0.7rem', color: 'var(--text2)' }}>{earned}/{total}</div>
           </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10, alignItems: 'center' }}>
+          <input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }}
+            placeholder="🔍 Search by character or achievement…"
+            style={{ flex: 1, fontSize: '0.7rem', padding: '6px 10px', background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 4, boxSizing: 'border-box' }} />
+          {q && <span style={{ fontSize: '0.6rem', color: 'var(--text2)', whiteSpace: 'nowrap' }}>{searched.length} found</span>}
+          {q && <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.6rem' }} onClick={() => { setSearch(''); setPage(0); }}>Clear</button>}
         </div>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 10 }}>
           {['All', ...cats].map(c => (
@@ -6682,8 +6715,8 @@ const COLL_POS = [
   { id:'consort',      label:'Consort' },
   { id:'heir',         label:'Heir' },
   { id:'hand',         label:'Hand' },
-  { id:'armyCmd',      label:'Army Cmd' },
-  { id:'kgCmd',        label:'KG Cmd' },
+  { id:'armyCmd',      label:'Army Commander' },
+  { id:'kgCmd',        label:'Kingsguard Commander' },
   { id:'kingsguard',   label:'Kingsguard' },
   { id:'smallCouncil', label:'Small Council' },
   { id:'ally',         label:'Ally' },
@@ -6826,6 +6859,19 @@ function CollTierBadge({ tier, size='sm' }) {
   );
 }
 
+// Reusable progress bar. Pass `pct`+`color` for a single bar, or `segments`
+// ([{pct,color}]) for a stacked composition bar.
+function CollBar({ pct, color='var(--gold)', height=7, segments }) {
+  const segs = segments || [{ pct: Math.max(0, Math.min(100, pct||0)), color }];
+  return (
+    <div style={{ width:'100%', height, background:'var(--bg3)', borderRadius:height, overflow:'hidden', display:'flex', border:'1px solid var(--border)' }}>
+      {segs.map((s,i) => (s.pct > 0 ? (
+        <div key={i} style={{ width:`${Math.max(0,Math.min(100,s.pct))}%`, height:'100%', background:s.color, transition:'width 0.4s ease' }} />
+      ) : null))}
+    </div>
+  );
+}
+
 function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
   if (!card) return null;
   const T = (window.COLLECTOR_TIERS||{})[card.tier] || { color:'#888', bg:'#111', border:'#333' };
@@ -6899,10 +6945,10 @@ const TUTORIAL_STEPS = [
   { title:'Welcome to Collector Mode!', body:'Collector Mode lets you build a deck of thousands of unique Character Cards — exclusive variants not found in any other game mode. Grow your collection and compete against the CPU!' },
   { title:'Card Tiers', body:'Every card has a tier: Starter (green), Uncommon (blue), Rare (orange), Hero (purple), Legendary (black), or Mythic (red). Each card\'s Overall rating (0–100) determines its tier. Higher tiers mean more powerful cards.' },
   { title:'Your Deck', body:'You start with 20 cards from your Starting Deck Pull (18 Starters + 2 Uncommons). You must always have at least 20 cards. Grow your deck through Daily Pulls, the Store, and Win Pulls!' },
-  { title:'How Games Work', body:'Each game you Draw Fate — a random card from your deck — and place it in one of 10 positions: Ruler, Consort, Heir, Hand, Army Commander, KG Commander, Kingsguard, Small Council, Ally, and Bank. Fill all 10 positions to finish!' },
+  { title:'How Games Work', body:'You and the CPU take turns drafting a court. Each turn you Draw Fate — a random card from your deck — and place it in one of 10 positions: Ruler, Consort, Heir, Hand, Army Commander, Kingsguard Commander, Kingsguard, Small Council, Ally, and Bank. Every card shows its score for each position, so place it where it fits best. Fill all 10 to finish!' },
   { title:'Rerolls', body:'Don\'t like your Fate draw? Spend a Reroll to draw again! You can use up to 3 rerolls per game. Buy more Rerolls in the Store for 20 Gold each. You start with 0 — use your starting Gold wisely!' },
-  { title:'The CPU', body:'The CPU plays from the same tier as your deck\'s average Overall. The higher your deck, the tougher the CPU. The CPU uses house/gender rolls (like Classic Mode) with 3 rerolls to optimize its board.' },
-  { title:'Earning Gold', body:'Complete a game: +5 Gold. Win: +10 Gold. Win by 5+: +15 Gold. Win by 10+: +30 Gold. Reach 90+ score: +50 Gold. Score a perfect 100: +500 Gold! You can also Wager up to 100 Gold per game.' },
+  { title:'The CPU', body:'There is no preset score to beat — the CPU builds its court alongside you, one card at a time. Each turn it draws Fate from the SAME tier you just drew, choosing from EVERY character in that tier. It will never draft a character already on either board (except infinitely-duplicatable ones), and it always places its card in its best position. Outscore it across all 10 positions to win!' },
+  { title:'Earning Gold', body:'Complete a game: +5 Gold. Win: +10 (by 5+: +15 · by 10+: +30). Score bonus — the better your cards fit their positions, the higher you score: 60+ → +20 · 70+ → +40 · 80+ → +75 · 90+ → +150 · a perfect 100 → +500 Gold! You can also Wager up to 100 Gold per game.' },
   { title:'Win Pulls', body:'After every win, you get a Win Pull — the 10 characters the CPU played are each randomly turned into a card variant of some tier. Pick ONE card to add to your deck for free!' },
   { title:'The Store & Daily', body:'Visit the Store for the rotating Showcase (5 cards every 24h), direct Buy Cards (Starter/Uncommon/Rare), Lottery spins, Upgrades, and Rerolls. Use the Daily sections for free card pulls and Gold coin rewards every 24 hours!' },
   { title:'Auction', body:'Don\'t need a card? Auction it for Gold! Starter: 15G · Uncommon: 25G · Rare: 40G · Hero: 75G · Legendary: 150G · Mythic: 300G. Auctioned cards re-enter the available pool. You must keep at least 20 cards in your deck.' },
@@ -7066,6 +7112,18 @@ function CollectorMyDeck({ save, onUpdate }) {
   const avgOvr = ownedCards.length ? Math.floor(ownedCards.reduce((s,c)=>s+c.overall,0)/ownedCards.length*10)/10 : 0;
   const deckTier = deckTierLabel(save.owned);
 
+  // Deck composition + progress toward the next deck tier
+  const comp = {}; COLL_TIER_ORDER.forEach(t=>comp[t]=0);
+  ownedCards.forEach(c=>{ if(comp[c.tier]!==undefined) comp[c.tier]++; });
+  const totalOwned = ownedCards.length || 1;
+  const compSegments = COLL_TIER_ORDER.filter(t=>comp[t]>0).map(t=>({ pct: comp[t]/totalOwned*100, color:(T[t]||{}).color||'#888' }));
+  const TIER_FLOOR = { starter:40, uncommon:50, rare:60, hero:70, legendary:80, mythic:90 };
+  const TIER_NEXT  = { starter:'uncommon', uncommon:'rare', rare:'hero', hero:'legendary', legendary:'mythic', mythic:null };
+  const nextTier = TIER_NEXT[deckTier];
+  const curFloor = TIER_FLOOR[deckTier]||40;
+  const nextFloor = nextTier ? TIER_FLOOR[nextTier] : 100;
+  const tierProgress = nextTier ? Math.max(0, Math.min(100, (avgOvr-curFloor)/(nextFloor-curFloor)*100)) : 100;
+
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
       <div style={{ display:'flex', gap:8, marginBottom:10, flexWrap:'wrap', alignItems:'center' }}>
@@ -7085,6 +7143,32 @@ function CollectorMyDeck({ save, onUpdate }) {
           </select>
         </div>
       </div>
+
+      {/* Deck composition + next-tier progress */}
+      {ownedCards.length > 0 && (
+        <div className="card" style={{ marginBottom:10, padding:'9px 12px' }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6 }}>
+            <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--gold)', letterSpacing:'0.08em' }}>DECK COMPOSITION</span>
+            {nextTier
+              ? <span style={{ fontSize:'0.55rem', color:'var(--text2)' }}>{Math.round(tierProgress)}% to <span style={{ color:(T[nextTier]||{}).color, fontFamily:'Cinzel,serif' }}>{(T[nextTier]||{}).label}</span></span>
+              : <span style={{ fontSize:'0.55rem', color:(T.mythic||{}).color, fontFamily:'Cinzel,serif' }}>MAX TIER ★</span>}
+          </div>
+          <div style={{ marginBottom:6 }}><CollBar segments={compSegments} height={9} /></div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:'2px 10px' }}>
+            {COLL_TIER_ORDER.filter(t=>comp[t]>0).map(t=>(
+              <span key={t} style={{ fontSize:'0.52rem', color:(T[t]||{}).color, fontFamily:'Cinzel,serif' }}>● {comp[t]} {(T[t]||{}).label}</span>
+            ))}
+          </div>
+          {nextTier && (
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:8 }}>
+              <span style={{ fontSize:'0.5rem', color:'var(--text2)', width:54, fontFamily:'Cinzel,serif' }}>Next tier</span>
+              <div style={{ flex:1 }}><CollBar pct={tierProgress} color={(T[nextTier]||{}).color} height={5} /></div>
+              <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.52rem', color:'var(--text2)', width:70, textAlign:'right' }}>avg {avgOvr} → {nextFloor}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="scroll" style={{ flex:1 }}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
           {cards.map(card => (
@@ -7201,18 +7285,64 @@ function CollectorCardStats({ save }) {
 
   const T = window.COLLECTOR_TIERS || {};
 
+  // ── Combat record ──
+  const games = stats.games||0, wins = stats.wins||0, losses = Math.max(0, games-wins);
+  const winRate = games ? Math.round(wins/games*100) : 0;
+  const scoreAvg = games ? Math.floor((stats.totalScore||0)/games*10)/10 : 0;
+  const curStreak = stats.winStreak||0, bestStreak = stats.maxWinStreak||0;
+  // ── Collection progress ──
+  const allCards = getCollCards();
+  const totalCards = allCards.length;
+  const ownedCount = ownedCards.length;
+  const completion = totalCards ? Math.round(ownedCount/totalCards*1000)/10 : 0;
+  const tierTotals = {}, tierOwned = {};
+  COLL_TIER_ORDER.forEach(t => { tierTotals[t]=0; tierOwned[t]=0; });
+  allCards.forEach(c => { if(tierTotals[c.tier]!==undefined) tierTotals[c.tier]++; });
+  ownedCards.forEach(c => { if(tierOwned[c.tier]!==undefined) tierOwned[c.tier]++; });
+
   return (
     <div className="scroll" style={{ height:'100%' }}>
+      {/* Combat record */}
       <div className="card" style={{ marginBottom:12 }}>
-        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)', marginBottom:8 }}>GAME RECORD</div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
-          {[['Games',stats.games||0],['Wins',stats.wins||0],['Score Avg', stats.games ? Math.floor((stats.totalScore||0)/stats.games*10)/10 : 0]].map(([l,v])=>(
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)', marginBottom:8 }}>⚔ COMBAT RECORD</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:10 }}>
+          {[['Games',games,'var(--gold)'],['Wins',wins,'#4caf50'],['Losses',losses,'#e05555'],
+            ['Win Rate',winRate+'%','var(--gold)'],['Streak',curStreak,'#4caf50'],['Best',bestStreak,'#ffd700']].map(([l,v,c])=>(
             <div key={l} style={{ textAlign:'center' }}>
-              <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'var(--gold)' }}>{v}</div>
+              <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:c }}>{v}</div>
               <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>{l}</div>
             </div>
           ))}
         </div>
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+          <span style={{ fontSize:'0.55rem', color:'var(--text2)', width:60 }}>Win Rate</span>
+          <div style={{ flex:1 }}><CollBar pct={winRate} color="#4caf50" /></div>
+          <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--text2)', width:34, textAlign:'right' }}>{winRate}%</span>
+        </div>
+        <div style={{ fontSize:'0.55rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>
+          Avg score per game: <span style={{ color:'var(--gold)', fontFamily:'Cinzel,serif' }}>{scoreAvg}</span>
+        </div>
+      </div>
+
+      {/* Collection progress */}
+      <div className="card" style={{ marginBottom:12 }}>
+        <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:8 }}>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)' }}>📚 COLLECTION</div>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)' }}>{ownedCount} / {totalCards} <span style={{ fontSize:'0.55rem', color:'var(--text2)' }}>({completion}%)</span></div>
+        </div>
+        <div style={{ marginBottom:10 }}><CollBar pct={completion} color="var(--gold)" height={9} /></div>
+        {COLL_TIER_ORDER.map(t => {
+          const tot = tierTotals[t]||0, own = tierOwned[t]||0;
+          const pct = tot ? own/tot*100 : 0;
+          const tc = (T[t]||{}).color || '#888';
+          return (
+            <div key={t} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+              <span style={{ fontSize:'0.55rem', color:tc, width:64, fontFamily:'Cinzel,serif' }}>{(T[t]||{}).label||t}</span>
+              <div style={{ flex:1 }}><CollBar pct={pct} color={tc} height={5} /></div>
+              <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.55rem', color:'var(--text2)', width:54, textAlign:'right' }}>{own}/{tot}</span>
+            </div>
+          );
+        })}
       </div>
 
       {mostPlayed.length > 0 && (
@@ -7280,6 +7410,14 @@ function formatCountdown(ms) {
   const m = Math.floor((ms % 3600000) / 60000);
   const s = Math.floor((ms % 60000) / 1000);
   return `${h}h ${m}m ${s}s`;
+}
+
+// Compact form for the always-visible HUD badge (no seconds).
+function formatCountdownShort(ms) {
+  if (ms <= 0) return 'READY';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 function CollectorDailySection({ save, onUpdate }) {
@@ -7384,6 +7522,7 @@ function CollectorStore({ save, onUpdate }) {
   const [lotteryResult, setLotteryResult] = React.useState(null);
   const [lotterySpinning, setLotterySpinning] = React.useState(false);
   const [upgradeSelected, setUpgradeSelected] = React.useState(null);
+  const [detailCard, setDetailCard] = React.useState(null);
   const [storeMsg, setStoreMsg] = React.useState('');
   const [showcaseCards, setShowcaseCards] = React.useState(() => {
     const now = Date.now();
@@ -7506,7 +7645,7 @@ function CollectorStore({ save, onUpdate }) {
                 const isOwned = owned.has(cardId);
                 return (
                   <div key={cardId}>
-                    <CollCardDisplay card={card} compact isOwned={isOwned} />
+                    <CollCardDisplay card={card} compact isOwned={isOwned} onClick={() => setDetailCard(card)} />
                     {!isOwned ? (
                       <button className="btn btn-gold btn-sm" style={{ width:'100%', marginTop:4, fontSize:'0.6rem' }} onClick={() => buyShowcaseCard(cardId)}>
                         Buy {price}G
@@ -7549,7 +7688,7 @@ function CollectorStore({ save, onUpdate }) {
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:8 }}>
                   {pg.map(card => (
                     <div key={card.id}>
-                      <CollCardDisplay card={card} compact />
+                      <CollCardDisplay card={card} compact onClick={() => setDetailCard(card)} />
                       <button className="btn btn-gold btn-sm" style={{ width:'100%', marginTop:4, fontSize:'0.6rem' }} onClick={() => buyDirectCard(card)}>Buy {price}G</button>
                     </div>
                   ))}
@@ -7621,7 +7760,7 @@ function CollectorStore({ save, onUpdate }) {
                     const canAfford = (save.gold||0) >= cost;
                     return (
                       <div key={card.id}>
-                        <CollCardDisplay card={card} compact isOwned={true} />
+                        <CollCardDisplay card={card} compact isOwned={true} onClick={() => setDetailCard(card)} />
                         <button className={`btn btn-${canAfford?'gold':'ghost'} btn-sm`} style={{ width:'100%', marginTop:4, fontSize:'0.6rem' }}
                           disabled={!canAfford} onClick={() => doUpgrade(card)}>
                           → {(T[nextTier]||{}).label} ({cost}G)
@@ -7633,6 +7772,15 @@ function CollectorStore({ save, onUpdate }) {
                 </div>
               );
             })()}
+          </div>
+        )}
+
+        {detailCard && (
+          <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:100, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }} onClick={() => setDetailCard(null)}>
+            <div style={{ maxWidth:360, width:'100%' }} onClick={e=>e.stopPropagation()}>
+              <CollCardDisplay card={detailCard} isOwned={owned.has(detailCard.id)} />
+              <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:8 }} onClick={() => setDetailCard(null)}>Close</button>
+            </div>
           </div>
         )}
 
@@ -7756,37 +7904,35 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
   const [usedCardIds, setUsedCardIds] = React.useState(new Set());
   const [rerollsLeft, setRerollsLeft] = React.useState(Math.min(save.rerolls||0, GAME_REROLL_LIMIT));
   const [rerollsUsed, setRerollsUsed] = React.useState(0);
-  const [cpuBoard, setCpuBoard] = React.useState({});
+  const [cpuBoard, setCpuBoard] = React.useState({});   // built turn-by-turn
+  const [lastCpuCard, setLastCpuCard] = React.useState(null);
   const [phase, setPhase] = React.useState('draw'); // draw | place | done
   const [showCpu, setShowCpu] = React.useState(false);
   const [selectedPos, setSelectedPos] = React.useState(null);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
 
-  // CPU setup
-  const avgOvr = deckAvgOverall(save.owned);
-  const [cpuCards] = React.useState(() => buildCpuBoard(avgOvr));
-
-  function buildCpuBoard(avgOvr) {
+  // CPU drafts a card of the SAME tier the player just drew, from the pool of
+  // EVERY character card in that tier — never duplicating a character already on
+  // either board, except infinitely-duplicatable (unlimited) characters.
+  function cpuDraftCard(tier, playerBoardNow, cpuBoardNow) {
     const all = getCollCards();
-    // Filter to cards near player's average tier
-    const tierOvr = Math.max(40, avgOvr);
-    const poolMin = Math.max(0, tierOvr - 15);
-    const poolMax = Math.min(100, tierOvr + 15);
-    const pool = all.filter(c => c.overall >= poolMin && c.overall <= poolMax);
-    const board = {};
-    const usedChar = new Set();
-    // CPU places optimal card for each position
-    COLL_POS.forEach(pos => {
-      // Find highest scoring card for this position
-      const candidates = pool
-        .filter(c => !usedChar.has(c.charId) && c.charId !== 'unlimited')
-        .sort((a,b) => (b.scores?.[pos.id]||0) - (a.scores?.[pos.id]||0));
-      if (candidates.length) {
-        board[pos.id] = candidates[0];
-        usedChar.add(candidates[0].charId);
-      }
-    });
-    return board;
+    const taken = new Set([
+      ...Object.values(playerBoardNow).filter(Boolean).map(c=>c.charId),
+      ...Object.values(cpuBoardNow).filter(Boolean).map(c=>c.charId),
+    ]);
+    const usable = c => c.unlimited || !taken.has(c.charId);
+    let pool = all.filter(c => c.tier === tier && usable(c));
+    if (!pool.length) pool = all.filter(usable);            // fallback: any tier
+    if (!pool.length) return null;
+    return pool[Math.floor(Math.random()*pool.length)];
+  }
+
+  // CPU places its drawn card on whichever open position it scores highest in.
+  function cpuBestPos(card, cpuBoardNow) {
+    const open = COLL_POS.filter(p => !cpuBoardNow[p.id]);
+    if (!open.length) return null;
+    open.sort((a,b) => (card.scores?.[b.id]||0) - (card.scores?.[a.id]||0));
+    return open[0].id;
   }
 
   function drawFate() {
@@ -7809,10 +7955,20 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
 
   function placeCard(posId) {
     if (!drawnCard || playerBoard[posId]) return;
+    const placedTier = drawnCard.tier;
     const newBoard = { ...playerBoard, [posId]: drawnCard };
     const newUsed = new Set([...usedCardIds, drawnCard.id]);
+    // CPU takes its turn: draw fate from the same tier and place optimally.
+    const cpuCard = cpuDraftCard(placedTier, newBoard, cpuBoard);
+    let newCpuBoard = cpuBoard;
+    if (cpuCard) {
+      const cpuPos = cpuBestPos(cpuCard, cpuBoard);
+      if (cpuPos) newCpuBoard = { ...cpuBoard, [cpuPos]: cpuCard };
+    }
     setPlayerBoard(newBoard);
     setUsedCardIds(newUsed);
+    setCpuBoard(newCpuBoard);
+    setLastCpuCard(cpuCard || null);
     setDrawnCard(null);
     setSelectedPos(null);
     const filledCount = Object.keys(newBoard).length;
@@ -7821,6 +7977,8 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
   }
 
   function calcScore(board) {
+    // No cap: elite cards can score above 10 in a position, so a strong board
+    // total can legitimately exceed 100. Displays handle the larger numbers.
     return Math.round(COLL_POS.reduce((sum, pos) => {
       const card = board[pos.id];
       return sum + (card?.scores?.[pos.id] || 0);
@@ -7828,7 +7986,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
   }
 
   const playerScore = calcScore(playerBoard);
-  const cpuScore = calcScore(cpuCards);
+  const cpuScore = calcScore(cpuBoard);
 
   function handleFinish() {
     const isWin = playerScore > cpuScore;
@@ -7839,8 +7997,13 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
       else if (margin >= 5) goldEarned = 15;
       else goldEarned = 10;
     }
-    if (playerScore >= 90) goldEarned += 50;
-    if (playerScore >= 100) goldEarned += 450; // 500 total
+    // Graduated score bonus — rewards how well your cards fit their positions
+    // (the new spiky scoring puts a typical board ~45-70 and a perfect court at 100).
+    if (playerScore >= 100) goldEarned += 500;       // a perfect court
+    else if (playerScore >= 90) goldEarned += 150;
+    else if (playerScore >= 80) goldEarned += 75;
+    else if (playerScore >= 70) goldEarned += 40;
+    else if (playerScore >= 60) goldEarned += 20;
     let finalGold = (save.gold||0) + goldEarned;
     if (isWin) finalGold += wager;
     else finalGold -= wager;
@@ -7872,7 +8035,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
     };
     saveCollSave(newSave);
     onUpdate(newSave);
-    const result = { isWin, playerScore, cpuScore, goldEarned, playerBoard, cpuBoard: cpuCards, wager, margin, rerollsUsed };
+    const result = { isWin, playerScore, cpuScore, goldEarned, playerBoard, cpuBoard, wager, margin, rerollsUsed };
     const collUnlocked = checkCollectorAchievements(newSave, result);
     collUnlocked.forEach(id => window.dispatchEvent(new CustomEvent('asoe-achievement', { detail: id })));
     onEnd(result);
@@ -7931,7 +8094,13 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
           <>
             {/* Drawn card */}
             {phase === 'draw' && (
-              <div style={{ textAlign:'center', padding:'20px 0' }}>
+              <div style={{ textAlign:'center', padding:'14px 0' }}>
+                {lastCpuCard && (
+                  <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginBottom:10, lineHeight:1.5 }}>
+                    🤖 CPU drafted <span style={{ color:(T[lastCpuCard.tier]||{}).color||'#e05555', fontWeight:700 }}>{lastCpuCard.name}</span>
+                    <span style={{ color:'var(--text2)' }}> ({(T[lastCpuCard.tier]||{}).label})</span>
+                  </div>
+                )}
                 <button className="btn btn-gold" style={{ width:'100%', padding:'14px', fontSize:'0.85rem', letterSpacing:'0.1em' }} onClick={drawFate}>
                   🃏 DRAW FATE
                 </button>
@@ -7955,8 +8124,28 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
                     </button>
                   )}
                 </div>
-                <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginTop:6, fontStyle:'italic' }}>
-                  Select a position below to place this card ↓
+                {/* Character score profile — highest open position highlighted */}
+                {(() => {
+                  const bestOpen = COLL_POS.filter(p => !playerBoard[p.id])
+                    .sort((a,b)=>(drawnCard.scores?.[b.id]||0)-(drawnCard.scores?.[a.id]||0))[0];
+                  return (
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:'2px 10px', marginTop:8, paddingTop:8, borderTop:'1px solid var(--border)' }}>
+                      {COLL_POS.map(p => {
+                        const sc = drawnCard.scores?.[p.id] || 0;
+                        const isBest = bestOpen && bestOpen.id === p.id;
+                        return (
+                          <div key={p.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:'0.55rem',
+                            background:isBest?'rgba(212,168,48,0.14)':'transparent', borderRadius:3, padding:'1px 4px' }}>
+                            <span style={{ color:isBest?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
+                            <span style={{ color: sc>=9?'#ffd700':sc>=7?(T[drawnCard.tier]||{}).color:'var(--text)', fontWeight:700 }}>{Math.floor(sc*10)/10}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+                <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginTop:8, fontStyle:'italic' }}>
+                  Select a position below to place this card ↓ (best fit highlighted)
                 </div>
               </div>
             )}
@@ -7982,8 +8171,16 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
                           <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{Math.floor(score*10)/10}</span>
                         </div>
                       </>
+                    ) : canPlace ? (
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+                        <span style={{ fontSize:'0.6rem', color:'var(--gold)', fontStyle:'italic' }}>← Place</span>
+                        <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, fontSize:'0.95rem',
+                          color: (drawnCard.scores?.[pos.id]||0)>=9?'#ffd700':(drawnCard.scores?.[pos.id]||0)>=7?'var(--gold)':'var(--text2)' }}>
+                          {Math.floor((drawnCard.scores?.[pos.id]||0)*10)/10}
+                        </span>
+                      </div>
                     ) : (
-                      <div style={{ fontSize:'0.65rem', color:'var(--text2)', fontStyle:'italic' }}>{canPlace ? '← Place here' : '— Empty —'}</div>
+                      <div style={{ fontSize:'0.65rem', color:'var(--text2)', fontStyle:'italic' }}>— Empty —</div>
                     )}
                   </div>
                 );
@@ -7993,10 +8190,12 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
         ) : (
           /* CPU Board */
           <div>
-            <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10 }}>CPU Board (Average tier: ~{Math.round(avgOvr)} overall)</div>
+            <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10 }}>
+              CPU Board · {Object.keys(cpuBoard).length}/{COLL_POS.length} drafted · The CPU draws fate from every card of your drawn tier.
+            </div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
               {COLL_POS.map(pos => {
-                const card = cpuCards[pos.id];
+                const card = cpuBoard[pos.id];
                 const ct = card ? (T[card.tier]||{color:'#888',bg:'#111'}) : null;
                 const score = card ? (card.scores?.[pos.id]||0) : null;
                 return (
@@ -8038,6 +8237,8 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
 function CollectorGameResult({ result, save, onWinPull, onHome }) {
   const { isWin, playerScore, cpuScore, goldEarned, margin, wager } = result;
   const T = window.COLLECTOR_TIERS || {};
+  const [boardView, setBoardView] = React.useState('mine'); // mine | cpu
+  const shownBoard = boardView === 'mine' ? (result.playerBoard||{}) : (result.cpuBoard||{});
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
@@ -8068,22 +8269,56 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
         </div>
 
         <div className="card" style={{ marginBottom:12 }}>
-          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.65rem', color:'var(--gold)', marginBottom:8 }}>SCORE BREAKDOWN</div>
+          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.65rem', color:'var(--gold)' }}>HEAD-TO-HEAD</div>
+            <div style={{ marginLeft:'auto', fontSize:'0.5rem', color:'var(--text2)' }}>YOU vs CPU</div>
+          </div>
           {COLL_POS.map(pos => {
             const pCard = result.playerBoard?.[pos.id];
             const cCard = result.cpuBoard?.[pos.id];
             const pSc = pCard ? Math.floor((pCard.scores?.[pos.id]||0)*10)/10 : 0;
             const cSc = cCard ? Math.floor((cCard.scores?.[pos.id]||0)*10)/10 : 0;
             return (
-              <div key={pos.id} style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4, fontSize:'0.65rem' }}>
-                <div style={{ width:75, fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{pos.label}</div>
+              <div key={pos.id} style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4, fontSize:'0.62rem' }}>
+                <div style={{ width:96, fontSize:'0.52rem', color:'var(--text2)', fontFamily:'Cinzel,serif', lineHeight:1.15 }}>{pos.label}</div>
                 <div style={{ flex:1, color:(T[pCard?.tier]||{}).color||'var(--text2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{pCard?.name||'—'}</div>
-                <div style={{ fontFamily:'Cinzel,serif', width:30, textAlign:'right', color: pSc>cSc?'#4caf50':pSc<cSc?'#e05555':'var(--text)' }}>{pSc}</div>
-                <div style={{ color:'var(--text2)', padding:'0 4px' }}>vs</div>
-                <div style={{ fontFamily:'Cinzel,serif', width:30, textAlign:'right', color:'#e05555' }}>{cSc}</div>
+                <div style={{ fontFamily:'Cinzel,serif', width:34, textAlign:'right', color: pSc>cSc?'#4caf50':pSc<cSc?'#e05555':'var(--text)' }}>{pSc}</div>
+                <div style={{ color:'var(--text2)', padding:'0 2px' }}>·</div>
+                <div style={{ fontFamily:'Cinzel,serif', width:34, textAlign:'right', color:'#e05555' }}>{cSc}</div>
               </div>
             );
           })}
+        </div>
+
+        {/* Full board view with toggle (like other game modes) */}
+        <div className="card" style={{ marginBottom:12 }}>
+          <div style={{ display:'flex', gap:6, marginBottom:10 }}>
+            <button className={`btn btn-${boardView==='mine'?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setBoardView('mine')}>My Board ({playerScore})</button>
+            <button className={`btn btn-${boardView==='cpu'?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setBoardView('cpu')}>CPU Board ({cpuScore})</button>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
+            {COLL_POS.map(pos => {
+              const card = shownBoard[pos.id];
+              const ct = card ? (T[card.tier]||{color:'#888',bg:'#111'}) : null;
+              const sc = card ? Math.floor((card.scores?.[pos.id]||0)*10)/10 : null;
+              return (
+                <div key={pos.id} style={{ border:`2px solid ${card?ct.color:'var(--border)'}`, borderRadius:6, padding:'7px 9px', background: card?ct.bg:'var(--bg2)' }}>
+                  <div style={{ fontSize:'0.52rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginBottom:2, lineHeight:1.15 }}>{pos.label}</div>
+                  {card ? (
+                    <>
+                      <div style={{ fontSize:'0.62rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{card.name}</div>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
+                        <CollTierBadge tier={card.tier} />
+                        <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{sc}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize:'0.62rem', color:'var(--text2)', fontStyle:'italic' }}>— Empty —</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <div style={{ display:'flex', gap:8 }}>
@@ -8183,6 +8418,9 @@ function CollectorHub({ onHome }) {
 
   const deckTier = deckTierLabel(save.owned);
   const T = window.COLLECTOR_TIERS || {};
+  // Tick every second so the HUD daily countdowns update live.
+  const [, setNowTick] = React.useState(0);
+  React.useEffect(() => { const iv = setInterval(() => setNowTick(t => t + 1), 1000); return () => clearInterval(iv); }, []);
   const pullCountdown = timeUntil24h(save.lastDailyPull);
   const rewardCountdown = timeUntil24h(save.lastDailyReward);
 
@@ -8215,9 +8453,22 @@ function CollectorHub({ onHome }) {
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
         <div style={{ fontFamily:'Cinzel,serif', color:'var(--gold)', fontSize:'0.75rem' }}>🪙 {save.gold||0} Gold</div>
         <div style={{ fontFamily:'Cinzel,serif', color:'var(--text2)', fontSize:'0.7rem' }}>🎲 {save.rerolls||0} Rerolls</div>
-        <div style={{ display:'flex', gap:8 }}>
-          {pullCountdown === 0 && <span style={{ fontSize:'0.55rem', color:'#4caf50', fontFamily:'Cinzel,serif' }}>🃏 PULL READY</span>}
-          {rewardCountdown === 0 && <span style={{ fontSize:'0.55rem', color:'var(--gold)', fontFamily:'Cinzel,serif' }}>🪙 REWARD READY</span>}
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          {[{ icon:'🃏', label:'Pull', ms:pullCountdown, color:'#4caf50' },
+            { icon:'🪙', label:'Reward', ms:rewardCountdown, color:'var(--gold)' }].map((d,i) => {
+            const ready = d.ms <= 0;
+            return (
+              <span key={i} style={{
+                fontSize:'0.55rem', fontFamily:'Cinzel,serif', whiteSpace:'nowrap',
+                color: ready ? d.color : 'var(--text2)',
+                border: ready ? `1px solid ${d.color}` : '1px solid transparent',
+                borderRadius:4, padding: ready ? '2px 6px' : '2px 0',
+                animation: ready ? 'glow 2s ease-in-out infinite' : 'none',
+              }}>
+                {d.icon} {ready ? `${d.label.toUpperCase()} READY` : formatCountdownShort(d.ms)}
+              </span>
+            );
+          })}
         </div>
       </div>
 
@@ -8559,11 +8810,10 @@ function buildDailyChallenges(dateKey) {
     {
       id: 'dyn_score', label: `Dynasty ≥${t4}`, diff: 4,
       desc: `Score at least ${t4} total in Dynasty Mode`,
-      check: (h) => h.modeKey==='dynasty' && !h.isVersus && !h.isCPU &&
-        ((h.boards||[])[0]||h.board||[]).reduce((sum,sl)=>{
-          if(!sl.character) return sum;
-          const base = getSlotScore(sl); return sum + base;
-        },0) >= t4,
+      check: (h) => { if (h.modeKey!=='dynasty' || h.isVersus || h.isCPU) return false;
+        const b = (h.boards||[])[0]||h.board||[];
+        // Use the same category-aware scoring the game displays (incomplete pairs score 0)
+        return b.reduce((sum,sl)=>sum+getDynastySlotScore(sl,b),0) >= t4; },
     },
     {
       id: 'chaos_win', label: 'Chaos Victory', diff: 3,

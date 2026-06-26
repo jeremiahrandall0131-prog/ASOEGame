@@ -146,50 +146,105 @@
   }
   function srPick(arr, seed) { return arr[Math.floor(sr(seed) * arr.length)]; }
 
-  // Generate position scores: no per-position cap, specialist characters
-  // can have very high scores in their spec positions and very low elsewhere.
+  // Map Collector position ids → character base-score keys. The base scores in
+  // characters.js come from S(r,h,hr,c,kg,kgc,sc,bank,ally,con) → {R,H,Hr,AC,KG,
+  // KGC,SC,Bank,Ally,Con}, so without this mapping every lookup returns
+  // undefined and every card collapses to a flat archetype.
+  const POS_TO_CHKEY = {
+    ruler:'R', consort:'Con', heir:'Hr', hand:'H', armyCmd:'AC',
+    kgCmd:'KGC', kingsguard:'KG', smallCouncil:'SC', ally:'Ally', bank:'Bank',
+  };
+  // How strongly each tier expresses a character's ability. A higher tier is a
+  // more powerful *version* of the same character: their strengths climb toward
+  // 10 while their weaknesses stay weak. Per-position scores are an ability
+  // profile and are deliberately decoupled from the prestige "overall" rating.
+  const TIER_SCALE = {
+    starter:   { mult:0.70, lift:0.00 },
+    uncommon:  { mult:0.78, lift:0.00 },
+    rare:      { mult:0.86, lift:0.05 },
+    hero:      { mult:0.93, lift:0.10 },
+    legendary: { mult:0.99, lift:0.20 },
+    mythic:    { mult:1.03, lift:0.35 },
+  };
+
+  // Generate position scores driven by each character's real archetype. A
+  // warrior scores high in fighting roles and low in politics; a schemer the
+  // reverse. Night's Watch and Kingsguard cannot rule, wed, or inherit (always
+  // 1). Weak roles are allowed to stay genuinely weak.
   function genScores(charId, tier, vi, spec) {
     const r = TIER_RANGES[tier];
     const priority = CHAR_PRIORITY[charId] ?? 0.20;
+    // Headline "overall" = a prestige rating kept inside the tier's band; it is
+    // independent of the spiky per-position ability scores below.
     const jitter = (sr(`${charId}_${tier}_${vi}_jo`) - 0.5) * 2;
-    const targetOvr = Math.min(r.max, Math.max(r.min, r.min + priority * (r.max - r.min) + jitter));
+    const overall = Math.min(r.max, Math.max(r.min, r.min + priority * (r.max - r.min) + jitter));
 
     const ch = (window.CHARACTERS || []).find(c => c.id === charId);
     const bs = ch?.scores || {};
-    const rawBase = POS.map(p => Math.max(0.1, bs[p] || 1));
-    const bMin = Math.min(...rawBase), bMax = Math.max(...rawBase);
-    const base = rawBase.map(v => 0.1 + 0.9 * (v - bMin) / Math.max(0.01, bMax - bMin));
+    const isNW = !!ch?.isNW, isKG = !!ch?.isKG;
+    const sc = TIER_SCALE[tier] || { mult:0.86, lift:0.05 };
 
-    const SPEC_MULT = 3.0;
-    const weights = base.map((w, i) => {
-      let weight = w;
-      if (spec && spec.includes(POS[i])) weight *= SPEC_MULT;
-      weight *= (1 + (sr(`${charId}_${tier}_${vi}_w${i}`) - 0.5) * 0.4);
-      return Math.max(0.05, weight);
-    });
-
-    const wSum = weights.reduce((a, b) => a + b, 0);
-    const scores = weights.map(w => Math.round(w / wSum * targetOvr * 10) / 10);
     const obj = {};
-    POS.forEach((p, i) => { obj[p] = scores[i]; });
-    obj.overall = Math.min(100, Math.round(POS.reduce((s, p) => s + (obj[p] || 0), 0) * 10) / 10);
+    POS.forEach((p, i) => {
+      // Lore rule: sworn brothers of the Watch and the Kingsguard forfeit any
+      // claim to rule, take a consort, or inherit.
+      if ((isNW || isKG) && (p === 'ruler' || p === 'consort' || p === 'heir')) {
+        obj[p] = 1;
+        return;
+      }
+      const raw = bs[POS_TO_CHKEY[p]];
+      const b = (typeof raw === 'number' && raw > 0) ? raw : 1; // unknown → weak
+      // Named variants emphasise their defining role(s).
+      const specBoost = (spec && spec.includes(p)) ? 1.6 : 0;
+      // Per-position, per-variant jitter keeps cards and variants distinct.
+      const jit = (sr(`${charId}_${tier}_${vi}_p${i}`) - 0.5) * 0.9;
+      let s = b * sc.mult + sc.lift + specBoost + jit;
+      // No upper cap: the very best (legendary/mythic, and named specialists)
+      // can score ABOVE 10 in their defining roles, so an elite board total can
+      // exceed 100. Only the floor of 1 is enforced.
+      s = Math.max(1, Math.round(s * 10) / 10);
+      obj[p] = s;
+    });
+    obj.overall = Math.round(overall * 10) / 10;
     return obj;
   }
 
-  const LEG_EPITHETS = ['the Unbroken','the Eternal','the Magnificent','the Illustrious','the Undying',
+  // Legendary and Mythic pools are fully non-overlapping to prevent same-name cards across tiers.
+  const LEG_EPITHETS = [
+    'the Unbroken','the Eternal','the Magnificent','the Illustrious','the Undying',
     'the Legendary','the Indomitable','the Invincible','the Great','the Unyielding',
-    'the Timeless','the Unbowed'];
-  const MYTHIC_SFX   = ['the Ascendant','the World-Shaker','the Eternal','the Unforgotten',
-    'the Transcendent','the Legend','the Immortal','the Supreme','the Undying',
-    'the Irreversible','the Magnificent','the Indelible'];
-  const STARTER_SFX  = ['the Unsung','the Untested','the Overlooked','Before the Wars',
-    'the Unknown','the Apprentice','the Newcomer','the Untried'];
-  const UNCOMMON_SFX = ['of the Realm','the Veteran','the Rising','the Proven',
-    'the Capable','the Determined','the Known','the Tested'];
-  const RARE_SFX     = ['the Renowned','the Formidable','the Notable','the Feared',
-    'the Respected','the Accomplished','the Dangerous','the Distinguished'];
-  const HERO_SFX     = ['the Champion','the Celebrated','the Vaunted','the Heroic',
-    'the Renowned','the Triumphant','the Fearless','the Mighty'];
+    'the Timeless','the Unbowed','the Unconquered','the Resolute','the Immovable','the Enduring',
+  ];
+  const MYTHIC_SFX = [
+    'the Ascendant','the World-Shaker','the Inexorable','the Unforgotten',
+    'the Transcendent','the Legend','the Immortal','the Supreme',
+    'the World-Reborn','the Irreversible','the Undeniable','the Indelible',
+    'the Absolute','the Unending','the World-Maker','the Eternal Flame',
+  ];
+  const STARTER_SFX = [
+    'the Unsung','the Untested','the Overlooked','Before the Wars',
+    'the Unknown','the Apprentice','the Newcomer','the Untried',
+    'the Young','in Younger Days','Before the Fire','the Green',
+    'the Unseasoned','the Hopeful','the Unproven','Before Everything',
+  ];
+  const UNCOMMON_SFX = [
+    'of the Realm','the Veteran','the Rising','the Proven',
+    'the Capable','the Determined','the Known','the Tested',
+    'in Service','at Court','the Steadfast','the Loyal',
+    'in the Early Years','the Faithful','the Earnest','the Reliable',
+  ];
+  const RARE_SFX = [
+    'the Renowned','the Formidable','the Notable','the Feared',
+    'the Respected','the Accomplished','the Dangerous','the Distinguished',
+    'the Powerful','the Influential','the Calculating','the Deadly',
+    'the Commanding','the Skilled','the Astute','the Cunning',
+  ];
+  const HERO_SFX = [
+    'the Champion','the Celebrated','the Vaunted','the Heroic',
+    'the Glorious','the Triumphant','the Fearless','the Mighty',
+    'the Dominant','the Undefeated','at the Height','the Peerless',
+    'the Decisive','the Conquering','in their Prime','the Defiant',
+  ];
 
   function cleanName(n) { return n.replace(/\s*\(.*?\)\s*/g, '').trim(); }
   function autoName(char, tier, vi) {
@@ -200,25 +255,143 @@
     };
     const pool = POOLS[tier];
     if (!pool) return n;
-    // vi:0 on starter = no suffix (the base card). vi:0 on other tiers = random pick.
-    // vi:1+ always gets a suffix, offset from vi:0's pick to guarantee uniqueness within same char+tier.
     if (tier === 'starter' && vi === 0) return n;
     const base = Math.floor(sr(`n_${char.id}_${tier}`) * pool.length);
     const sfx = pool[(base + vi) % pool.length];
     return `${n} ${sfx}`;
   }
-  function autoDesc(char, tier) {
+  // Render a character's affiliation as a grammatical phrase. Real great houses
+  // become "House X"; faction buckets (Bannermen, Essos, Night's Watch, Beyond
+  // the Wall, Magic, Other) become natural phrases so descriptions never read
+  // "House Bannermen" or "House Magic".
+  const REAL_HOUSES = new Set(['Targaryen','Stark','Lannister','Martell','Baratheon',
+    'Greyjoy','Tyrell','Frey','Velaryon','Hightower','Tully','Arryn','Blackfyre']);
+  function affiliationPhrase(char) {
+    const raw = (char.houses && char.houses[0]) || '';
+    if (/watch/i.test(raw)) return "the Night's Watch";
+    if (/beyond the wall/i.test(raw)) return 'the Free Folk';
+    if (raw === 'Essos') return 'Essos';
+    if (REAL_HOUSES.has(raw)) return `House ${raw}`;
+    return 'the realm'; // Bannermen, Other, Magic, Unknown, anything else
+  }
+  function autoDesc(char, tier, vi) {
     const n = cleanName(char.name);
-    const h = char.houses?.[0] || 'the realm';
-    switch (tier) {
-      case 'starter':   return `${n} of House ${h}, in the earliest chapter of a journey history would not forget.`;
-      case 'uncommon':  return `${n}, a capable figure of House ${h} whose reputation continues to grow.`;
-      case 'rare':      return `A renowned figure of House ${h}, ${n} has earned great distinction.`;
-      case 'hero':      return `${n} stands among the greatest of their age, a force not to be underestimated.`;
-      case 'legendary': return `${n}'s name will be remembered for generations — a figure of extraordinary consequence.`;
-      case 'mythic':    return `${n} rose to heights never before seen, becoming a legend for the ages.`;
-      default: return '';
+    const H = affiliationPhrase(char);          // "House Stark" / "the Night's Watch" / "Essos" / "the realm"
+    const Hs = H.charAt(0).toUpperCase() + H.slice(1); // sentence-start form
+    const g = char.gender === 'F';
+    const pronoun = g ? 'she' : 'he';
+    const poss = g ? 'her' : 'his';
+    const s = char.scores || {};
+    const milScore = (s.armyCmd||0) + (s.kgCmd||0) + (s.kingsguard||0);
+    const polScore = (s.ruler||0) + (s.hand||0) + (s.smallCouncil||0);
+    const mil = milScore > polScore;
+    const idx = Math.floor(sr(`d_${char.id}_${tier}_${vi||0}`) * 8);
+    if (tier === 'starter') {
+      const lines = [
+        `${n} of ${H}, still finding ${poss} footing in a world that has not yet demanded everything of ${poss}.`,
+        `Before the wars reshaped everything, ${n} was a young member of ${H} — unproven, but burning with quiet ambition.`,
+        `The earliest chapter of ${n}'s story, when ${H} was the whole of ${poss} world and the future an open question.`,
+        `A young member of ${H}, ${n} has not yet seen what the wars of Westeros will demand — but ${pronoun} will.`,
+        `${Hs} has produced many notable figures. ${n}'s story was just beginning, and none had guessed what was coming.`,
+        `${n} in the early years — unknown to most, underestimated by all, quietly learning what it takes to survive in this world.`,
+        `Not yet the figure history remembers, ${n} was still learning the rules of a world that would soon break many of them.`,
+        `Before the songs and the battles, before any of it, ${n} of ${H} was simply trying to understand who ${pronoun} was.`,
+      ];
+      return lines[idx % lines.length];
     }
+    if (tier === 'uncommon') {
+      const lines = mil ? [
+        `A capable soldier of ${H}, ${n} has proved ${poss} worth on the field and earned a growing military reputation.`,
+        `${n} rides to battle under the banner of ${H}, establishing ${poss} name through discipline and hard-won courage.`,
+        `The battlefield has tested ${n} of ${H}, and found ${poss} equal to it — a capable commander gaining real experience.`,
+        `${Hs} trusts ${n} with command, and that trust has proven well-placed through consistent, hard-won victories.`,
+        `${n}'s martial career is on the rise — a proven fighter handling the military affairs of ${H} with growing expertise.`,
+        `A solid military mind in service of ${H}, ${n} has moved from promising to reliable through disciplined service.`,
+        `${n} of ${H} has found ${poss} role on the battlefield — capable, experienced, and increasingly trusted by all.`,
+        `Every battle sharpens the blade, and ${n} of ${H} has fought enough of them now to be genuinely dangerous.`,
+      ] : [
+        `A capable political figure of ${H}, ${n} has established ${poss} place through skill and quiet determination.`,
+        `${n} moves through the politics of ${H} with growing confidence, earning a reputation as reliable and clear-headed.`,
+        `${Hs} finds ${n}'s counsel increasingly valuable — a capable mind who reads people and situations with real precision.`,
+        `${n} of ${H} is proving ${poss} worth in the council chambers and corridors where genuine power actually moves.`,
+        `Not yet legendary, but far from ordinary — ${n} of ${H} has carved out a respectable position through hard work.`,
+        `${n} has learned the rules of the game by watching, waiting, and occasionally making exactly the right move.`,
+        `${Hs} relies on figures like ${n} — steady, capable, and smart enough to know when to push and when to wait.`,
+        `${n} of ${H} has moved past mere ambition and into real achievement — a rising figure with genuine influence.`,
+      ];
+      return lines[idx % lines.length];
+    }
+    if (tier === 'rare') {
+      const lines = mil ? [
+        `${n} of ${H} has led soldiers to victories that the realm will not quickly forget.`,
+        `A proven commander in service of ${H}, ${n} has earned ${poss} reputation through blood and decisive action.`,
+        `The battlefield belongs to commanders like ${n} — sharp, experienced, and absolutely certain of what they are doing.`,
+        `${Hs} sends ${n} into the most difficult campaigns, because difficult campaigns are exactly where ${pronoun} excels.`,
+        `Few commanders of ${poss} era can match ${n}'s combination of tactical brilliance and raw personal courage.`,
+        `${n} of ${H} has made ${poss} name through war, and ${poss} enemies have underestimated ${poss} only once.`,
+        `A military figure of genuine consequence, ${n} has shaped battles and campaigns in the service of ${H}.`,
+        `The name ${n} is spoken with real respect wherever soldiers gather — a fearsome reputation earned by merit.`,
+      ] : [
+        `${n} of ${H} has become a figure of real consequence — a political mind whose influence reaches far beyond home.`,
+        `The game of thrones has many players. ${n} of ${H} plays it better than most and reads it better than all.`,
+        `The standing of ${H} owes much to ${n} — a cunning figure whose judgment has proven right when it mattered most.`,
+        `${n} wields influence precisely and deliberately — and only when ${pronoun} is already certain of the outcome.`,
+        `A distinguished figure of ${H}, ${n} has proven that political skill is as deadly as any sword, and far more lasting.`,
+        `The kind of figure every power needs: ${n} of ${H}, whose instincts have guided many a crucial decision.`,
+        `${n} has moved from promising to powerful, from known to genuinely feared — a figure at the heart of events.`,
+        `${Hs} benefits enormously from figures like ${n} — rare, sharp, and very difficult to outmaneuver or surprise.`,
+      ];
+      return lines[idx % lines.length];
+    }
+    if (tier === 'hero') {
+      const lines = mil ? [
+        `${n} commands at a level that transcends mere experience — a warrior already three steps ahead on any field.`,
+        `The greatest military figure of ${poss} generation. When ${n} of ${H} rides to war, the outcome is rarely in doubt.`,
+        `In every battle ${n} has fought, the balance tilted toward ${H}. This is not coincidence. This is genius.`,
+        `${n}'s brilliance has made ${H} a power to be feared — and made ${poss} name a byword for martial supremacy.`,
+        `There are warriors, there are commanders, and then there is ${n} — a figure whose battlefield mastery has no rival.`,
+        `${Hs} rests its military fortunes on ${n}, who has never once given reason to doubt that choice.`,
+        `${n} in ${poss} prime: the most feared martial force of the age, the kind of commander who decides entire wars.`,
+        `Every army fears the name. Every ally covets the presence. ${n} of ${H} at full strength is simply unstoppable.`,
+      ] : [
+        `At the height of ${poss} influence, ${n} of ${H} shaped the fate of the realm with a word or a perfectly timed act.`,
+        `The finest political mind in the service of ${H} — ${n} doesn't merely play the game, ${pronoun} defines how it is played.`,
+        `${n}'s counsel has proven decisive in the most critical moments of ${poss} era. ${Hs} would be lesser without ${poss}.`,
+        `Behind every great power stands a great mind. Behind ${H}, at its finest hours, stands ${n}.`,
+        `${n} of ${H} has reached heights most only dream of — and ${pronoun} wears that power with absolute authority.`,
+        `The realm bends to subtle pressures few ever trace back to ${n} of ${H}. This is exactly how ${pronoun} prefers it.`,
+        `A figure at the absolute peak of ${poss} craft — ${n} of ${H} in ${poss} prime is the most formidable version of ${poss}.`,
+        `${n}'s judgment, vision, and instinct have made ${poss} indispensable to ${H} — and dangerous to everyone else.`,
+      ];
+      return lines[idx % lines.length];
+    }
+    if (tier === 'legendary') {
+      const lines = [
+        `${n}'s name outlasted ${poss} age — a figure of ${H} so consequential that history itself reorganizes around ${poss}.`,
+        `Generations will speak of ${n} as one of the figures who truly shaped the course of Westerosi history.`,
+        `There are names in the histories, and names that define whole chapters. ${n} of ${H} is unquestionably the latter.`,
+        `${n} reached heights few in all of history have touched — a singular force that reshaped everything around ${poss}.`,
+        `${Hs} produced many great figures. ${n} was something else entirely — an era-defining force history could not ignore.`,
+        `The stories told of ${n} are all true. The trouble is that the truth is stranger and grander than the stories.`,
+        `Centuries from now, ${n}'s name will still be spoken — because what ${pronoun} built and broke and changed still stands.`,
+        `${n} of ${H}: a name that changed the very meaning of power, legacy, and what a single life can accomplish.`,
+      ];
+      return lines[idx % lines.length];
+    }
+    if (tier === 'mythic') {
+      const lines = [
+        `${n} transcended ${H} entirely — becoming not a person but a force, not a life but an era, not a name but a legend.`,
+        `The myths are all true, and all insufficient. No story ever fully captured what ${n} was. The world still wonders.`,
+        `To say ${n} was great is to say fire is warm. The scale simply does not survive translation into ordinary words.`,
+        `Westeros had a before and an after, and the dividing line is the story of ${n} — one for whom history made an exception.`,
+        `Some figures are remembered. Some are honored. ${n} of ${H} still shapes the world long after ${poss} name became myth.`,
+        `Beyond legendary, beyond consequence — ${n} stands in a category with room for exactly one, and ${pronoun} fills it.`,
+        `The greatest of the great: ${n} of ${H}, whose story the world has not finished telling and likely never will.`,
+        `History runs out of words for figures like ${n} — so it makes them into myths instead. The myths still fall short.`,
+      ];
+      return lines[idx % lines.length];
+    }
+    return '';
   }
 
   // ── NAMED VARIANTS ─────────────────────────────────────────────────────────
@@ -323,9 +496,9 @@
     { tier:'uncommon',  vi:1, name:'Captain of the Hill Clans',      desc:'Tyrion led a force of wild Vale hill clans to unexpected victory — a tactical success that surprised even him.', age:25, spec:['armyCmd','smallCouncil'] },
     { tier:'uncommon',  vi:2, name:'Tyrion the Sellsword',           desc:'In Essos without a name, Tyrion Lannister survived on his wits and the charity of those who underestimated him.', age:30, spec:['armyCmd','ally'] },
     { tier:'uncommon',  vi:3, name:'Tyrion in Exile',                desc:'Stripped of everything, Tyrion fled across the Narrow Sea — and found, to his surprise, that he was still himself.', age:32, spec:['hand','ally'] },
-    { tier:'rare',      vi:0, name:'Hand of the King',               desc:'Appointed acting Hand by his father, Tyrion ran King\'s Landing with surprising competence and sharp political cunning.', age:26, spec:['hand','smallCouncil','ruler'] },
+    { tier:'rare',      vi:0, name:'The Acting Hand',                desc:'Appointed acting Hand by his father, Tyrion ran King\'s Landing with surprising competence and sharp political cunning.', age:26, spec:['hand','smallCouncil','ruler'] },
     { tier:'rare',      vi:1, name:'Defender of King\'s Landing',    desc:'The architect of the Blackwater defense — wildfire, chain, and tactical brilliance that saved the capital from destruction.', age:26, spec:['armyCmd','hand','kgCmd'] },
-    { tier:'rare',      vi:2, name:'Lord of Casterly Rock',          desc:'Heir to the Rock — the title Tywin would never grant but which should have been Tyrion\'s by every right of blood.', age:28, spec:['ruler','bank','smallCouncil'] },
+    { tier:'rare',      vi:2, name:'Tyrion, Heir to the Rock',       desc:'Heir to the Rock — the title Tywin would never grant but which should have been Tyrion\'s by every right of blood.', age:28, spec:['ruler','bank','smallCouncil'] },
     { tier:'rare',      vi:3, name:'The Accused',                    desc:'Standing trial for a crime he did not commit, Tyrion Lannister chose to fight — and demanded the trial by combat that shook the city.', age:27, spec:['hand','ally'] },
     { tier:'hero',      vi:0, name:'Tyrion Lannister, Master of Coin', desc:'The most politically gifted Lannister, running the kingdom\'s finances with sharp wit and surprising integrity.', age:28, spec:['hand','smallCouncil','bank'] },
     { tier:'hero',      vi:1, name:'Hand to the Dragon Queen',       desc:'Serving Daenerys as Hand, Tyrion counsels restraint and strategy to the most powerful ruler in the world.', age:35, spec:['hand','smallCouncil','ally'] },
@@ -368,7 +541,7 @@
     { tier:'rare',      vi:0, name:'Lord Commander of the Night\'s Watch', desc:'Elected Lord Commander, Jon governs the Wall with an iron sense of duty and a vision none before him had held.', age:18, spec:['ruler','armyCmd'] },
     { tier:'rare',      vi:1, name:'The Man Who Came Back',          desc:'Killed and resurrected by the Red Woman, Jon Snow returns with a new purpose and a freedom from his vows.', age:19, spec:['kgCmd','armyCmd'] },
     { tier:'rare',      vi:2, name:'Commander of Castle Black',      desc:'He rebuilt the Night\'s Watch, held the Wall, and forged an alliance with the Free Folk — all before his twentieth year.', age:18, spec:['ruler','armyCmd','kgCmd'] },
-    { tier:'hero',      vi:0, name:'King in the North',              desc:'Proclaimed King in the North by the lords who bent the knee, Jon leads the North toward the Long Night ahead.', age:20, spec:['ruler','armyCmd','kgCmd'] },
+    { tier:'hero',      vi:0, name:'Jon Snow, the White Wolf',       desc:'Proclaimed King in the North by the lords who bent the knee, the White Wolf leads a united North toward the Long Night ahead.', age:20, spec:['ruler','armyCmd','kgCmd'] },
     { tier:'hero',      vi:1, name:'Jon the Dragon Rider',           desc:'Heir to the Iron Throne by blood, who rode Rhaegal into battle — a warrior of legendary lineage finally revealed.', age:21, spec:['kgCmd','armyCmd','kingsguard'] },
     { tier:'hero',      vi:2, name:'Shield of the Realm',            desc:'The man who united wildings and watchmen, lords and freefolk, against a threat none of them wanted to believe in.', age:21, spec:['ruler','armyCmd','kgCmd','ally'] },
     { tier:'legendary', vi:0, name:'Jon Stark, Guardian of the North', desc:'The man who forged the alliance between the living and the dead, whose sacrifice ended the Long Night forever.', age:22, spec:['ruler','armyCmd','hand','ally'] },
@@ -418,7 +591,7 @@
     { tier:'rare',      vi:1, name:'Bearer of Oathkeeper',           desc:'He who gave Brienne of Tarth a Valyrian steel sword and charged her with keeping the Stark girls safe.', age:37, spec:['kgCmd','kingsguard','ally'] },
     { tier:'rare',      vi:2, name:'Jaime, Champion Unbroken',       desc:'Even in chains, even humbled, even stripped of his identity — the best swordsman alive remained exactly that.', age:38, spec:['kgCmd','kingsguard'] },
     { tier:'hero',      vi:0, name:'Jaime the Golden Lion',          desc:'At his peak, Ser Jaime Lannister was the finest sword in the Seven Kingdoms — a warrior of unparalleled skill and blazing glory.', age:30, spec:['kgCmd','kingsguard','armyCmd'] },
-    { tier:'hero',      vi:1, name:'Lord Commander of the Kingsguard', desc:'A battle-scarred veteran reforming the Kingsguard into something the realm could be proud of.', age:38, spec:['kgCmd','kingsguard','ruler','smallCouncil'] },
+    { tier:'hero',      vi:1, name:'Jaime, Lord Commander of the White', desc:'A battle-scarred veteran reforming the Kingsguard from within — turning the white cloaks back into something the realm could be proud of.', age:38, spec:['kgCmd','kingsguard','ruler','smallCouncil'] },
     { tier:'hero',      vi:2, name:'The Lion at Full Strength',      desc:'No rider was faster, no blade was keener, no knight was more feared — Jaime Lannister in his prime was beyond compare.', age:28, spec:['kgCmd','kingsguard','armyCmd','ruler'] },
     { tier:'legendary', vi:0, name:'Jaime Lannister, the Golden Lion', desc:'A legend of the sword and a man who could have been the greatest knight who ever lived — if only he had chosen differently.', age:40, spec:['kgCmd','kingsguard','armyCmd','hand'] },
     { tier:'legendary', vi:1, name:'Ser Jaime, Knight of Legends',   desc:'The knight whose name echoed through every tourney, every war, every court — the golden standard all others were measured against.', age:40, spec:['kgCmd','kingsguard','armyCmd','ruler','ally'] },
@@ -474,9 +647,9 @@
     { tier:'starter',   vi:0, name:'Lady Sansa, Returned Home',      desc:'Home at last, Sansa Stark reclaims Winterfell and begins the slow work of rebuilding what was broken.', age:20, spec:['ruler','ally'] },
     { tier:'starter',   vi:1, name:'Sansa, Warden of the North',     desc:'Acting lord of the North while her brother fights wars in the south, Sansa proves a capable and steady hand.', age:21, spec:['ruler','smallCouncil'] },
     { tier:'uncommon',  vi:0, name:'Sansa the Shrewd',               desc:'The scheming Stark daughter who played Littlefinger and the knights of the Vale like pieces on a board.', age:21, spec:['smallCouncil','hand','ruler'] },
-    { tier:'uncommon',  vi:1, name:'The Winter Rose',                desc:'Cold and calculating, Sansa Stark learned from the best and the worst — and survived them all.', age:22, spec:['ruler','hand','ally'] },
+    { tier:'uncommon',  vi:1, name:'The Winter Rose',                desc:'The rose that bloomed in the cold — Sansa turned every one of Littlefinger\'s lessons back against him, and emerged the sharper player for it.', age:22, spec:['ruler','hand','ally'] },
     { tier:'rare',      vi:0, name:'Sansa Stark, Northern Queen',    desc:'The Queen in the North who won independence for her people through political skill no sword could match.', age:22, spec:['ruler','hand','smallCouncil','ally'] },
-    { tier:'rare',      vi:1, name:'Voice of the Free North',        desc:'She speaks for the North in every council — and the North listens, because she has never once been wrong.', age:23, spec:['ruler','hand','smallCouncil'] },
+    { tier:'rare',      vi:1, name:'Voice of the Free North',        desc:'When the lords of the North declared their independence, it was Sansa\'s steady voice that named the price of freedom — and her will that held the young kingdom together.', age:23, spec:['ruler','hand','smallCouncil'] },
     { tier:'hero',      vi:0, name:'Queen Sansa I of the North',     desc:'The first Queen in the North since the age of the Old Kings — a ruler who remade the North in her own image.', age:24, spec:['ruler','hand','smallCouncil','bank','ally'] },
     { tier:'hero',      vi:1, name:'Sansa Stark, the Last Wolf',     desc:'The last Stark standing in Winterfell\'s halls — and the most politically formidable of the lot.', age:25, spec:['ruler','hand','smallCouncil','heir'] },
     { tier:'legendary', vi:0, name:'Sansa the Great',                desc:'A sovereign who matched and surpassed every lord who underestimated her — the greatest queen the North ever produced.', age:35, spec:['ruler','hand','smallCouncil','bank','ally','heir'] },
@@ -502,7 +675,7 @@
     { tier:'starter',   vi:2, name:'Ned, Father of Wolves',          desc:'Before politics swallowed him, Eddard Stark was simply the finest lord the North had ever produced.', age:38, spec:['ruler','ally'] },
     { tier:'uncommon',  vi:0, name:'Ned Stark, the Rebel',           desc:'He who fought at Robert\'s side from the stormlands to the Trident — brave, loyal, and deadly with Ice.', age:18, spec:['armyCmd','kgCmd','ruler'] },
     { tier:'uncommon',  vi:1, name:'The Gray-Eyed Lord',             desc:'The stern and just Lord of Winterfell, whose word is bond and whose honor is absolute and unbreakable.', age:36, spec:['ruler','hand','ally'] },
-    { tier:'rare',      vi:0, name:'Hand of the King',               desc:'Brought south to serve a friend, Ned uncovers a conspiracy that will cost him everything — but he cannot stop.', age:37, spec:['hand','ruler','smallCouncil'] },
+    { tier:'rare',      vi:0, name:'Hand of King Robert',            desc:'Brought south to serve a friend, Ned uncovers a conspiracy that will cost him everything — but he cannot stop.', age:37, spec:['hand','ruler','smallCouncil'] },
     { tier:'rare',      vi:1, name:'Keeper of the Realm\'s Secret',  desc:'The man who climbed the Tower of Joy, crossed three Kingsguard blades, and carried a world-shaking secret home.', age:22, spec:['ruler','hand','kgCmd','ally'] },
     { tier:'rare',      vi:2, name:'The Last Honorable Man',         desc:'In an age of liars, the most honest man in the realm walked into the most dishonest city in the world. It did not end well.', age:38, spec:['hand','ruler','ally'] },
     { tier:'hero',      vi:0, name:'Eddard Stark, the Quiet Wolf',   desc:'A ruler of supreme honor and quiet power — the kind of lord men follow into battle without a single question.', age:38, spec:['ruler','hand','armyCmd','ally'] },
@@ -516,12 +689,12 @@
     { tier:'starter',   vi:0, name:'Robb Stark, Young Heir',         desc:'The eldest son of Eddard Stark, training with his father\'s direwolf at his side, not yet touched by war.', age:14, spec:['heir','ruler'] },
     { tier:'starter',   vi:1, name:'The Young Wolf',                 desc:'The heir to Winterfell, raised to duty and honor, not yet tested by the reality of war and betrayal.', age:15, spec:['ruler','armyCmd'] },
     { tier:'starter',   vi:2, name:'Robb, the Heir Untested',        desc:'Before the war, Robb Stark was a boy in a man\'s world — watching, waiting, learning from a father he would soon have to avenge.', age:14, spec:['armyCmd','ruler'] },
-    { tier:'uncommon',  vi:0, name:'Lord of Winterfell',             desc:'Thrust into lordship after his father\'s death, Robb rallies the North with unexpected ferocity and tactical genius.', age:16, spec:['ruler','armyCmd','ally'] },
+    { tier:'uncommon',  vi:0, name:'The New Lord of Winterfell',     desc:'Thrust into lordship after his father\'s death, Robb rallies the North with unexpected ferocity and tactical genius.', age:16, spec:['ruler','armyCmd','ally'] },
     { tier:'uncommon',  vi:1, name:'The March South',                desc:'The Young Wolf who marched south with a Northern army and hadn\'t lost a single battle yet.', age:17, spec:['armyCmd','ruler'] },
     { tier:'rare',      vi:0, name:'Victor of the Whispering Wood',  desc:'The commander who captured Jaime Lannister in one brilliant night battle, sending shockwaves through all of Westeros.', age:17, spec:['armyCmd','kgCmd','ruler'] },
     { tier:'rare',      vi:1, name:'King in the North',              desc:'Proclaimed King in the North and the Trident — a king who never lost a battle, and lost the war to treachery.', age:18, spec:['ruler','armyCmd','ally'] },
     { tier:'rare',      vi:2, name:'The Unbroken General',           desc:'Every engagement, every march, every campaign — Robb Stark\'s tactical record was perfect until the day it ended.', age:18, spec:['armyCmd','kgCmd','ruler','ally'] },
-    { tier:'hero',      vi:0, name:'Robb Stark, the Wolf King',      desc:'An undefeated king on the battlefield, whose military record stood without blemish until Walder Frey\'s treachery.', age:19, spec:['armyCmd','kgCmd','ruler','ally'] },
+    { tier:'hero',      vi:0, name:'Robb Stark, the Undefeated',     desc:'An undefeated king on the battlefield, whose military record stood without blemish until Walder Frey\'s treachery.', age:19, spec:['armyCmd','kgCmd','ruler','ally'] },
     { tier:'hero',      vi:1, name:'The Legendary Wolf',             desc:'The King in the North who earned his crown and kept it on the battlefield — a commander of rare and terrifying genius.', age:20, spec:['armyCmd','ruler','kgCmd','hand'] },
     { tier:'legendary', vi:0, name:'Robb Stark, the Wolf King',      desc:'The undefeated general who fought a larger, richer, better-equipped enemy to a standstill — and would have won if not for treachery. The greatest battlefield king the North ever produced.', age:20, spec:['ruler','armyCmd','kgCmd','ally','hand'] },
     { tier:'mythic',    vi:0, name:'Robb Stark, King of the Seven Kingdoms', desc:'In a world without Red Weddings, Robb Stark\'s flawless campaign ended in total victory — and his reign ushered in an era of northern strength and southern peace without precedent.', age:35, spec:['ruler','armyCmd','hand','ally','smallCouncil'] },
@@ -542,7 +715,7 @@
 
   NAMED['stannis'] = [
     { tier:'starter',   vi:0, name:'Stannis of Storm\'s End',        desc:'The lord who held Storm\'s End through a year-long siege by eating rats and boot leather — without ever complaining.', age:20, spec:['armyCmd','ruler'] },
-    { tier:'starter',   vi:1, name:'Lord of Dragonstone',            desc:'The brooding lord of Dragonstone, Master of Ships, who knows the law and follows it to the letter without exception.', age:32, spec:['armyCmd','smallCouncil'] },
+    { tier:'starter',   vi:1, name:'Stannis, Master of Ships',       desc:'The brooding lord of Dragonstone and Master of Ships on Robert\'s council — a man who knows the law and follows it to the letter without exception.', age:32, spec:['armyCmd','smallCouncil'] },
     { tier:'uncommon',  vi:0, name:'Stannis the Just',               desc:'A ruler who dispenses justice without mercy or favoritism — everyone gets exactly what they deserve.', age:35, spec:['ruler','hand','smallCouncil'] },
     { tier:'uncommon',  vi:1, name:'Stannis the Assailant',          desc:'He who led the assault on King\'s Landing with righteous fury, only to be broken by wildfire and the golden rose.', age:36, spec:['armyCmd','kgCmd','ruler'] },
     { tier:'rare',      vi:0, name:'Champion of the North',          desc:'He who answered the Night\'s Watch\'s call and saved the Wall when no other king would even consider it.', age:38, spec:['armyCmd','ruler','kgCmd'] },
@@ -678,6 +851,45 @@
     'small-council','kg-commander','ally','bank'
   ]);
 
+  const SFX_POOLS = {
+    starter: STARTER_SFX, uncommon: UNCOMMON_SFX, rare: RARE_SFX,
+    hero: HERO_SFX, legendary: LEG_EPITHETS, mythic: MYTHIC_SFX,
+  };
+
+  // Produce a globally-unique NAME for a card whose name already collided.
+  // Tries era-appropriate epithets and a full-name prefix before any fallback.
+  function uniqueName(card, char, used) {
+    const full = cleanName(char.name);
+    const h = (char.houses && char.houses[0]) || 'the Realm';
+    const pool = SFX_POOLS[card.tier] || [];
+    // Strip a trailing pool epithet to recover the root title.
+    let root = card.name;
+    for (const sfx of pool) { if (root === full + ' ' + sfx) { root = full; break; } }
+    const cands = [];
+    for (const sfx of pool) cands.push(`${root} ${sfx}`);
+    if (!card.name.startsWith(full)) {
+      cands.push(`${full}, ${card.name}`);
+      for (const sfx of pool) cands.push(`${full} ${sfx}`);
+    }
+    cands.push(`${card.name} of House ${h}`);
+    for (const c of cands) if (!used.has(c)) return c;
+    let i = 2; while (used.has(`${card.name} (${i})`)) i++;
+    return `${card.name} (${i})`;
+  }
+
+  // Produce a globally-unique DESCRIPTION for an auto card whose desc collided,
+  // by hopping to a different template line for the same character & tier.
+  function uniqueDesc(card, char, used) {
+    for (let k = 1; k <= 40; k++) {
+      const d = autoDesc(char, card.tier, (card._vi || 0) + k * 5);
+      if (d && !used.has(d)) return d;
+    }
+    // Last resort (effectively never reached): minimally distinguish.
+    let i = 2; let cand = `${card.desc} (${i})`;
+    while (used.has(cand)) { i++; cand = `${card.desc} (${i})`; }
+    return cand;
+  }
+
   function generateAllCards() {
     const chars = (window.CHARACTERS || []).filter(c =>
       !c.isDragon && c.name && c.id &&
@@ -699,17 +911,36 @@
             id: `cc_${char.id}_${tier}_${vi}`,
             charId: char.id,
             name: nv?.name || autoName(char, tier, vi),
-            desc: nv?.desc || autoDesc(char, tier),
+            desc: nv?.desc || autoDesc(char, tier, vi),
             age: nv?.age != null ? nv.age : (char.age || 30),
             houses: char.houses || ['Unknown'],
             gender: char.gender || 'M',
             tier,
             overall: scores.overall,
             scores,
+            unlimited: !!char.unlimited,
+            _named: !!nv,
+            _char: char,
+            _vi: vi,
           });
         }
       });
     });
+
+    // ── Global uniqueness pass ────────────────────────────────────────────────
+    // Guarantee every card has a unique name AND a unique description. Hand-
+    // authored NAMED cards are reserved first so they keep their crafted text;
+    // auto-generated collisions (variant-character pairs, high-vi cards) yield.
+    const usedNames = new Set();
+    const usedDescs = new Set();
+    const ordered = cards.filter(c => c._named).concat(cards.filter(c => !c._named));
+    ordered.forEach(c => {
+      if (usedNames.has(c.name)) c.name = uniqueName(c, c._char, usedNames);
+      usedNames.add(c.name);
+      if (usedDescs.has(c.desc)) c.desc = uniqueDesc(c, c._char, usedDescs);
+      usedDescs.add(c.desc);
+    });
+    cards.forEach(c => { delete c._named; delete c._char; delete c._vi; });
     return cards;
   }
 

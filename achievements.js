@@ -395,7 +395,7 @@ window.ACHIEVEMENTS = [
   { id:'ach_chaos_tyrell',     name:'Thorn in Their Side',      icon:'🌹', rarity:'common',   desc:'Defeat a House Tyrell lineup on the Chaos Ladder.', cat:'Chaos Ladder' },
   { id:'ach_chaos_baratheon',  name:'Our Fury',                 icon:'🦌', rarity:'uncommon', desc:'Defeat a House Baratheon lineup on the Chaos Ladder.', cat:'Chaos Ladder' },
   { id:'ach_chaos_blackfyre',  name:'Dragon Slain',             icon:'⚔️', rarity:'uncommon', desc:'Defeat a House Blackfyre lineup on the Chaos Ladder.', cat:'Chaos Ladder' },
-  { id:'ach_chaos_essos',      name:'Breaker of Chains',        icon:'🏺', rarity:'uncommon', desc:'Defeat an Essos lineup on the Chaos Ladder.', cat:'Chaos Ladder' },
+  { id:'ach_chaos_essos',      name:'Across the Narrow Sea',    icon:'🏺', rarity:'uncommon', desc:'Defeat an Essos lineup on the Chaos Ladder.', cat:'Chaos Ladder' },
   { id:'ach_chaos_martell',    name:'Unbowed, Unbroken',        icon:'☀️', rarity:'uncommon', desc:'Defeat a House Martell lineup on the Chaos Ladder.', cat:'Chaos Ladder' },
   { id:'ach_chaos_lannister',  name:'A Lion Always Falls',      icon:'🦁', rarity:'rare',     desc:'Defeat a House Lannister lineup on the Chaos Ladder.', cat:'Chaos Ladder' },
   { id:'ach_chaos_stark',      name:'The North Remembers Defeat',icon:'🐺', rarity:'rare',     desc:'Defeat a House Stark lineup on the Chaos Ladder.', cat:'Chaos Ladder' },
@@ -535,8 +535,8 @@ window.ACHIEVEMENTS = [
   { id:'ach_gendry',        name:'The Bull',                  icon:'🔨', rarity:'common',    desc:'Place Gendry in any position.', cat:'Characters' },
   { id:'ach_lyanna_mormont_any',name:'Bear Island Knows No King',icon:'🐻',rarity:'uncommon',desc:'Place Lyanna Mormont in any position.', cat:'Characters' },
   { id:'ach_nymeria_sand',  name:'Nymeria of the Spear',      icon:'☀️', rarity:'uncommon',  desc:'Place Nymeria Sand in any position.', cat:'Characters' },
-  { id:'ach_aenys',         name:'The Gentle King',           icon:'🕊️', rarity:'uncommon',  desc:'Place Aenys I in any position.', cat:'Characters' },
-  { id:'ach_daeron1',       name:'The Young Dragon',          icon:'🐉', rarity:'common',    desc:'Place Daeron I in any position.', cat:'Characters' },
+  { id:'ach_aenys',         name:'Aenys at Court',            icon:'🕊️', rarity:'uncommon',  desc:'Place Aenys I in any position.', cat:'Characters' },
+  { id:'ach_daeron1',       name:'The Boy Who Took Dorne',    icon:'🐉', rarity:'common',    desc:'Place Daeron I in any position.', cat:'Characters' },
   { id:'ach_daemon_blackfyre',name:'The Black Dragon',        icon:'🖤', rarity:'rare',      desc:'Place Daemon Blackfyre in any position.', cat:'Characters' },
 
   // ── NEW CONSORT ACHIEVEMENTS ──────────────────────────────────────────────────
@@ -574,7 +574,7 @@ window.ACHIEVEMENTS = [
   { id:'ach_all_blackfyre', name:'The Black Dragon Court',    icon:'🖤', rarity:'epic',      desc:'Fill all 5 Classic slots with Blackfyre characters exclusively.', cat:'Epic' },
   { id:'ach_all_hightower', name:'Hightower Dominance',       icon:'🕯️', rarity:'rare',      desc:'Fill all 5 Classic slots with Hightower characters exclusively.', cat:'Rare' },
   { id:'ach_all_frey',      name:'Many and More',             icon:'🏰', rarity:'legendary', desc:'Fill all 5 Classic slots with Frey characters exclusively — quite the achievement.', cat:'Legendary' },
-  { id:'ach_all_essos',     name:'The Free Cities Court',     icon:'⛵', rarity:'epic',      desc:'Fill all 5 Classic slots with Essos characters exclusively.', cat:'Epic' },
+  { id:'ach_all_essos',     name:'The Nine Free Cities',      icon:'⛵', rarity:'epic',      desc:'Fill all 5 Classic slots with Essos characters exclusively.', cat:'Epic' },
   { id:'ach_all_bannermen', name:'Lords of the Land',         icon:'🏹', rarity:'rare',      desc:'Fill all 5 Classic slots with Bannermen characters exclusively.', cat:'Rare' },
   { id:'ach_pack_baratheon',name:'The Fury Pack',             icon:'🦌', rarity:'uncommon',  desc:'Draft 3 or more Baratheon characters in a single Classic game.', cat:'Uncommon' },
   { id:'ach_pack_martell',  name:'The Dornish Court',         icon:'☀️', rarity:'uncommon',  desc:'Draft 3 or more Martell characters in a single Classic game.', cat:'Uncommon' },
@@ -608,7 +608,6 @@ window.ACHIEVEMENTS = [
   { id:'ach_chaos_perfect', name:'Chaos Perfection',          icon:'👑', rarity:'legendary', desc:'Score 100 or more points on any single Chaos Ladder rung.', cat:'Chaos Ladder' },
 
   // ── NEW DYNASTY ACHIEVEMENTS ──────────────────────────────────────────────────
-  { id:'ach_dynasty_5_games',   name:'Dynasty Beginner',           icon:'👑', rarity:'common',    desc:'Play 5 Dynasty Mode games.', cat:'Dynasty' },
   { id:'ach_dynasty_200',       name:'Dynasty Humble Beginnings',  icon:'🏚️', rarity:'common',   desc:'Score 200 or more in Dynasty Mode.', cat:'Dynasty' },
   { id:'ach_dynasty_210',       name:'Gaining Ground',             icon:'🏰', rarity:'common',    desc:'Score 210 or more in Dynasty Mode.', cat:'Dynasty' },
   { id:'ach_dynasty_council_20',name:'Council in Training',        icon:'📜', rarity:'common',    desc:'Score 20+ in the Council group in Dynasty Mode.', cat:'Dynasty' },
@@ -664,7 +663,7 @@ window.ACHIEVEMENTS = [
   { id:'ach_coll_score_60',      name:'Commanding Position',       icon:'📊', rarity:'uncommon',  desc:'Score 60 or more in a single Collector Mode game.', cat:'Collector' },
   { id:'ach_coll_score_70',      name:'Formidable Deck',           icon:'📊', rarity:'uncommon',  desc:'Score 70 or more in a single Collector Mode game.', cat:'Collector' },
   { id:'ach_coll_score_80',      name:'The Grand Court',           icon:'📊', rarity:'rare',      desc:'Score 80 or more in a single Collector Mode game.', cat:'Collector' },
-  { id:'ach_coll_score_90',      name:'Near Perfection',           icon:'📊', rarity:'epic',      desc:'Score 90 or more in a single Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_score_90',      name:'Masterful Draw',            icon:'📊', rarity:'epic',      desc:'Score 90 or more in a single Collector Mode game.', cat:'Collector' },
   { id:'ach_coll_perfect',       name:'A Perfect Hand',            icon:'✨', rarity:'legendary', desc:'Score a perfect 100 in Collector Mode.', cat:'Collector' },
 
   // Win Margins
@@ -797,61 +796,45 @@ window.ACHIEVEMENTS = [
     if (avg >= 4) return 'rare'; return 'epic';
   }
 
+  // Push only if neither the id nor the DESCRIPTION already exists. Deduping by
+  // description means characters that share a display name (e.g. the three Jon
+  // Snow variants) collapse to ONE achievement instead of identical duplicates.
+  // The unlock checker matches by name so any variant still earns it.
+  function pushIfNew(id, desc, cat, fields) {
+    if (coveredIds.has(id) || coveredDescs.has(desc)) return;
+    window.ACHIEVEMENTS.push({ id, desc, cat, ...fields });
+    coveredIds.add(id); coveredDescs.add(desc);
+  }
+
   for (const c of window.CHARACTERS) {
-    const rid = 'ach_dyn_ruler_' + c.id;
-    const rulerDesc = 'Place ' + c.name + ' as Ruler.';
-    if (!coveredIds.has(rid) && !coveredDescs.has(rulerDesc)) {
-      window.ACHIEVEMENTS.push({ id:rid, name:rulerName(c), icon:c.gender==='F'?'👸':'♚', rarity:rulerRarity(c),
-        desc:rulerDesc, cat:'Rulers' });
-    }
-    const hid = 'ach_dyn_hand_' + c.id;
-    const handDesc = 'Place ' + c.name + ' as Hand of the King.';
-    if (!coveredIds.has(hid) && !coveredDescs.has(handDesc)) {
-      window.ACHIEVEMENTS.push({ id:hid, name:handName(c), icon:'✋', rarity:handRarity(c),
-        desc:handDesc, cat:'Hands' });
-    }
-    const eid = 'ach_dyn_heir_' + c.id;
-    const heirDesc = 'Place ' + c.name + ' as Heir.';
-    if (!coveredIds.has(eid) && !coveredDescs.has(heirDesc)) {
-      window.ACHIEVEMENTS.push({ id:eid, name:heirName(c), icon:'🌱', rarity:heirRarity(c),
-        desc:heirDesc, cat:'Heirs' });
-    }
-    const aid = 'ach_dyn_any_' + c.id;
-    if (!coveredIds.has(aid)) {
-      window.ACHIEVEMENTS.push({ id:aid, name:anyName(c), icon:c.gender==='F'?'♀️':'♂️', rarity:anyRarity(c),
-        desc:'Draft ' + c.name + ' onto any board.', cat:'Characters' });
-    }
+    const n0 = c.name.split(' ')[0];
+    pushIfNew('ach_dyn_ruler_' + c.id, 'Place ' + c.name + ' as Ruler.', 'Rulers',
+      { name:rulerName(c), icon:c.gender==='F'?'👸':'♚', rarity:rulerRarity(c) });
+    pushIfNew('ach_dyn_hand_' + c.id, 'Place ' + c.name + ' as Hand of the King.', 'Hands',
+      { name:handName(c), icon:'✋', rarity:handRarity(c) });
+    pushIfNew('ach_dyn_heir_' + c.id, 'Place ' + c.name + ' as Heir.', 'Heirs',
+      { name:heirName(c), icon:'🌱', rarity:heirRarity(c) });
+    pushIfNew('ach_dyn_any_' + c.id, 'Draft ' + c.name + ' onto any board.', 'Characters',
+      { name:anyName(c), icon:c.gender==='F'?'♀️':'♂️', rarity:anyRarity(c) });
 
     // Dynasty-specific position achievements (auto-awarded, excluded from main display)
     if (c.gender === 'F') {
-      const cid = 'ach_dyn_consort_' + c.id;
-      if (!coveredIds.has(cid)) {
-        const avgScore = (c.scores.R + c.scores.H + c.scores.Hr + c.scores.C + c.scores.KG) / 5;
-        const rarity = avgScore >= 8 ? 'common' : avgScore >= 6 ? 'uncommon' : avgScore >= 4 ? 'rare' : 'epic';
-        window.ACHIEVEMENTS.push({ id: cid, name: c.name.split(' ')[0] + ' Takes the Consort Seat',
-          icon: '💍', rarity, desc: 'Place ' + c.name + ' as Consort in Dynasty Mode.', cat: 'Dynasty Consorts' });
-      }
+      const avgScore = (c.scores.R + c.scores.H + c.scores.Hr + c.scores.C + c.scores.KG) / 5;
+      const rarity = avgScore >= 8 ? 'common' : avgScore >= 6 ? 'uncommon' : avgScore >= 4 ? 'rare' : 'epic';
+      pushIfNew('ach_dyn_consort_' + c.id, 'Place ' + c.name + ' as Consort in Dynasty Mode.', 'Dynasty Consorts',
+        { name: n0 + ' Takes the Consort Seat', icon:'💍', rarity });
     }
-    const gmid = 'ach_dyn_gm_' + c.id;
-    if (!coveredIds.has(gmid) && !c.isDragon) {
+    if (!c.isDragon) {
       const gm = c.ds?.GM ?? (Math.max((c.scores.SC||1), (c.scores.H||1)) * 0.85);
-      const rarity = gm >= 8 ? 'common' : gm >= 6 ? 'uncommon' : gm >= 4 ? 'rare' : 'epic';
-      window.ACHIEVEMENTS.push({ id: gmid, name: c.name.split(' ')[0] + ' Advises the Realm',
-        icon: '📜', rarity, desc: 'Place ' + c.name + ' as Grand Maester in Dynasty Mode.', cat: 'Dynasty Council' });
-    }
-    const wrid = 'ach_dyn_warden_' + c.id;
-    if (!coveredIds.has(wrid) && !c.isDragon) {
+      const gmRar = gm >= 8 ? 'common' : gm >= 6 ? 'uncommon' : gm >= 4 ? 'rare' : 'epic';
+      pushIfNew('ach_dyn_gm_' + c.id, 'Place ' + c.name + ' as Grand Maester in Dynasty Mode.', 'Dynasty Council',
+        { name: n0 + ' Advises the Realm', icon:'📜', rarity:gmRar });
       const ac = c.scores.AC || 1;
-      const rarity = ac >= 8 ? 'common' : ac >= 6 ? 'uncommon' : ac >= 4 ? 'rare' : 'epic';
-      window.ACHIEVEMENTS.push({ id: wrid, name: c.name.split(' ')[0] + ' Wardens the Border',
-        icon: '🗺️', rarity, desc: 'Place ' + c.name + ' as a Warden in Dynasty Mode.', cat: 'Dynasty Army' });
-    }
-    const amid = 'ach_dyn_army_' + c.id;
-    if (!coveredIds.has(amid) && !c.isDragon) {
-      const ac = c.scores.AC || 1;
-      const rarity = ac >= 8 ? 'common' : ac >= 6 ? 'uncommon' : ac >= 4 ? 'rare' : 'epic';
-      window.ACHIEVEMENTS.push({ id: amid, name: c.name.split(' ')[0] + ' Commands the Army',
-        icon: '⚔️', rarity, desc: 'Place ' + c.name + ' as Army Commander or KG Commander in Dynasty Mode.', cat: 'Dynasty Army' });
+      const acRar = ac >= 8 ? 'common' : ac >= 6 ? 'uncommon' : ac >= 4 ? 'rare' : 'epic';
+      pushIfNew('ach_dyn_warden_' + c.id, 'Place ' + c.name + ' as a Warden in Dynasty Mode.', 'Dynasty Army',
+        { name: n0 + ' Wardens the Border', icon:'🗺️', rarity:acRar });
+      pushIfNew('ach_dyn_army_' + c.id, 'Place ' + c.name + ' as Army Commander or KG Commander in Dynasty Mode.', 'Dynasty Army',
+        { name: n0 + ' Commands the Army', icon:'⚔️', rarity:acRar });
     }
   }
 })();
