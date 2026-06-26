@@ -6410,86 +6410,113 @@ function LadderScreen({ onBack, onChallenge, progress }) {
 function ChaosEndScreen({ rung, board, opponentBoard, opponentScore, isWin, progress, totalRungs, onRetry, onNext, onLadder, onHome, newAchievements }) {
   const playerScore = calcScore(board);
   const ft = x => Math.floor(x * 10) / 10;
-  const SCORE_KEYS = ['R','H','Hr','AC','KG','KGC','SC','Bank','Ally','Con'];
-  const SCORE_NAMES = { R:'Ruler',H:'Hand',Hr:'Heir',AC:'Commander',KG:'Kingsguard',KGC:'Kingsguard Commander',SC:'Small Council',Bank:'Bank',Ally:'Ally',Con:'Consort' };
+  const [viewTab, setViewTab] = useState('player');
   const achData = (newAchievements || []).map(id => ACHIEVEMENTS.find(a => a.id === id)).filter(Boolean);
 
   useEffect(() => { isWin ? AudioManager.playVictory() : AudioManager.playDefeat(); }, []);
 
+  function renderLineup(brd, totalSc, color, label) {
+    if (!brd || !brd.length) return (
+      <div style={{ textAlign:'center', color:'var(--text2)', padding:24, fontSize:'0.78rem' }}>No lineup data</div>
+    );
+    return (
+      <div className="card" style={{ borderColor: color }}>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.78rem', color, fontWeight:700, marginBottom:8 }}>{label}</div>
+        {brd.map(slot => {
+          const sc = getSlotScore(slot);
+          return (
+            <div key={slot.slotId} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4, fontSize:'0.78rem' }}>
+              <div style={{ width:90, fontSize:'0.6rem', color:'var(--text2)', fontFamily:'Cinzel,serif', flexShrink:0 }}>{slot.positionName}</div>
+              <div style={{ flex:1, color: slot.character ? 'var(--text)' : 'var(--text2)', fontStyle: slot.character ? 'normal' : 'italic', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                {slot.character ? slot.character.name : '— empty —'}
+              </div>
+              {slot.character && (
+                <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, minWidth:24, textAlign:'right', color:scoreColor(sc), flexShrink:0 }}>{ft(sc)}</div>
+              )}
+            </div>
+          );
+        })}
+        <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid var(--border)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--text2)' }}>TOTAL</div>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.3rem', fontWeight:700, color:totalScoreColor(totalSc, 100) }}>
+            {ft(totalSc)}<span style={{ fontSize:'0.75rem', color:'var(--text2)' }}>/100</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
-      <div className="scroll" style={{ flex: 1, padding: '16px 14px 24px' }}>
-        <div style={{ textAlign: 'center', marginBottom: 16 }}>
-          <div style={{ fontSize: '2.2rem', marginBottom: 6 }}>{isWin ? '⚔' : '☠'}</div>
-          <div style={{ fontFamily: 'Cinzel,serif', fontSize: '1.1rem', color: isWin ? 'var(--gold2)' : '#e05555', fontWeight: 700, letterSpacing: '0.1em' }}>
+      <div className="scroll" style={{ flex:1, padding:'16px 14px 24px' }}>
+        <div style={{ textAlign:'center', marginBottom:16 }}>
+          <div style={{ fontSize:'2.2rem', marginBottom:6 }}>{isWin ? '⚔' : '☠'}</div>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color: isWin ? 'var(--gold2)' : '#e05555', fontWeight:700, letterSpacing:'0.1em' }}>
             {isWin ? 'RUNG CONQUERED' : 'DEFEATED'}
           </div>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text2)', marginTop: 4, fontFamily: 'Cinzel,serif' }}>
+          <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginTop:4, fontFamily:'Cinzel,serif' }}>
             {rung.emoji} Rung {rung.id} — {rung.label}
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-          <div style={{ flex: 1, background: 'var(--bg2)', border: `1px solid ${isWin ? 'var(--gold)' : 'var(--border)'}`, borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.6rem', color: 'var(--text2)', fontFamily: 'Cinzel,serif', marginBottom: 4 }}>YOUR SCORE</div>
-            <div style={{ fontFamily: 'Cinzel,serif', fontSize: '1.5rem', fontWeight: 700, color: totalScoreColor(playerScore, 100) }}>{ft(playerScore)}<span style={{ fontSize:'0.7rem', color:'var(--text2)' }}>/100</span></div>
+        <div style={{ display:'flex', gap:10, marginBottom:12 }}>
+          <div style={{ flex:1, background:'var(--bg2)', border:`1px solid ${isWin ? 'var(--gold)' : 'var(--border)'}`, borderRadius:8, padding:'10px 12px', textAlign:'center' }}>
+            <div style={{ fontSize:'0.6rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginBottom:4 }}>YOUR SCORE</div>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.5rem', fontWeight:700, color:totalScoreColor(playerScore, 100) }}>{ft(playerScore)}<span style={{ fontSize:'0.7rem', color:'var(--text2)' }}>/100</span></div>
           </div>
-          <div style={{ flex: 1, background: 'var(--bg2)', border: `1px solid ${isWin ? 'var(--border)' : '#e05555'}`, borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.6rem', color: 'var(--text2)', fontFamily: 'Cinzel,serif', marginBottom: 4 }}>HOUSE {rung.house.toUpperCase()}</div>
-            <div style={{ fontFamily: 'Cinzel,serif', fontSize: '1.5rem', fontWeight: 700, color: totalScoreColor(opponentScore, 100) }}>{ft(opponentScore)}<span style={{ fontSize:'0.7rem', color:'var(--text2)' }}>/100</span></div>
+          <div style={{ flex:1, background:'var(--bg2)', border:`1px solid ${isWin ? 'var(--border)' : '#e05555'}`, borderRadius:8, padding:'10px 12px', textAlign:'center' }}>
+            <div style={{ fontSize:'0.6rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginBottom:4 }}>HOUSE {rung.house.toUpperCase()}</div>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.5rem', fontWeight:700, color:totalScoreColor(opponentScore, 100) }}>{ft(opponentScore)}<span style={{ fontSize:'0.7rem', color:'var(--text2)' }}>/100</span></div>
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 16 }}>
-          {SCORE_KEYS.map(k => {
-            const mySlot   = board.find(s => s.scoreKey === k);
-            const oppSlot  = opponentBoard?.find(s => s.scoreKey === k);
-            const myScore  = mySlot ? getSlotScore(mySlot) : 0;
-            const oppScore = oppSlot ? getSlotScore(oppSlot) : 0;
-            return (
-              <div key={k} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 8px', fontSize: '0.62rem' }}>
-                <div style={{ color: 'var(--text2)', fontFamily: 'Cinzel,serif', letterSpacing: '0.04em', marginBottom: 2 }}>{SCORE_NAMES[k]}</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: '0.6rem', color: 'var(--text2)' }}>{mySlot?.character?.name?.split(' ')[0] || '—'}</div>
-                    <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, color: scoreColor(myScore) }}>{ft(myScore)}</div>
-                  </div>
-                  <div style={{ color: 'var(--border2)' }}>vs</div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '0.6rem', color: 'var(--text2)' }}>{oppSlot?.character?.name?.split(' ')[0] || '—'}</div>
-                    <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, color: scoreColor(oppScore) }}>{ft(oppScore)}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+        <div style={{ display:'flex', gap:6, marginBottom:10 }}>
+          {[
+            { key:'player',   label:'YOUR LINEUP',              activeColor:'var(--gold)', activeText:'#000' },
+            { key:'opponent', label:`${rung.emoji} ${rung.house.toUpperCase()}`, activeColor:'var(--p2)', activeText:'#fff' },
+          ].map(tab => (
+            <button key={tab.key} onClick={() => setViewTab(tab.key)}
+              style={{ flex:1, padding:'7px 4px', fontFamily:'Cinzel,serif', fontSize:'0.62rem', letterSpacing:'0.05em', fontWeight:700,
+                background: viewTab === tab.key ? tab.activeColor : 'var(--bg2)',
+                color: viewTab === tab.key ? tab.activeText : 'var(--text2)',
+                border:`1px solid ${viewTab === tab.key ? tab.activeColor : 'var(--border)'}`,
+                borderRadius:6, cursor:'pointer' }}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          {viewTab === 'player'
+            ? renderLineup(board, playerScore, isWin ? 'var(--gold)' : 'var(--text2)', 'YOUR LINEUP')
+            : renderLineup(opponentBoard, opponentScore, isWin ? 'var(--text2)' : 'var(--p2)', `HOUSE ${rung.house.toUpperCase()}`)}
         </div>
 
         {achData.length > 0 && (
-          <div style={{ background: 'rgba(201,162,39,0.08)', border: '1px solid var(--gold)', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
-            <div style={{ fontFamily: 'Cinzel,serif', fontSize: '0.7rem', color: 'var(--gold)', marginBottom: 6 }}>🏆 ACHIEVEMENTS UNLOCKED</div>
+          <div style={{ background:'rgba(201,162,39,0.08)', border:'1px solid var(--gold)', borderRadius:8, padding:'10px 12px', marginBottom:14 }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)', marginBottom:6 }}>🏆 ACHIEVEMENTS UNLOCKED</div>
             {achData.map(a => (
-              <div key={a.id} style={{ fontSize: '0.72rem', color: 'var(--text)', marginBottom: 3 }}>{a.icon} {a.name}</div>
+              <div key={a.id} style={{ fontSize:'0.72rem', color:'var(--text)', marginBottom:3 }}>{a.icon} {a.name}</div>
             ))}
           </div>
         )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
           {isWin && progress < totalRungs && (
-            <button className="btn btn-gold" style={{ width: '100%', padding: 14, fontSize: '0.85rem' }} onClick={onNext}>
+            <button className="btn btn-gold" style={{ width:'100%', padding:14, fontSize:'0.85rem' }} onClick={onNext}>
               ⚔ NEXT RUNG ({progress + 1} / {totalRungs}) ⚔
             </button>
           )}
           {isWin && progress >= totalRungs && (
-            <div style={{ textAlign: 'center', fontFamily: 'Cinzel,serif', color: 'var(--gold2)', fontSize: '0.9rem', padding: 12 }}>
+            <div style={{ textAlign:'center', fontFamily:'Cinzel,serif', color:'var(--gold2)', fontSize:'0.9rem', padding:12 }}>
               🏆 ALL 50 RUNGS CONQUERED — THE CHAOS IS YOURS 🏆
             </div>
           )}
           {!isWin && (
-            <button className="btn btn-gold" style={{ width: '100%', padding: 12 }} onClick={onRetry}>↺ TRY AGAIN</button>
+            <button className="btn btn-gold" style={{ width:'100%', padding:12 }} onClick={onRetry}>↺ TRY AGAIN</button>
           )}
-          <button className="btn" style={{ width: '100%', padding: 10 }} onClick={onLadder}>🪜 LADDER</button>
-          <button className="btn btn-ghost" style={{ width: '100%' }} onClick={onHome}>⌂ Home</button>
+          <button className="btn" style={{ width:'100%', padding:10 }} onClick={onLadder}>🪜 LADDER</button>
+          <button className="btn btn-ghost" style={{ width:'100%' }} onClick={onHome}>⌂ Home</button>
         </div>
       </div>
     </div>
