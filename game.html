@@ -7030,9 +7030,9 @@ const TUTORIAL_STEPS = [
   { title:'Welcome to Collector Mode!', body:'Collector Mode lets you build a deck of thousands of unique Character Cards — exclusive variants not found in any other game mode. Grow your collection and compete against the CPU!' },
   { title:'Card Tiers', body:'Every card has a tier: Starter (green), Uncommon (blue), Rare (orange), Hero (purple), Legendary (black), or Mythic (red). Each card\'s Overall rating (0–100) determines its tier. Higher tiers mean more powerful cards.' },
   { title:'Your Deck', body:'You start with 20 cards from your Starting Deck Pull (18 Starters + 2 Uncommons). You must always have at least 20 cards. Grow your deck through Daily Pulls, the Store, and Win Pulls!' },
-  { title:'How Games Work', body:'You and the CPU take turns drafting a court. Each turn you Draw Fate — a random card from your deck — and place it in one of 10 positions: Ruler, Consort, Heir, Hand, Army Commander, Kingsguard Commander, Kingsguard, Small Council, Ally, and Bank. Every card shows its score for each position, so place it where it fits best. Fill all 10 to finish!' },
+  { title:'How Games Work', body:'You and the CPU take turns drafting a court. Each turn you Draw Fate — a random card from your deck — and place it in one of 10 positions: Ruler, Consort, Heir, Hand, Army Commander, Kingsguard Commander, Kingsguard, Small Council, Ally, and Bank. You can freely reposition cards between slots, then Confirm your lineup to end your turn and pass to the CPU. Every card shows its score for each position, so place it where it fits best. Fill all 10 to finish!' },
   { title:'Rerolls', body:'Don\'t like your Fate draw? Spend a Reroll to draw again! You can use up to 3 rerolls per game. Buy more Rerolls in the Store for 20 Gold each. You start with 0 — use your starting Gold wisely!' },
-  { title:'The CPU', body:'There is no preset score to beat — the CPU builds its court alongside you, one card at a time. Each turn it draws Fate from the SAME tier you just drew, choosing from EVERY character in that tier. It will never draft a character already on either board (except infinitely-duplicatable ones), and it always places its card in its best position. Outscore it across all 10 positions to win!' },
+  { title:'The CPU', body:'There is no preset score to beat — the CPU builds its court alongside you, one card at a time. Each turn it draws Fate from your DECK LEVEL — the highest card tier in your deck — choosing from EVERY character in that tier (so a Mythic-level deck always faces a Mythic CPU, regardless of which card you happen to play that round). It never drafts a character already on either board (except infinitely-duplicatable ones), and it always fields its optimal lineup. Outscore it across all 10 positions to win!' },
   { title:'Earning Gold', body:'Complete a game: +5 Gold. Win: +10 (by 5+: +15 · by 10+: +30). Score bonus — the better your cards fit their positions, the higher you score: 60+ → +20 · 70+ → +40 · 80+ → +75 · 90+ → +150 · a perfect 100 → +500 Gold! You can also Wager up to 100 Gold per game.' },
   { title:'Win Pulls', body:'After every win, you get a Win Pull — the 10 characters the CPU played are each randomly turned into a card variant of some tier. Pick ONE card to add to your deck for free!' },
   { title:'The Store & Daily', body:'Visit the Store for the rotating Showcase (5 cards every 24h), direct Buy Cards (Starter/Uncommon/Rare), Lottery spins, Upgrades, and Rerolls. Use the Daily sections for free card pulls and Gold coin rewards every 24 hours!' },
@@ -7972,6 +7972,22 @@ function CollectorWinPull({ winPullCards, onPick, onSkip }) {
 
 // ─── Collector Game ──────────────────────────────────────────────────────────
 
+// Compact music volume + mute control for Collector Mode.
+function VolumeBar() {
+  const [vol, setVol] = React.useState(() => AudioManager.getVolume());
+  const [muted, setMuted] = React.useState(() => AudioManager.isMuted());
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+      <button onClick={() => { const n=!muted; setMuted(n); AudioManager.setMute(n); }}
+        style={{ background:'none', border:'none', cursor:'pointer', fontSize:'0.95rem', padding:0, lineHeight:1 }}
+        title={muted?'Unmute music':'Mute music'}>{muted?'🔇':'🔊'}</button>
+      <input type="range" min="0" max="1" step="0.05" value={muted?0:vol}
+        onChange={e => { const v=parseFloat(e.target.value); setVol(v); AudioManager.setVolume(v); if (muted && v>0) { setMuted(false); AudioManager.setMute(false); } }}
+        style={{ width:70, accentColor:'var(--gold)', cursor:'pointer' }} />
+    </div>
+  );
+}
+
 function CollectorGame({ save, wager, onEnd, onUpdate }) {
   // Player deck: shuffle owned cards
   const [playerDeck] = React.useState(() => {
@@ -7989,35 +8005,57 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
   const [usedCardIds, setUsedCardIds] = React.useState(new Set());
   const [rerollsLeft, setRerollsLeft] = React.useState(Math.min(save.rerolls||0, GAME_REROLL_LIMIT));
   const [rerollsUsed, setRerollsUsed] = React.useState(0);
-  const [cpuBoard, setCpuBoard] = React.useState({});   // built turn-by-turn
+  const [cpuBoard, setCpuBoard] = React.useState({});   // built turn-by-turn (optimal assignment)
+  const [cpuDraftedCards, setCpuDraftedCards] = React.useState([]); // every card the CPU has drafted
   const [lastCpuCard, setLastCpuCard] = React.useState(null);
   const [phase, setPhase] = React.useState('draw'); // draw | place | done
   const [showCpu, setShowCpu] = React.useState(false);
   const [selectedPos, setSelectedPos] = React.useState(null);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
 
-  // CPU drafts a card of the SAME tier the player just drew, from the pool of
-  // EVERY character card in that tier — never duplicating a character already on
-  // either board, except infinitely-duplicatable (unlimited) characters.
-  function cpuDraftCard(tier, playerBoardNow, cpuBoardNow) {
+  // The CPU draws from the player's overall DECK LEVEL — the game's canonical deck tier
+  // (deckTierLabel, based on the deck's average Overall), NOT the tier of whatever card the
+  // player happened to draw this round. A Mythic-level deck always faces a Mythic CPU, even
+  // on rounds the player plays a lower-tier card.
+  const deckLevel = React.useMemo(() => deckTierLabel(save.owned), [save.owned]);
+
+  // CPU drafts a card from the deck-level tier's full pool — never duplicating a character
+  // already on either board, except infinitely-duplicatable (unlimited) characters.
+  function cpuDraftCard(playerBoardNow, cpuDraftedNow) {
     const all = getCollCards();
     const taken = new Set([
       ...Object.values(playerBoardNow).filter(Boolean).map(c=>c.charId),
-      ...Object.values(cpuBoardNow).filter(Boolean).map(c=>c.charId),
+      ...cpuDraftedNow.map(c=>c.charId),
     ]);
     const usable = c => c.unlimited || !taken.has(c.charId);
-    let pool = all.filter(c => c.tier === tier && usable(c));
+    let pool = all.filter(c => c.tier === deckLevel && usable(c));
     if (!pool.length) pool = all.filter(usable);            // fallback: any tier
     if (!pool.length) return null;
     return pool[Math.floor(Math.random()*pool.length)];
   }
 
-  // CPU places its drawn card on whichever open position it scores highest in.
-  function cpuBestPos(card, cpuBoardNow) {
-    const open = COLL_POS.filter(p => !cpuBoardNow[p.id]);
-    if (!open.length) return null;
-    open.sort((a,b) => (card.scores?.[b.id]||0) - (card.scores?.[a.id]||0));
-    return open[0].id;
+  // Assign a set of cards to positions to MAXIMISE total score (greedy seed + pairwise-swap
+  // local search — optimal for boards this small). The CPU always fields this best lineup,
+  // re-optimising (repositioning) every time it drafts a new card.
+  function optimalAssign(cards) {
+    const pids = COLL_POS.map(p => p.id);
+    const pairs = [];
+    cards.forEach((c, ci) => pids.forEach(pid => pairs.push({ ci, pid, s: c.scores?.[pid] || 0 })));
+    pairs.sort((a, b) => b.s - a.s);
+    const assign = {}; const usedC = new Set(), usedP = new Set();
+    for (const pr of pairs) { if (usedC.has(pr.ci) || usedP.has(pr.pid)) continue; assign[pr.pid] = cards[pr.ci]; usedC.add(pr.ci); usedP.add(pr.pid); }
+    let improved = true;
+    while (improved) {
+      improved = false;
+      const ps = Object.keys(assign);
+      for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
+        const p1 = ps[i], p2 = ps[j], c1 = assign[p1], c2 = assign[p2];
+        if (((c1.scores?.[p2] || 0) + (c2.scores?.[p1] || 0)) > ((c1.scores?.[p1] || 0) + (c2.scores?.[p2] || 0))) {
+          assign[p1] = c2; assign[p2] = c1; improved = true;
+        }
+      }
+    }
+    return assign;
   }
 
   function drawFate() {
@@ -8040,25 +8078,41 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
 
   function placeCard(posId) {
     if (!drawnCard || playerBoard[posId]) return;
-    const placedTier = drawnCard.tier;
-    const newBoard = { ...playerBoard, [posId]: drawnCard };
-    const newUsed = new Set([...usedCardIds, drawnCard.id]);
-    // CPU takes its turn: draw fate from the same tier and place optimally.
-    const cpuCard = cpuDraftCard(placedTier, newBoard, cpuBoard);
-    let newCpuBoard = cpuBoard;
-    if (cpuCard) {
-      const cpuPos = cpuBestPos(cpuCard, cpuBoard);
-      if (cpuPos) newCpuBoard = { ...cpuBoard, [cpuPos]: cpuCard };
-    }
-    setPlayerBoard(newBoard);
-    setUsedCardIds(newUsed);
-    setCpuBoard(newCpuBoard);
-    setLastCpuCard(cpuCard || null);
+    setPlayerBoard({ ...playerBoard, [posId]: drawnCard });
+    setUsedCardIds(new Set([...usedCardIds, drawnCard.id]));
     setDrawnCard(null);
     setSelectedPos(null);
-    const filledCount = Object.keys(newBoard).length;
-    if (filledCount >= COLL_POS.length) { setPhase('done'); }
-    else { setPhase('draw'); }
+    setPhase('arrange'); // let the player reposition, then confirm to pass the turn
+  }
+
+  // Reposition during the arrange step: tap a placed card to pick it up, then tap another
+  // slot to move it (into an empty slot) or swap it (with the card already there).
+  function handleReposition(posId) {
+    if (phase !== 'arrange') return;
+    if (selectedPos === null) { if (playerBoard[posId]) setSelectedPos(posId); return; }
+    if (selectedPos === posId) { setSelectedPos(null); return; }
+    const nb = { ...playerBoard };
+    const moving = nb[selectedPos], target = nb[posId];
+    nb[posId] = moving;
+    if (target) nb[selectedPos] = target; else delete nb[selectedPos];
+    setPlayerBoard(nb);
+    setSelectedPos(null);
+  }
+
+  // End the player's turn: the CPU drafts from the deck-level pool and re-fields its optimal
+  // lineup, then play returns to the player (or finishes when the board is full).
+  function confirmTurn() {
+    if (phase !== 'arrange') return;
+    const cpuCard = cpuDraftCard(playerBoard, cpuDraftedCards);
+    if (cpuCard) {
+      const drafted = [...cpuDraftedCards, cpuCard];
+      setCpuDraftedCards(drafted);
+      setCpuBoard(optimalAssign(drafted));
+      setLastCpuCard(cpuCard);
+    }
+    setSelectedPos(null);
+    if (Object.keys(playerBoard).length >= COLL_POS.length) setPhase('done');
+    else setPhase('draw');
   }
 
   function calcScore(board) {
@@ -8184,6 +8238,12 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
         {wager > 0 && <div style={{ fontSize:'0.6rem', color:'var(--gold)' }}>🎲 {wager}G</div>}
       </div>
 
+      {/* Music volume */}
+      <div style={{ display:'flex', justifyContent:'flex-end', alignItems:'center', gap:8, padding:'3px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
+        <span style={{ fontSize:'0.5rem', color:'var(--text2)', fontFamily:'Cinzel,serif', letterSpacing:'0.1em' }}>MUSIC</span>
+        <VolumeBar />
+      </div>
+
       {/* Board */}
       <div className="scroll" style={{ flex:1, padding:'10px 12px' }}>
         {!showCpu ? (
@@ -8250,13 +8310,19 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
               {COLL_POS.map(pos => {
                 const placed = playerBoard[pos.id];
                 const canPlace = phase === 'place' && drawnCard && !placed;
+                const canArrange = phase === 'arrange';
+                const isSelected = canArrange && selectedPos === pos.id;
+                const clickable = canPlace || canArrange;
+                const onClickSlot = canPlace ? () => placeCard(pos.id) : canArrange ? () => handleReposition(pos.id) : undefined;
                 const score = placed ? (placed.scores?.[pos.id]||0) : null;
                 const ct = placed ? (T[placed.tier]||{color:'#888'}) : null;
+                const borderColor = isSelected ? '#fff' : canPlace ? 'var(--gold)' : placed ? ct.color : 'var(--border)';
                 return (
-                  <div key={pos.id} onClick={() => canPlace && placeCard(pos.id)}
-                    style={{ border:`2px solid ${canPlace?'var(--gold)':placed?ct.color:'var(--border)'}`,
-                      borderRadius:6, padding:'8px 10px', cursor:canPlace?'pointer':'default',
-                      background: canPlace ? 'rgba(212,168,48,0.08)' : placed ? ct.bg : 'var(--bg2)',
+                  <div key={pos.id} onClick={onClickSlot}
+                    style={{ border:`2px solid ${borderColor}`,
+                      borderRadius:6, padding:'8px 10px', cursor:clickable?'pointer':'default',
+                      background: isSelected ? 'rgba(255,255,255,0.14)' : canPlace ? 'rgba(212,168,48,0.08)' : placed ? ct.bg : 'var(--bg2)',
+                      boxShadow: isSelected ? '0 0 8px rgba(255,255,255,0.4)' : 'none',
                       transition:'all 0.15s' }}>
                     <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginBottom:2 }}>{pos.label}</div>
                     {placed ? (
@@ -8276,7 +8342,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
                         </span>
                       </div>
                     ) : (
-                      <div style={{ fontSize:'0.65rem', color:'var(--text2)', fontStyle:'italic' }}>— Empty —</div>
+                      <div style={{ fontSize:'0.65rem', color: (canArrange && selectedPos) ? 'var(--gold)' : 'var(--text2)', fontStyle:'italic' }}>{(canArrange && selectedPos) ? '↳ move here' : '— Empty —'}</div>
                     )}
                   </div>
                 );
@@ -8287,7 +8353,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
           /* CPU Board */
           <div>
             <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10 }}>
-              CPU Board · {Object.keys(cpuBoard).length}/{COLL_POS.length} drafted · The CPU draws fate from every card of your drawn tier.
+              CPU Board · {Object.keys(cpuBoard).length}/{COLL_POS.length} drafted · The CPU draws from your deck level ({(T[deckLevel]||{}).label||deckLevel}) and always fields its optimal lineup.
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
               {COLL_POS.map(pos => {
@@ -8317,6 +8383,16 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
       </div>
 
       {/* Bottom action */}
+      {phase === 'arrange' && !showCpu && (
+        <div style={{ padding:'10px 12px', borderTop:'1px solid var(--border)', background:'var(--bg2)' }}>
+          <div style={{ fontSize:'0.58rem', color:'var(--text2)', textAlign:'center', marginBottom:6, fontStyle:'italic' }}>
+            {selectedPos ? 'Tap another slot to move/swap — or tap the same card to cancel.' : 'Tap any placed card to reposition it, then confirm your lineup.'}
+          </div>
+          <button className="btn btn-gold" style={{ width:'100%', padding:'13px', fontSize:'0.85rem', letterSpacing:'0.08em' }} onClick={confirmTurn}>
+            ✓ CONFIRM LINEUP — END TURN
+          </button>
+        </div>
+      )}
       {phase === 'done' && (
         <div style={{ padding:'10px 12px', borderTop:'1px solid var(--border)', background:'var(--bg2)' }}>
           <button className="btn btn-gold" style={{ width:'100%', padding:'14px', fontSize:'0.9rem' }} onClick={handleFinish}>
@@ -8540,7 +8616,8 @@ function CollectorHub({ onHome }) {
             DECK: <CollTierBadge tier={deckTier} /> · {save.owned?.length||0} CARDS
           </div>
         </div>
-        <div className="nav-side" style={{ justifyContent:'flex-end' }}>
+        <div className="nav-side" style={{ justifyContent:'flex-end', gap:8 }}>
+          <VolumeBar />
           <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.55rem' }} onClick={() => setShowTutorial(true)}>?</button>
         </div>
       </div>
