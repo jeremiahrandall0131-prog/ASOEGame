@@ -221,7 +221,7 @@ class ErrorBoundary extends React.Component {
 // ─── Audio Manager ───────────────────────────────────────────────────────────
 const AudioManager = (() => {
   let _ctx = null, _masterGain = null, _musicGain = null, _sfxGain = null, _gameGain = null;
-  let _reverb = null, _dist = null, _rvGainMenu = null, _rvGainGame = null;
+  let _reverb = null, _reverbBuffer = null, _dist = null, _rvGainMenu = null, _rvGainGame = null;
   let _musicPlaying = false, _gamePlaying = false, _muted = false, _initialized = false;
   let _volume = 0.85;
   let _nextLoopTime = 0, _loopTimer = null;
@@ -313,6 +313,7 @@ const AudioManager = (() => {
       const d = rbuf.getChannelData(ch);
       for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 1.8);
     }
+    _reverbBuffer = rbuf;   // cache so the shared reverb can be flushed (recreated) on theme switch
     _reverb.buffer = rbuf;
 
     _rvGainMenu = _ctx.createGain(); _rvGainMenu.gain.value = 0.38;
@@ -1025,12 +1026,26 @@ const AudioManager = (() => {
     } catch(e) {}
   }
 
-  // Guaranteed exclusivity: hard-stop every theme before starting a new one
+  // Recreate the SHARED reverb convolver to flush its tail — otherwise a stopped theme's
+  // reverb keeps ringing through the next theme's wet gain (the audible "bleed"). The impulse
+  // buffer is cached, so this is cheap. Theme gains reconnect to _reverb in their start-loops.
+  function _flushReverb() {
+    if (!_ctx || !_reverbBuffer) return;
+    try { if (_reverb) _reverb.disconnect(); } catch (e) {}
+    _reverb = _ctx.createConvolver();
+    _reverb.buffer = _reverbBuffer;
+    try { _reverb.connect(_rvGainMenu); } catch (e) {}
+    try { _reverb.connect(_rvGainGame); } catch (e) {}
+  }
+
+  // Guaranteed exclusivity: hard-stop every theme AND flush the shared reverb before
+  // starting a new one, so nothing from the previous theme bleeds through.
   function _stopAll() {
     _hardStopMenuMusic();
     _hardStopGameMusic();
     _hardStopDynastyMusic();
     _hardStopCollectorMusic();
+    _flushReverb();
   }
 
   function startMenuMusic() {
@@ -1038,6 +1053,7 @@ const AudioManager = (() => {
     _hardStopDynastyMusic();
     _hardStopCollectorMusic();
     if (_musicPlaying) return; // already playing — don't restart and cause a gap
+    _flushReverb();          // clear the just-stopped themes' reverb tails before menu starts
     _startLoop(1.8); // always schedule notes; they play the moment the context runs
   }
 
