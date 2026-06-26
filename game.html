@@ -1295,7 +1295,7 @@ function ScoreGrid({ scores, char: charProp, showAll, keys: keysProp }) {
         return (
           <div key={k} className="score-dot">
             <span className="key">{k}</span>
-            <span className={`val ${cls}`}>{Math.round(v * 10) / 10}</span>
+            <span className={`val ${cls}`}>{Math.floor(v * 10) / 10}</span>
           </div>
         );
       })}
@@ -1663,7 +1663,7 @@ function PositionBoard({ board, selectedChar, onSlotClick, showScores, playerLab
                   )}
                 </div>
                 {isOccupied && showScores && (
-                  <div className={`slot-score ${score >= 9 ? 'val-high' : score >= 7 ? 'val-mid' : 'val-low'}`}>{Math.round(score * 10) / 10}</div>
+                  <div className={`slot-score ${score >= 9 ? 'val-high' : score >= 7 ? 'val-mid' : 'val-low'}`}>{Math.floor(score * 10) / 10}</div>
                 )}
                 {isOccupied && !selectedChar && !readOnly && (
                   <div style={{ fontSize:'0.6rem', color:'var(--text2)', paddingLeft:4, opacity:0.6 }}>›</div>
@@ -3333,7 +3333,7 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
           <span style={{ color: playerColor }}>{activePlayerLabel}'S TURN{cpuActive ? ' (auto)' : ''}</span>
           {showScores && (
             <span style={{ fontSize: '0.72rem', opacity: 0.8 }}>
-              {gs.boards.map((b, i) => (cpuPlayers[i] ? 'CPU' : `P${i+1}`) + ': ' + calcScore(b).toFixed(1)).join(' · ')}
+              {gs.boards.map((b, i) => (cpuPlayers[i] ? 'CPU' : `P${i+1}`) + ': ' + (Math.floor(calcScore(b)*10)/10).toFixed(1)).join(' · ')}
             </span>
           )}
         </div>
@@ -3955,7 +3955,7 @@ function EndScreen({ modeKey, boards: propBoards, board: legacyBoard, board2: le
                 {unpaired && <span style={{ fontSize: '0.55rem', color: '#e05555', marginLeft: 4 }}>(no dragon)</span>}
               </div>
               {slot.character && (
-                <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, width: 20, textAlign: 'right', color: unpaired ? '#e05555' : scoreColor(score), textDecoration: unpaired ? 'line-through' : 'none' }}>{unpaired ? (Math.round(rawScore*10)/10) : (Math.round(score*10)/10)}</div>
+                <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, width: 20, textAlign: 'right', color: unpaired ? '#e05555' : scoreColor(score), textDecoration: unpaired ? 'line-through' : 'none' }}>{unpaired ? (Math.floor(rawScore*10)/10) : (Math.floor(score*10)/10)}</div>
               )}
             </div>
           );
@@ -3989,7 +3989,7 @@ function EndScreen({ modeKey, boards: propBoards, board: legacyBoard, board2: le
                 <div key={slot.slotId} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: '0.75rem' }}>
                   <div style={{ width: 80, fontSize: '0.58rem', color: 'var(--text2)', fontFamily: 'Cinzel,serif', flexShrink: 0 }}>{slot.positionName}</div>
                   <div style={{ flex: 1, color: changed ? '#a855f7' : 'var(--text2)' }}>{slot.character ? slot.character.name : '—'}</div>
-                  <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, width: 20, textAlign: 'right', color: scoreColor(sc) }}>{Math.round(sc*10)/10}</div>
+                  <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, width: 20, textAlign: 'right', color: scoreColor(sc) }}>{Math.floor(sc*10)/10}</div>
                 </div>
               );
             })}
@@ -4070,7 +4070,7 @@ function EndScreen({ modeKey, boards: propBoards, board: legacyBoard, board2: le
                             {isDynasty && dynastyGroupScores && dynastyGroupWins && (
                               <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
                                 {DYNASTY_GROUPS.map(g => {
-                                  const gScore = Math.round((dynastyGroupScores[i][g] || 0) * 10) / 10;
+                                  const gScore = Math.floor((dynastyGroupScores[i][g] || 0) * 10) / 10;
                                   const won = dynastyGroupWins[DYNASTY_GROUPS.indexOf(g)] === i;
                                   return (
                                     <div key={g} style={{ fontSize: '0.52rem', fontFamily: 'Cinzel,serif', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1px 2px', background: won ? 'rgba(255,215,0,0.12)' : 'transparent', borderRadius: 3 }}>
@@ -4133,7 +4133,7 @@ function EndScreen({ modeKey, boards: propBoards, board: legacyBoard, board2: le
                 <div className="card" style={{ width: '100%', padding: '10px 14px' }}>
                   <div style={{ fontFamily: 'Cinzel,serif', fontSize: '0.7rem', color: 'var(--gold)', marginBottom: 8, fontWeight: 700 }}>GROUP BREAKDOWN</div>
                   {[...DYNASTY_GROUPS].sort((a,b) => (dynastyGroupScores[0][b]||0)-(dynastyGroupScores[0][a]||0)).map(g => {
-                    const gScore = Math.round((dynastyGroupScores[0][g] || 0) * 10) / 10;
+                    const gScore = Math.floor((dynastyGroupScores[0][g] || 0) * 10) / 10;
                     const pct = p1Score > 0 ? Math.round((dynastyGroupScores[0][g] || 0) / p1Score * 100) : 0;
                     const barW = p1Score > 0 ? Math.round((dynastyGroupScores[0][g] || 0) / p1Score * 100) : 0;
                     return (
@@ -4416,7 +4416,7 @@ function HistoryScreen({ onBack, embedded, initialTab, saveId }) {
               <div key={s.slotId} style={{ display:'flex', alignItems:'center', gap:4, marginBottom:2, fontSize:'0.7rem' }}>
                 <span style={{ color:'var(--text2)', width:82, flexShrink:0, fontSize:'0.58rem', fontFamily:'Cinzel,serif' }}>{s.positionName}</span>
                 <span style={{ flex:1 }}>{s.character.name}</span>
-                <span style={{ color: scoreColor(sc), fontFamily:'Cinzel,serif', fontWeight:700, width:14, textAlign:'right' }}>{Math.round(sc*10)/10}</span>
+                <span style={{ color: scoreColor(sc), fontFamily:'Cinzel,serif', fontWeight:700, width:14, textAlign:'right' }}>{Math.floor(sc*10)/10}</span>
               </div>
             );
           })}
@@ -4429,7 +4429,7 @@ function HistoryScreen({ onBack, embedded, initialTab, saveId }) {
                   <div key={s.slotId} style={{ display:'flex', alignItems:'center', gap:4, marginBottom:2, fontSize:'0.7rem' }}>
                     <span style={{ color:'var(--text2)', width:82, flexShrink:0, fontSize:'0.58rem', fontFamily:'Cinzel,serif' }}>{s.positionName}</span>
                     <span style={{ flex:1 }}>{s.character.name}</span>
-                    <span style={{ color: scoreColor(sc), fontFamily:'Cinzel,serif', fontWeight:700, width:14, textAlign:'right' }}>{Math.round(sc*10)/10}</span>
+                    <span style={{ color: scoreColor(sc), fontFamily:'Cinzel,serif', fontWeight:700, width:14, textAlign:'right' }}>{Math.floor(sc*10)/10}</span>
                   </div>
                 );
               })}
@@ -4455,7 +4455,7 @@ function HistoryScreen({ onBack, embedded, initialTab, saveId }) {
           <div style={{ textAlign: 'right' }}>
             {sorted.map(idx => (
               <div key={idx} style={{ fontSize: '0.72rem', color: idx === 0 ? 'var(--p1)' : 'var(--text2)' }}>
-                {playerLabel(cpu, idx)}: {Math.round(scores[idx]*10)/10}/500
+                {playerLabel(cpu, idx)}: {Math.floor(scores[idx]*10)/10}/500
               </div>
             ))}
           </div>
@@ -4504,7 +4504,7 @@ function HistoryScreen({ onBack, embedded, initialTab, saveId }) {
               <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginTop:2 }}>vs House {rung.house} · {new Date(comp.date).toLocaleDateString()}</div>
             </div>
             <div style={{ textAlign:'right' }}>
-              <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'var(--gold2)' }}>{Math.round(score*10)/10}<span style={{ fontSize:'0.68rem', color:'var(--text2)' }}>/100</span></div>
+              <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'var(--gold2)' }}>{Math.floor(score*10)/10}<span style={{ fontSize:'0.68rem', color:'var(--text2)' }}>/100</span></div>
               <div style={{ fontSize:'0.62rem', color:'var(--gold)' }}>FIRST WIN</div>
             </div>
           </div>
@@ -4515,7 +4515,7 @@ function HistoryScreen({ onBack, embedded, initialTab, saveId }) {
                 <div key={s.slotId} style={{ display:'flex', alignItems:'center', gap:4, marginBottom:2, fontSize:'0.7rem' }}>
                   <span style={{ color:'var(--text2)', width:82, flexShrink:0, fontSize:'0.58rem', fontFamily:'Cinzel,serif' }}>{SK_LABELS[s.scoreKey] || s.positionName}</span>
                   <span style={{ flex:1 }}>{s.character.name}</span>
-                  <span style={{ color: scoreColor(sc), fontFamily:'Cinzel,serif', fontWeight:700, width:14, textAlign:'right' }}>{Math.round(sc*10)/10}</span>
+                  <span style={{ color: scoreColor(sc), fontFamily:'Cinzel,serif', fontWeight:700, width:14, textAlign:'right' }}>{Math.floor(sc*10)/10}</span>
                 </div>
               );
             })}
@@ -4583,9 +4583,9 @@ function HistoryScreen({ onBack, embedded, initialTab, saveId }) {
           if (histFilter === 'solo') {
             const avgs = JSON.parse(localStorage.getItem(sk(saveId, 'p1Averages')) || '{}');
             const pa = avgs[tab];
-            avg = pa && pa.count > 0 ? (pa.sum / pa.count).toFixed(1) : null;
+            avg = pa && pa.count > 0 ? (Math.floor(pa.sum / pa.count * 10) / 10).toFixed(1) : null;
           } else if (count > 0) {
-            avg = (modeGames.reduce((s, g) => s + (g.board ? calcScore(g.board) : 0), 0) / count).toFixed(1);
+            avg = (Math.floor(modeGames.reduce((s, g) => s + (g.board ? calcScore(g.board) : 0), 0) / count * 10) / 10).toFixed(1);
           }
           return (
             <>
@@ -4981,7 +4981,7 @@ function CharacterComparisonScreen({ onBack, dynastyMode }) {
                     const calcTot = x => x.isDragon ? (x.power ?? 0) : (dynastyMode ? SCORE_KEYS.reduce((a,k) => a + (getDynScore(x,k)||0), 0) + (x.DR??0) : SCORE_KEYS.reduce((a,k) => a + (x.scores?.[k]||0), 0));
                     const tot = calcTot(s);
                     const bestTot = filled.reduce((m, x) => Math.max(m, calcTot(x)), -1);
-                    return <td key={i} style={{ textAlign: 'center', padding: '4px 2px', fontFamily: 'Cinzel,serif', fontWeight: 700, color: SLOT_COLORS[i], background: tot === bestTot && filled.length > 1 ? 'rgba(255,215,0,0.08)' : 'transparent' }}>{tot.toFixed(1)}</td>;
+                    return <td key={i} style={{ textAlign: 'center', padding: '4px 2px', fontFamily: 'Cinzel,serif', fontWeight: 700, color: SLOT_COLORS[i], background: tot === bestTot && filled.length > 1 ? 'rgba(255,215,0,0.08)' : 'transparent' }}>{(Math.floor(tot*10)/10).toFixed(1)}</td>;
                   })}
                 </tr>
               </tbody>
@@ -5191,7 +5191,7 @@ function CharacterIndexScreen({ onBack, embedded }) {
                     <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text)' }}>{c.name}</div>
                     {sortMode === 'total' && (
                       <div style={{ fontSize: '0.75rem', fontWeight: 700, fontFamily: 'Cinzel,serif', color: totalScoreColor(displayScore, isDragon ? 10 : (dynastyMode ? 112 : 100)) }}>
-                        {isDragon ? `Power: ${displayScore.toFixed(1)}` : `Overall: ${displayScore.toFixed(1)}`}
+                        {isDragon ? `Power: ${(Math.floor(displayScore*10)/10).toFixed(1)}` : `Overall: ${(Math.floor(displayScore*10)/10).toFixed(1)}`}
                       </div>
                     )}
                     {sortMode === 'position' && (() => {
@@ -6211,8 +6211,8 @@ function MostPlayedScreen({ onBack, embedded, initialModeFilter, saveId }) {
               <div key={c.id || c.name} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6, padding:'6px 10px', background:'var(--bg3)', borderRadius:6 }}>
                 <div style={{ flex:1, fontSize:'0.78rem', color:'var(--text)' }}>{c.name}</div>
                 <div style={{ fontSize:'0.65rem', color:'var(--text2)' }}>{c.count}×</div>
-                <div style={{ fontSize:'0.65rem', fontFamily:'Cinzel,serif', color:'var(--gold2)', minWidth:38, textAlign:'right' }}>{Math.round(c.ppg*10)/10} ppg</div>
-                <div style={{ fontSize:'0.7rem', fontFamily:'Cinzel,serif', color:'var(--gold)', minWidth:46, textAlign:'right' }}>{Math.round(c.points*10)/10}pts</div>
+                <div style={{ fontSize:'0.65rem', fontFamily:'Cinzel,serif', color:'var(--gold2)', minWidth:38, textAlign:'right' }}>{Math.floor(c.ppg*10)/10} ppg</div>
+                <div style={{ fontSize:'0.7rem', fontFamily:'Cinzel,serif', color:'var(--gold)', minWidth:46, textAlign:'right' }}>{Math.floor(c.points*10)/10}pts</div>
               </div>
             ))}
             {charTotalPages > 1 && (
@@ -6240,7 +6240,7 @@ function MostPlayedScreen({ onBack, embedded, initialModeFilter, saveId }) {
               <div key={h.name} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6, padding:'6px 10px', background:'var(--bg3)', borderRadius:6 }}>
                 <div style={{ flex:1, fontSize:'0.78rem', color: h.count > 0 ? 'var(--text)' : 'var(--text2)' }}>{h.name}</div>
                 <div style={{ fontSize:'0.7rem', color:'var(--text2)' }}>{h.count}× drafted</div>
-                <div style={{ fontSize:'0.7rem', fontFamily:'Cinzel,serif', color: h.count > 0 ? 'var(--gold)' : 'var(--text2)', minWidth:50, textAlign:'right' }}>{Math.round(h.points*10)/10} pts</div>
+                <div style={{ fontSize:'0.7rem', fontFamily:'Cinzel,serif', color: h.count > 0 ? 'var(--gold)' : 'var(--text2)', minWidth:50, textAlign:'right' }}>{Math.floor(h.points*10)/10} pts</div>
               </div>
             ))}
           </>
@@ -6409,8 +6409,9 @@ function LadderScreen({ onBack, onChallenge, progress }) {
 // ─── ChaosEndScreen ───────────────────────────────────────────────────────────
 function ChaosEndScreen({ rung, board, opponentBoard, opponentScore, isWin, progress, totalRungs, onRetry, onNext, onLadder, onHome, newAchievements }) {
   const playerScore = calcScore(board);
-  const SCORE_KEYS = ['R','H','Hr','C','KG','KGC','SC','Bank','Ally','Con'];
-  const SCORE_NAMES = { R:'Ruler',H:'Hand',Hr:'Heir',C:'Commander',KG:'Kingsguard',KGC:'Kingsguard Commander',SC:'Small Council',Bank:'Bank',Ally:'Ally',Con:'Consort' };
+  const ft = x => Math.floor(x * 10) / 10;
+  const SCORE_KEYS = ['R','H','Hr','AC','KG','KGC','SC','Bank','Ally','Con'];
+  const SCORE_NAMES = { R:'Ruler',H:'Hand',Hr:'Heir',AC:'Commander',KG:'Kingsguard',KGC:'Kingsguard Commander',SC:'Small Council',Bank:'Bank',Ally:'Ally',Con:'Consort' };
   const achData = (newAchievements || []).map(id => ACHIEVEMENTS.find(a => a.id === id)).filter(Boolean);
 
   useEffect(() => { isWin ? AudioManager.playVictory() : AudioManager.playDefeat(); }, []);
@@ -6431,11 +6432,11 @@ function ChaosEndScreen({ rung, board, opponentBoard, opponentScore, isWin, prog
         <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
           <div style={{ flex: 1, background: 'var(--bg2)', border: `1px solid ${isWin ? 'var(--gold)' : 'var(--border)'}`, borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
             <div style={{ fontSize: '0.6rem', color: 'var(--text2)', fontFamily: 'Cinzel,serif', marginBottom: 4 }}>YOUR SCORE</div>
-            <div style={{ fontFamily: 'Cinzel,serif', fontSize: '1.5rem', fontWeight: 700, color: totalScoreColor(playerScore, 100) }}>{playerScore}<span style={{ fontSize:'0.7rem', color:'var(--text2)' }}>/100</span></div>
+            <div style={{ fontFamily: 'Cinzel,serif', fontSize: '1.5rem', fontWeight: 700, color: totalScoreColor(playerScore, 100) }}>{ft(playerScore)}<span style={{ fontSize:'0.7rem', color:'var(--text2)' }}>/100</span></div>
           </div>
           <div style={{ flex: 1, background: 'var(--bg2)', border: `1px solid ${isWin ? 'var(--border)' : '#e05555'}`, borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
             <div style={{ fontSize: '0.6rem', color: 'var(--text2)', fontFamily: 'Cinzel,serif', marginBottom: 4 }}>HOUSE {rung.house.toUpperCase()}</div>
-            <div style={{ fontFamily: 'Cinzel,serif', fontSize: '1.5rem', fontWeight: 700, color: totalScoreColor(opponentScore, 100) }}>{opponentScore}<span style={{ fontSize:'0.7rem', color:'var(--text2)' }}>/100</span></div>
+            <div style={{ fontFamily: 'Cinzel,serif', fontSize: '1.5rem', fontWeight: 700, color: totalScoreColor(opponentScore, 100) }}>{ft(opponentScore)}<span style={{ fontSize:'0.7rem', color:'var(--text2)' }}>/100</span></div>
           </div>
         </div>
 
@@ -6451,12 +6452,12 @@ function ChaosEndScreen({ rung, board, opponentBoard, opponentScore, isWin, prog
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <div style={{ fontSize: '0.6rem', color: 'var(--text2)' }}>{mySlot?.character?.name?.split(' ')[0] || '—'}</div>
-                    <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, color: scoreColor(myScore) }}>{myScore}</div>
+                    <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, color: scoreColor(myScore) }}>{ft(myScore)}</div>
                   </div>
                   <div style={{ color: 'var(--border2)' }}>vs</div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '0.6rem', color: 'var(--text2)' }}>{oppSlot?.character?.name?.split(' ')[0] || '—'}</div>
-                    <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, color: scoreColor(oppScore) }}>{oppScore}</div>
+                    <div style={{ fontFamily: 'Cinzel,serif', fontWeight: 700, color: scoreColor(oppScore) }}>{ft(oppScore)}</div>
                   </div>
                 </div>
               </div>
@@ -6729,7 +6730,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
             <div key={p.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:'0.55rem' }}>
               <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
               <span style={{ color: sc >= 9 ? '#ffd700' : sc >= 7 ? T.color : 'var(--text)', fontWeight:700 }}>
-                {Math.round(sc*10)/10}
+                {Math.floor(sc*10)/10}
               </span>
             </div>
           );
@@ -6909,7 +6910,7 @@ function CollectorMyDeck({ save, onUpdate }) {
   }
 
   const T = window.COLLECTOR_TIERS || {};
-  const avgOvr = ownedCards.length ? Math.round(ownedCards.reduce((s,c)=>s+c.overall,0)/ownedCards.length*10)/10 : 0;
+  const avgOvr = ownedCards.length ? Math.floor(ownedCards.reduce((s,c)=>s+c.overall,0)/ownedCards.length*10)/10 : 0;
   const deckTier = deckTierLabel(save.owned);
 
   return (
@@ -7041,7 +7042,7 @@ function CollectorCardStats({ save }) {
     .slice(0, 10);
   const highestAvg = [...ownedCards]
     .filter(c => cardPlays[c.id] >= 3)
-    .map(c => ({ ...c, avg: Math.round((cardScores[c.id]||0) / cardPlays[c.id] * 10) / 10 }))
+    .map(c => ({ ...c, avg: Math.floor((cardScores[c.id]||0) / cardPlays[c.id] * 10) / 10 }))
     .sort((a,b) => b.avg - a.avg)
     .slice(0, 10);
 
@@ -7052,7 +7053,7 @@ function CollectorCardStats({ save }) {
       <div className="card" style={{ marginBottom:12 }}>
         <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)', marginBottom:8 }}>GAME RECORD</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
-          {[['Games',stats.games||0],['Wins',stats.wins||0],['Score Avg', stats.games ? Math.round((stats.totalScore||0)/stats.games*10)/10 : 0]].map(([l,v])=>(
+          {[['Games',stats.games||0],['Wins',stats.wins||0],['Score Avg', stats.games ? Math.floor((stats.totalScore||0)/stats.games*10)/10 : 0]].map(([l,v])=>(
             <div key={l} style={{ textAlign:'center' }}>
               <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'var(--gold)' }}>{v}</div>
               <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>{l}</div>
@@ -7819,7 +7820,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
                         <div style={{ fontSize:'0.65rem', color:ct.color, fontWeight:700 }}>{placed.name}</div>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
                           <CollTierBadge tier={placed.tier} />
-                          <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{Math.round(score*10)/10}</span>
+                          <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{Math.floor(score*10)/10}</span>
                         </div>
                       </>
                     ) : (
@@ -7847,7 +7848,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
                         <div style={{ fontSize:'0.65rem', color:ct.color, fontWeight:700 }}>{card.name}</div>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
                           <CollTierBadge tier={card.tier} />
-                          <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{Math.round(score*10)/10}</span>
+                          <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{Math.floor(score*10)/10}</span>
                         </div>
                       </>
                     ) : (
@@ -7912,8 +7913,8 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
           {COLL_POS.map(pos => {
             const pCard = result.playerBoard?.[pos.id];
             const cCard = result.cpuBoard?.[pos.id];
-            const pSc = pCard ? Math.round((pCard.scores?.[pos.id]||0)*10)/10 : 0;
-            const cSc = cCard ? Math.round((cCard.scores?.[pos.id]||0)*10)/10 : 0;
+            const pSc = pCard ? Math.floor((pCard.scores?.[pos.id]||0)*10)/10 : 0;
+            const cSc = cCard ? Math.floor((cCard.scores?.[pos.id]||0)*10)/10 : 0;
             return (
               <div key={pos.id} style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4, fontSize:'0.65rem' }}>
                 <div style={{ width:75, fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{pos.label}</div>
@@ -8193,8 +8194,9 @@ const FirebaseSync = (() => {
           try { payload[key] = JSON.parse(raw); } catch { payload[key] = raw; }
         }
       }
-      // Firestore forbids nested arrays — serialize history as a JSON string
+      // Firestore forbids nested arrays — serialize complex objects as JSON strings
       if (Array.isArray(payload.history)) payload.history = JSON.stringify(payload.history.slice(-50));
+      if (payload.chaosCompletions != null && typeof payload.chaosCompletions === 'object') payload.chaosCompletions = JSON.stringify(payload.chaosCompletions);
       const dateKey = getDailyDateKey();
       const dailyRaw = localStorage.getItem(sk(saveId, `daily_${dateKey}`));
       if (dailyRaw) {

@@ -663,7 +663,7 @@ window.GAME_MODES = {
   'classic-hard-random':  {name:'Classic Hard (Random)',rounds:5,  rerolls:0, positions:window.CLASSIC_POSITIONS,  maxScore:50,   isRandom:true,  isHard:true},
   'empire-random':        {name:'Empire (Random)',      rounds:20, rerolls:8, positions:window.EMPIRE_POSITIONS,   maxScore:200,  isRandom:true,  isHard:false},
   'empire-hard-random':   {name:'Empire Hard (Random)', rounds:20, rerolls:0, positions:window.EMPIRE_POSITIONS,   maxScore:200,  isRandom:true,  isHard:true},
-  'chaos':                {name:'Chaos Ladder',         rounds:10, rerolls:4, positions:window.CHAOS_POSITIONS,    maxScore:100,  isRandom:false, isHard:false},
+  'chaos':                {name:'Chaos Ladder',         rounds:10, rerolls:0, positions:window.CHAOS_POSITIONS,    maxScore:100,  isRandom:false, isHard:false},
   'dynasty':              {name:'Dynasty',              rounds:50, rerolls:0, positions:window.DYNASTY_POSITIONS,  maxScore:500,  isRandom:false, isHard:true, isDynasty:true},
 };
 
@@ -765,7 +765,7 @@ function dynastyDefault(char, key) {
   const s = char.scores || {};
   if ((char.isNW || char.isKG) && key === 'Hs') return 1.0;
   const r = k => s[k] || 1.0;
-  const cap = v => Math.min(10, Math.round(v * 10) / 10);
+  const cap = v => Math.min(10, Math.floor(v * 10) / 10);
   // Hs = House standing: best attribute anchors, boosted by versatility
   if (key === 'Hs')  return cap(Math.max(r('R'), r('KG'), r('AC'), r('Ally'), r('Con')) * 0.45 + r('R') * 0.15 + r('KG') * 0.15 + r('Ally') * 0.15 + r('Con') * 0.10);
   // GM = Grand Maester: wisdom and scholarly ability (SC + H)
@@ -775,7 +775,7 @@ function dynastyDefault(char, key) {
   if (key === 'MoS') return cap(Math.max(r('AC'), r('Ally')) * 0.7);
   if (key === 'MoW') return cap(Math.max(r('SC'), r('H')) * 0.9);
   // Warden = Ruler score + 1, capped at 10
-  if (key === 'Warden') return Math.min(10, Math.round((r('R') + 1) * 10) / 10);
+  if (key === 'Warden') return Math.min(10, Math.floor((r('R') + 1) * 10) / 10);
   return 1.0;
 }
 window.getSlotScore = function(slot) {
