@@ -5946,7 +5946,133 @@ function checkAchievements(gameData, allHistory, saveId) {
 }
 
 
-const HAND_CRAFTED_CATS = ['Easy','Medium','Hard','Uncommon','Rare','Epic','Legendary','Dynasty','Characters','Rulers','Hands','Heirs','Chaos Ladder'];
+// ─── Collector Achievement Checker ───────────────────────────────────────────
+function checkCollectorAchievements(newSave, result) {
+  const saveId = getActiveSaveId();
+  if (!saveId) return [];
+  const achKey = sk(saveId, 'achievements');
+  const existing = JSON.parse(localStorage.getItem(achKey) || '{}');
+
+  const stats = newSave.stats || {};
+  const owned = newSave.owned || [];
+  const ownedCards = owned.map(id => getCollCard(id)).filter(Boolean);
+  const games  = stats.games  || 0;
+  const wins   = stats.wins   || 0;
+  const totalScore = stats.totalScore || 0;
+  const gold   = newSave.gold || 0;
+  const maxStreak = stats.maxWinStreak || 0;
+
+  // Count cards by tier
+  const tierCounts = { starter:0, uncommon:0, rare:0, hero:0, legendary:0, mythic:0 };
+  ownedCards.forEach(c => { if (tierCounts[c.tier] !== undefined) tierCounts[c.tier]++; });
+  const deckTier = deckTierLabel(owned);
+
+  const { isWin, playerScore = 0, margin = 0, wager = 0, playerBoard = {}, rerollsUsed = 0 } = result || {};
+  const boardCards = Object.values(playerBoard).filter(Boolean);
+  const posScores = COLL_POS.map(pos => {
+    const card = playerBoard[pos.id];
+    return card ? Math.floor((card.scores?.[pos.id] || 0) * 10) / 10 : -1;
+  });
+  const filledScores = posScores.filter(s => s >= 0);
+  const numTens = filledScores.filter(s => s >= 10).length;
+  const allSevens = filledScores.length === COLL_POS.length && filledScores.every(s => s >= 7);
+
+  // Check if board uses only starter/uncommon cards
+  const starterOnly = boardCards.every(c => c.tier === 'starter' || c.tier === 'uncommon');
+
+  // Check for 3+ same character (different variants) on the board
+  const charCountMap = {};
+  boardCards.forEach(c => { if (c.charId) charCountMap[c.charId] = (charCountMap[c.charId] || 0) + 1; });
+  const hasTripleChar = Object.values(charCountMap).some(n => n >= 3);
+
+  const checks = {
+    ach_coll_first_game:    games >= 1,
+    ach_coll_5_games:       games >= 5,
+    ach_coll_10_games:      games >= 10,
+    ach_coll_25_games:      games >= 25,
+    ach_coll_50_games:      games >= 50,
+    ach_coll_100_games:     games >= 100,
+    ach_coll_first_win:     wins >= 1,
+    ach_coll_5_wins:        wins >= 5,
+    ach_coll_10_wins:       wins >= 10,
+    ach_coll_25_wins:       wins >= 25,
+    ach_coll_50_wins:       wins >= 50,
+    ach_coll_score_50:      playerScore >= 50,
+    ach_coll_score_60:      playerScore >= 60,
+    ach_coll_score_70:      playerScore >= 70,
+    ach_coll_score_80:      playerScore >= 80,
+    ach_coll_score_90:      playerScore >= 90,
+    ach_coll_perfect:       playerScore >= 100,
+    ach_coll_win_5:         isWin && margin >= 5,
+    ach_coll_win_10:        isWin && margin >= 10,
+    ach_coll_win_20:        isWin && margin >= 20,
+    ach_coll_win_30:        isWin && margin >= 30,
+    ach_coll_streak_3:      maxStreak >= 3,
+    ach_coll_streak_5:      maxStreak >= 5,
+    ach_coll_streak_10:     maxStreak >= 10,
+    ach_coll_wager_25:      isWin && wager >= 25,
+    ach_coll_wager_50:      isWin && wager >= 50,
+    ach_coll_wager_100:     isWin && wager >= 100,
+    ach_coll_gold_100:      gold >= 100,
+    ach_coll_gold_250:      gold >= 250,
+    ach_coll_gold_500:      gold >= 500,
+    ach_coll_gold_1000:     gold >= 1000,
+    ach_coll_gold_2500:     gold >= 2500,
+    ach_coll_gold_5000:     gold >= 5000,
+    ach_coll_deck_30:       owned.length >= 30,
+    ach_coll_deck_50:       owned.length >= 50,
+    ach_coll_deck_100:      owned.length >= 100,
+    ach_coll_deck_200:      owned.length >= 200,
+    ach_coll_deck_500:      owned.length >= 500,
+    ach_coll_deck_1000:     owned.length >= 1000,
+    ach_coll_first_rare:    tierCounts.rare   >= 1,
+    ach_coll_first_hero:    tierCounts.hero   >= 1,
+    ach_coll_first_legend:  tierCounts.legendary >= 1,
+    ach_coll_first_mythic:  tierCounts.mythic >= 1,
+    ach_coll_5_uncommon:    tierCounts.uncommon >= 5,
+    ach_coll_10_uncommon:   tierCounts.uncommon >= 10,
+    ach_coll_25_uncommon:   tierCounts.uncommon >= 25,
+    ach_coll_5_rare:        tierCounts.rare   >= 5,
+    ach_coll_10_rare:       tierCounts.rare   >= 10,
+    ach_coll_25_rare:       tierCounts.rare   >= 25,
+    ach_coll_5_hero:        tierCounts.hero   >= 5,
+    ach_coll_10_hero:       tierCounts.hero   >= 10,
+    ach_coll_3_legend:      tierCounts.legendary >= 3,
+    ach_coll_5_legend:      tierCounts.legendary >= 5,
+    ach_coll_3_mythic:      tierCounts.mythic >= 3,
+    ach_coll_tier_uncommon: ['uncommon','rare','hero','legendary','mythic'].includes(deckTier),
+    ach_coll_tier_rare:     ['rare','hero','legendary','mythic'].includes(deckTier),
+    ach_coll_tier_hero:     ['hero','legendary','mythic'].includes(deckTier),
+    ach_coll_tier_legend:   ['legendary','mythic'].includes(deckTier),
+    ach_coll_total_500:     totalScore >= 500,
+    ach_coll_total_1000:    totalScore >= 1000,
+    ach_coll_total_2500:    totalScore >= 2500,
+    ach_coll_total_5000:    totalScore >= 5000,
+    ach_coll_full_board:    filledScores.length >= COLL_POS.length,
+    ach_coll_play_hero:     boardCards.some(c => c.tier === 'hero'),
+    ach_coll_play_legend:   boardCards.some(c => c.tier === 'legendary'),
+    ach_coll_play_mythic:   boardCards.some(c => c.tier === 'mythic'),
+    ach_coll_win_mythic:    isWin && boardCards.some(c => c.tier === 'mythic'),
+    ach_coll_10_pos:        numTens >= 1,
+    ach_coll_5_tens:        numTens >= 5,
+    ach_coll_sweep:         allSevens,
+    ach_coll_no_reroll:     isWin && rerollsUsed === 0,
+    ach_coll_starter_win:   isWin && starterOnly,
+    ach_coll_all_same_char: hasTripleChar,
+  };
+
+  const newlyUnlocked = [];
+  for (const [id, earned] of Object.entries(checks)) {
+    if (earned && !existing[id]) {
+      existing[id] = Date.now();
+      newlyUnlocked.push(id);
+    }
+  }
+  if (newlyUnlocked.length > 0) localStorage.setItem(achKey, JSON.stringify(existing));
+  return newlyUnlocked;
+}
+
+const HAND_CRAFTED_CATS = ['Easy','Medium','Hard','Uncommon','Rare','Epic','Legendary','Dynasty','Characters','Rulers','Hands','Heirs','Chaos Ladder','Collector'];
 const CAT_ORDER = Object.fromEntries(HAND_CRAFTED_CATS.map((c, i) => [c, i]));
 const DISPLAY_ACHIEVEMENTS = ACHIEVEMENTS.filter(a => !a.id.startsWith('ach_dyn_'));
 
@@ -7728,22 +7854,28 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
       cardPlays[card.id] = (cardPlays[card.id]||0) + 1;
       cardScores[card.id] = (cardScores[card.id]||0) + (card.scores?.[posId]||0);
     });
-    const rerollsSpent = rerollsUsed;
+    const currentStreak = isWin ? (save.stats?.winStreak || 0) + 1 : 0;
+    const maxWinStreak = Math.max(save.stats?.maxWinStreak || 0, currentStreak);
     const newSave = {
       ...save,
       gold: finalGold,
-      rerolls: Math.max(0, (save.rerolls||0) - rerollsSpent),
+      rerolls: Math.max(0, (save.rerolls||0) - rerollsUsed),
       stats: {
         ...(save.stats||{}),
         games: (save.stats?.games||0)+1,
         wins: (save.stats?.wins||0)+(isWin?1:0),
         totalScore: (save.stats?.totalScore||0)+playerScore,
+        winStreak: currentStreak,
+        maxWinStreak,
         cardPlays, cardScores,
       }
     };
     saveCollSave(newSave);
     onUpdate(newSave);
-    onEnd({ isWin, playerScore, cpuScore, goldEarned, playerBoard, cpuBoard: cpuCards, wager, margin });
+    const result = { isWin, playerScore, cpuScore, goldEarned, playerBoard, cpuBoard: cpuCards, wager, margin, rerollsUsed };
+    const collUnlocked = checkCollectorAchievements(newSave, result);
+    collUnlocked.forEach(id => window.dispatchEvent(new CustomEvent('asoe-achievement', { detail: id })));
+    onEnd(result);
   }
 
   const filledPositions = Object.keys(playerBoard).length;
@@ -8310,25 +8442,25 @@ const FIRSTPLAY_STEPS = [
   {
     title: 'Welcome, Your Grace',
     emoji: '👑',
-    body: 'A Song of An Empire is a draft strategy game. Each round you spin the reels to draw a noble house, pick a character from that house, and place them into your court.',
+    body: 'A Song of An Empire is a draft strategy game set in Westeros. Spin, pick characters, and build the most powerful court you can — across six unique game modes.',
     action: 'Next →',
   },
   {
-    title: 'Spin the Reels',
+    title: 'Draft Your Court',
     emoji: '🎰',
-    body: 'Press SPIN to draw a random noble house. You get a set number of rerolls per game — use them wisely to get a better house or swap the gender.',
+    body: 'Each turn, spin the reels to draw a noble house, then choose a character from that house. Every character has scores for court positions — Ruler, Hand, Heir, and more. Place them wisely.',
     action: 'Next →',
   },
   {
-    title: 'Pick a Character',
-    emoji: '📋',
-    body: 'After spinning, browse the characters from that house. Each character has scores for different court positions. Pick the one that fits your strategy.',
+    title: 'Six Modes to Master',
+    emoji: '⚔️',
+    body: 'Classic fills 5 positions. Empire fills 20. Dynasty builds a full royal house. Chaos Ladder climbs 50 rounds of escalating challenge. Hard and Random modes twist the rules further. Collector Mode builds a card deck across thousands of unique variants.',
     action: 'Next →',
   },
   {
-    title: 'Fill Your Court',
-    emoji: '🏰',
-    body: 'Place your character into the best slot on your board. Ruler and Hand are high-value but hard to fill well. Build the most powerful court possible!',
+    title: 'Build Your Legacy',
+    emoji: '🏆',
+    body: 'Earn hundreds of Achievements across every mode. Track your scores in History. Grow your Collector deck with Rare, Hero, Legendary, and Mythic cards. The Iron Throne awaits.',
     action: "Let's Play ⚔",
   },
 ];

@@ -641,6 +641,107 @@ window.ACHIEVEMENTS = [
   { id:'ach_dynasty_tull_ruler',name:'The Trout Ascends',          icon:'🐟', rarity:'rare',      desc:'Place a Tully character as Ruler in Dynasty Mode.', cat:'Dynasty' },
   { id:'ach_dynasty_full_board_kg',name:'Kingsguard Complete',     icon:'🛡️', rarity:'rare',      desc:'Fill the Kingsguard Commander AND all 6 Kingsguard slots in Dynasty Mode.', cat:'Dynasty' },
   { id:'ach_dynasty_no_nw',     name:'No Black Cloaks Here',       icon:'🔥', rarity:'uncommon',  desc:"Complete Dynasty Mode without any Night's Watch characters on the board.", cat:'Dynasty' },
+
+  // ── COLLECTOR MODE ────────────────────────────────────────────────────────────
+
+  // Games Played
+  { id:'ach_coll_first_game',    name:'The First Draw',            icon:'🃏', rarity:'common',    desc:'Complete your first Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_5_games',       name:'Getting the Feel',          icon:'🃏', rarity:'common',    desc:'Play 5 Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_10_games',      name:'Deck Regular',              icon:'🃏', rarity:'common',    desc:'Play 10 Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_25_games',      name:'Card Enthusiast',           icon:'🃏', rarity:'uncommon',  desc:'Play 25 Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_50_games',      name:'Dedicated Collector',       icon:'🃏', rarity:'rare',      desc:'Play 50 Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_100_games',     name:'Master of the Deck',        icon:'🃏', rarity:'epic',      desc:'Play 100 Collector Mode games.', cat:'Collector' },
+
+  // Wins
+  { id:'ach_coll_first_win',     name:'First Victory',             icon:'⚔️', rarity:'common',    desc:'Win your first Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_5_wins',        name:'Budding Champion',          icon:'⚔️', rarity:'uncommon',  desc:'Win 5 Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_10_wins',       name:'Seasoned Champion',         icon:'⚔️', rarity:'rare',      desc:'Win 10 Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_25_wins',       name:'Deck Lord',                 icon:'⚔️', rarity:'epic',      desc:'Win 25 Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_50_wins',       name:'Uncrowned Champion',        icon:'⚔️', rarity:'legendary', desc:'Win 50 Collector Mode games.', cat:'Collector' },
+
+  // Score Milestones
+  { id:'ach_coll_score_50',      name:'Solid Draw',                icon:'📊', rarity:'common',    desc:'Score 50 or more in a single Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_score_60',      name:'Commanding Position',       icon:'📊', rarity:'uncommon',  desc:'Score 60 or more in a single Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_score_70',      name:'Formidable Deck',           icon:'📊', rarity:'uncommon',  desc:'Score 70 or more in a single Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_score_80',      name:'The Grand Court',           icon:'📊', rarity:'rare',      desc:'Score 80 or more in a single Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_score_90',      name:'Near Perfection',           icon:'📊', rarity:'epic',      desc:'Score 90 or more in a single Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_perfect',       name:'A Perfect Hand',            icon:'✨', rarity:'legendary', desc:'Score a perfect 100 in Collector Mode.', cat:'Collector' },
+
+  // Win Margins
+  { id:'ach_coll_win_5',         name:'A Step Ahead',              icon:'📈', rarity:'common',    desc:'Win a Collector Mode game by 5 or more points.', cat:'Collector' },
+  { id:'ach_coll_win_10',        name:'Pulling Away',              icon:'📈', rarity:'uncommon',  desc:'Win a Collector Mode game by 10 or more points.', cat:'Collector' },
+  { id:'ach_coll_win_20',        name:'Dominant Victory',          icon:'📈', rarity:'rare',      desc:'Win a Collector Mode game by 20 or more points.', cat:'Collector' },
+  { id:'ach_coll_win_30',        name:'Total Supremacy',           icon:'📈', rarity:'epic',      desc:'Win a Collector Mode game by 30 or more points.', cat:'Collector' },
+
+  // Win Streaks
+  { id:'ach_coll_streak_3',      name:'On a Roll',                 icon:'🔥', rarity:'rare',      desc:'Win 3 Collector Mode games in a row.', cat:'Collector' },
+  { id:'ach_coll_streak_5',      name:'Unstoppable',               icon:'🔥', rarity:'epic',      desc:'Win 5 Collector Mode games in a row.', cat:'Collector' },
+  { id:'ach_coll_streak_10',     name:'The Undefeated Deck',       icon:'🔥', rarity:'legendary', desc:'Win 10 Collector Mode games in a row.', cat:'Collector' },
+
+  // Wager
+  { id:'ach_coll_wager_25',      name:'A Calculated Bet',          icon:'🎲', rarity:'uncommon',  desc:'Win a Collector Mode game with a wager of 25 or more gold.', cat:'Collector' },
+  { id:'ach_coll_wager_50',      name:'High Stakes',               icon:'🎲', rarity:'rare',      desc:'Win a Collector Mode game with a wager of 50 or more gold.', cat:'Collector' },
+  { id:'ach_coll_wager_100',     name:'All In',                    icon:'🎲', rarity:'epic',      desc:'Win a Collector Mode game with the maximum 100-gold wager.', cat:'Collector' },
+
+  // Gold
+  { id:'ach_coll_gold_100',      name:'Pocket Change',             icon:'💰', rarity:'common',    desc:'Hold 100 gold in Collector Mode.', cat:'Collector' },
+  { id:'ach_coll_gold_250',      name:'Growing Coffers',           icon:'💰', rarity:'common',    desc:'Hold 250 gold in Collector Mode.', cat:'Collector' },
+  { id:'ach_coll_gold_500',      name:'Half a Treasury',           icon:'💰', rarity:'uncommon',  desc:'Hold 500 gold in Collector Mode.', cat:'Collector' },
+  { id:'ach_coll_gold_1000',     name:"A Lord's Ransom",           icon:'💰', rarity:'rare',      desc:'Hold 1,000 gold in Collector Mode.', cat:'Collector' },
+  { id:'ach_coll_gold_2500',     name:"The King's Vault",          icon:'💰', rarity:'epic',      desc:'Hold 2,500 gold in Collector Mode.', cat:'Collector' },
+  { id:'ach_coll_gold_5000',     name:"The Iron Bank's Equal",     icon:'💰', rarity:'legendary', desc:'Hold 5,000 gold in Collector Mode.', cat:'Collector' },
+
+  // Deck Size
+  { id:'ach_coll_deck_30',       name:'First Expansion',           icon:'📦', rarity:'common',    desc:'Own 30 Collector cards.', cat:'Collector' },
+  { id:'ach_coll_deck_50',       name:'A Respectable Deck',        icon:'📦', rarity:'common',    desc:'Own 50 Collector cards.', cat:'Collector' },
+  { id:'ach_coll_deck_100',      name:'A True Collection',         icon:'📦', rarity:'uncommon',  desc:'Own 100 Collector cards.', cat:'Collector' },
+  { id:'ach_coll_deck_200',      name:'Vast Archives',             icon:'📦', rarity:'rare',      desc:'Own 200 Collector cards.', cat:'Collector' },
+  { id:'ach_coll_deck_500',      name:'The Grand Library',         icon:'📦', rarity:'epic',      desc:'Own 500 Collector cards.', cat:'Collector' },
+  { id:'ach_coll_deck_1000',     name:'The Living History',        icon:'📦', rarity:'legendary', desc:'Own 1,000 Collector cards.', cat:'Collector' },
+
+  // Card Tiers — First of Each
+  { id:'ach_coll_first_rare',    name:'The First Rarity',          icon:'🟠', rarity:'common',    desc:'Own your first Rare Collector card.', cat:'Collector' },
+  { id:'ach_coll_first_hero',    name:'A Heroic Addition',         icon:'🟣', rarity:'uncommon',  desc:'Own your first Hero Collector card.', cat:'Collector' },
+  { id:'ach_coll_first_legend',  name:'Touched by Legend',         icon:'🖤', rarity:'rare',      desc:'Own your first Legendary Collector card.', cat:'Collector' },
+  { id:'ach_coll_first_mythic',  name:'The Myth Made Real',        icon:'🔴', rarity:'epic',      desc:'Own your first Mythic Collector card.', cat:'Collector' },
+
+  // Card Tiers — Multiples
+  { id:'ach_coll_5_uncommon',    name:'Uncommon Holdings',         icon:'🔵', rarity:'common',    desc:'Own 5 Uncommon Collector cards.', cat:'Collector' },
+  { id:'ach_coll_10_uncommon',   name:'Noble Commonplace',         icon:'🔵', rarity:'uncommon',  desc:'Own 10 Uncommon Collector cards.', cat:'Collector' },
+  { id:'ach_coll_25_uncommon',   name:'Uncommon Arsenal',          icon:'🔵', rarity:'uncommon',  desc:'Own 25 Uncommon Collector cards.', cat:'Collector' },
+  { id:'ach_coll_5_rare',        name:'Rare Collector',            icon:'🟠', rarity:'uncommon',  desc:'Own 5 Rare Collector cards.', cat:'Collector' },
+  { id:'ach_coll_10_rare',       name:'Rare Hoarder',              icon:'🟠', rarity:'rare',      desc:'Own 10 Rare Collector cards.', cat:'Collector' },
+  { id:'ach_coll_25_rare',       name:'Rare Library',              icon:'🟠', rarity:'rare',      desc:'Own 25 Rare Collector cards.', cat:'Collector' },
+  { id:'ach_coll_5_hero',        name:'Heroes Among Heroes',       icon:'🟣', rarity:'rare',      desc:'Own 5 Hero Collector cards.', cat:'Collector' },
+  { id:'ach_coll_10_hero',       name:'The Heroic Archives',       icon:'🟣', rarity:'epic',      desc:'Own 10 Hero Collector cards.', cat:'Collector' },
+  { id:'ach_coll_3_legend',      name:'Legendary Holdings',        icon:'🖤', rarity:'epic',      desc:'Own 3 Legendary Collector cards.', cat:'Collector' },
+  { id:'ach_coll_5_legend',      name:'Legends Collected',         icon:'🖤', rarity:'legendary', desc:'Own 5 Legendary Collector cards.', cat:'Collector' },
+  { id:'ach_coll_3_mythic',      name:'The Mythic Few',            icon:'🔴', rarity:'legendary', desc:'Own 3 Mythic Collector cards.', cat:'Collector' },
+
+  // Deck Average Tier
+  { id:'ach_coll_tier_uncommon', name:'Rising Deck',               icon:'⬆️', rarity:'uncommon',  desc:'Reach an average deck tier of Uncommon.', cat:'Collector' },
+  { id:'ach_coll_tier_rare',     name:'Distinguished Deck',        icon:'⬆️', rarity:'rare',      desc:'Reach an average deck tier of Rare.', cat:'Collector' },
+  { id:'ach_coll_tier_hero',     name:'Heroic Deck',               icon:'⬆️', rarity:'epic',      desc:'Reach an average deck tier of Hero.', cat:'Collector' },
+  { id:'ach_coll_tier_legend',   name:'Legendary Deck',            icon:'⬆️', rarity:'legendary', desc:'Reach an average deck tier of Legendary.', cat:'Collector' },
+
+  // Cumulative Score
+  { id:'ach_coll_total_500',     name:"Chronicler's Record",       icon:'📜', rarity:'uncommon',  desc:'Score 500 total points across all Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_total_1000',    name:'The Long Record',           icon:'📜', rarity:'rare',      desc:'Score 1,000 total points across all Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_total_2500',    name:'Epic History',              icon:'📜', rarity:'epic',      desc:'Score 2,500 total points across all Collector Mode games.', cat:'Collector' },
+  { id:'ach_coll_total_5000',    name:'The Eternal Chronicle',     icon:'📜', rarity:'legendary', desc:'Score 5,000 total points across all Collector Mode games.', cat:'Collector' },
+
+  // Board Performance
+  { id:'ach_coll_full_board',    name:'Court Complete',            icon:'✅', rarity:'common',    desc:'Fill all 10 positions in a single Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_play_hero',     name:'A Hero Takes the Field',    icon:'🟣', rarity:'common',    desc:'Play a Hero card in a Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_play_legend',   name:'Legend in Play',            icon:'🖤', rarity:'uncommon',  desc:'Play a Legendary card in a Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_play_mythic',   name:'Myth Unleashed',            icon:'🔴', rarity:'rare',      desc:'Play a Mythic card in a Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_win_mythic',    name:'Victory of Legends',        icon:'🔴', rarity:'epic',      desc:'Win a Collector Mode game while playing at least one Mythic card.', cat:'Collector' },
+  { id:'ach_coll_10_pos',        name:'Masterful Placement',       icon:'💯', rarity:'uncommon',  desc:'Score a perfect 10 in any single position in Collector Mode.', cat:'Collector' },
+  { id:'ach_coll_5_tens',        name:'The Flawless Court',        icon:'💯', rarity:'legendary', desc:'Score 10 in 5 or more positions in a single Collector Mode game.', cat:'Collector' },
+  { id:'ach_coll_sweep',         name:'Commanding the Realm',      icon:'👑', rarity:'rare',      desc:'Fill all 10 positions with cards each scoring 7 or higher in one game.', cat:'Collector' },
+  { id:'ach_coll_no_reroll',     name:'First Draw, Final Answer',  icon:'🎯', rarity:'uncommon',  desc:'Win a Collector Mode game without using any rerolls.', cat:'Collector' },
+  { id:'ach_coll_starter_win',   name:'Humble Beginnings',         icon:'🌱', rarity:'rare',      desc:'Win a Collector Mode game using only Starter and Uncommon cards.', cat:'Collector' },
+  { id:'ach_coll_all_same_char', name:'Many Faces of One',         icon:'🎭', rarity:'epic',      desc:'Fill 3 or more positions with different variants of the same character.', cat:'Collector' },
 ];
 
 // ─── Dynamic achievement generation ──────────────────────────────────────────
