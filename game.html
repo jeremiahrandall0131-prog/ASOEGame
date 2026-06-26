@@ -1869,6 +1869,7 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
   const [pendingSaveSlot, setPendingSaveSlot] = useState(null); // slot being named during creation
   const [editingSlot, setEditingSlot] = useState(null);  // slot ID being renamed in load-save
   const [editName, setEditName] = useState('');
+  const [saveRev, setSaveRev] = useState(0); // bump to re-render the save list after a delete
   const [modePage, setModePage] = useState(0);
   const [classicSubPage, setClassicSubPage] = useState(0);
   const [empireSubPage, setEmpireSubPage] = useState(0);
@@ -2122,7 +2123,7 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     {save ? (<>
                       <button className="btn btn-sm btn-gold" style={{ fontSize: '0.7rem', padding: '6px 12px' }}
-                        onClick={() => { if (onSaveChange) onSaveChange(id, 'modes'); AudioManager.startMenuMusic(); }}>
+                        onClick={() => { if (onSaveChange) onSaveChange(id, 'modes'); AudioManager.startMenuMusic(); setView('modes'); }}>
                         Load
                       </button>
                       <button className="btn btn-sm"
@@ -2132,6 +2133,7 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
                           const wasActive = getActiveSaveId() === id;
                           deleteSaveSlot(id);
                           setEditingSlot(null);
+                          setSaveRev(r => r + 1); // re-render so the deleted slot clears immediately
                           if (wasActive) {
                             const next = getActiveSaveId();
                             if (onSaveChange) onSaveChange(next, 'load-save');
