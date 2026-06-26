@@ -182,8 +182,8 @@
   const MYTHIC_SFX   = ['the Ascendant','the World-Shaker','the Eternal','the Unforgotten',
     'the Transcendent','the Legend','the Immortal','the Supreme','the Undying',
     'the Irreversible','the Magnificent','the Indelible'];
-  const STARTER_SFX  = ['the Young','the Untested','in Youth','Before the Wars',
-    'the Squire','the Apprentice','the Newcomer','the Untried'];
+  const STARTER_SFX  = ['the Unsung','the Untested','the Overlooked','Before the Wars',
+    'the Unknown','the Apprentice','the Newcomer','the Untried'];
   const UNCOMMON_SFX = ['of the Realm','the Veteran','the Rising','the Proven',
     'the Capable','the Determined','the Known','the Tested'];
   const RARE_SFX     = ['the Renowned','the Formidable','the Notable','the Feared',
@@ -211,7 +211,7 @@
     const n = cleanName(char.name);
     const h = char.houses?.[0] || 'the realm';
     switch (tier) {
-      case 'starter':   return `A young ${n} of House ${h}, just beginning their path.`;
+      case 'starter':   return `${n} of House ${h}, in the earliest chapter of a journey history would not forget.`;
       case 'uncommon':  return `${n}, a capable figure of House ${h} whose reputation continues to grow.`;
       case 'rare':      return `A renowned figure of House ${h}, ${n} has earned great distinction.`;
       case 'hero':      return `${n} stands among the greatest of their age, a force not to be underestimated.`;
@@ -655,6 +655,21 @@
     { tier:'hero',      vi:1, name:'Euron, Touched by the Void',     desc:'A man who has gazed into the abyss of Valyria and been changed by what he found — more and less than human now.', age:43, spec:['ruler','armyCmd','kgCmd','ally'] },
     { tier:'legendary', vi:0, name:'Euron Greyjoy, Lord of All Waters', desc:'The most brilliantly mad captain who ever lived — who built an empire on salt and fear and blood, ruling the seas as no kraken before him.', age:46, spec:['ruler','armyCmd','kgCmd','bank','ally'] },
     { tier:'mythic',    vi:0, name:'Euron the World-Devourer',       desc:'In a world where Euron Greyjoy found what he sought in Valyria and bound a dragon to his will, he became the most terrifying ruler in all of history — a king of seas and skies whose empire spanned the world.', age:55, spec:['ruler','armyCmd','kgCmd','bank','ally','smallCouncil'] },
+  ];
+
+  NAMED['brynden-blackfish'] = [
+    { tier:'starter',   vi:0, name:'Ser Brynden Tully',                     desc:'A knight of House Tully whose refusal to marry earned him the name "Blackfish" — and a reputation for stubbornness matched only by his courage on the field.', age:22, spec:['kgCmd','armyCmd'] },
+    { tier:'starter',   vi:1, name:'The Blackfish, Young Knight',            desc:'They called him the Blackfish for refusing a bride — but those who trained alongside him knew the nickname obscured a fighter of rare and dangerous ability.', age:28, spec:['armyCmd','kgCmd'] },
+    { tier:'uncommon',  vi:0, name:'Ser Brynden, the Blackfish',             desc:'A seasoned knight whose battlefield instincts had been sharpened across decades of service — quiet, capable, and very difficult to surprise.', age:38, spec:['armyCmd','kgCmd','ally'] },
+    { tier:'uncommon',  vi:1, name:'Brynden Tully, River Knight',            desc:'The Blackfish had become a fixture of Tully campaigns — a commander who led from the front and never asked more of his soldiers than he gave himself.', age:43, spec:['armyCmd','kgCmd'] },
+    { tier:'rare',      vi:0, name:'The Blackfish of Riverrun',              desc:'The finest field commander House Tully had ever produced — whose mastery of terrain, logistics, and timing put him in a class few knights in the realm could match.', age:53, spec:['armyCmd','kgCmd','ally'] },
+    { tier:'rare',      vi:1, name:'Brynden Tully, the Blackfish',           desc:'When the War of Five Kings began, the Blackfish rode south with Robb Stark and proved that age had not blunted a blade that never rusted.', age:60, spec:['armyCmd','kgCmd','ruler'] },
+    { tier:'hero',      vi:0, name:'Ser Brynden Tully, the Blackfish',       desc:'The Blackfish was the rock on which enemy plans broke — a commander of rare patience and controlled ferocity whose defense of Riverrun held against impossible odds.', age:62, spec:['armyCmd','kgCmd','ally','ruler'] },
+    { tier:'hero',      vi:1, name:'Brynden Blackfish, Last River Lion',     desc:'When all his family were dead, imprisoned, or surrendered, the Blackfish alone remained — a sword in a dying house\'s hand, refusing to yield while breath remained.', age:62, spec:['armyCmd','kgCmd','ruler','ally'] },
+    { tier:'legendary', vi:0, name:'The Blackfish, Defier of Kings',         desc:'Brynden Tully held Riverrun alone against the Freys and Lannisters long after hope had died — an act of defiance so absolute it echoed across the Seven Kingdoms.', age:63, spec:['armyCmd','kgCmd','ruler','ally'] },
+    { tier:'legendary', vi:1, name:'Brynden Tully, the Unyielding Blackfish', desc:'He who died with a sword in hand rather than bend the knee — a commander who never lost a battle he chose to fight, and never yielded to one he chose not to.', age:63, spec:['armyCmd','kgCmd','ally'] },
+    { tier:'mythic',    vi:0, name:'The Blackfish Eternal',                  desc:'In another age, Brynden Tully had the power to match his genius — a commander who united the Riverlands under Tully rule and built an army so fearsome no king dared march against House Tully for a generation.', age:65, spec:['armyCmd','kgCmd','ruler','ally'] },
+    { tier:'mythic',    vi:1, name:'Brynden Tully, Black Trout of the Realm', desc:'He outlived friend and foe alike, kept faith when faith was folly, and fought on when all others surrendered — the most defiant man in the history of the Seven Kingdoms, and somehow the most alive.', age:68, spec:['armyCmd','kgCmd','ruler','ally'] },
   ];
 
   // ── Card Generation ────────────────────────────────────────────────────────
