@@ -7025,6 +7025,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
         <div style={{ flex:1 }}>
           <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, fontSize:'0.75rem', color:T.color, marginBottom:2 }}>{card.name}</div>
           <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>{card.houses?.join(' · ')} · {card.gender === 'F' ? '♀' : '♂'} · Age {card.age}</div>
+          {card.identity && <div style={{ fontSize:'0.58rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginTop:3 }}>Identity: <span style={{ color:'var(--gold)' }}>{card.identity}</span></div>}
         </div>
         <div style={{ textAlign:'right', marginLeft:8 }}>
           <CollTierBadge tier={card.tier} />
@@ -7046,7 +7047,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
             <div key={p.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:'0.55rem' }}>
               <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
               <span style={{ color: sc >= 9 ? '#ffd700' : sc >= 7 ? T.color : 'var(--text)', fontWeight:700 }}>
-                {Math.floor(sc*10)/10}
+                {Math.round(sc*10)/10}
               </span>
             </div>
           );
@@ -8376,7 +8377,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
                           <div key={p.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:'0.55rem',
                             background:isBest?'rgba(212,168,48,0.14)':'transparent', borderRadius:3, padding:'1px 4px' }}>
                             <span style={{ color:isBest?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-                            <span style={{ color: sc>=9?'#ffd700':sc>=7?(T[drawnCard.tier]||{}).color:'var(--text)', fontWeight:700 }}>{Math.floor(sc*10)/10}</span>
+                            <span style={{ color: sc>=9?'#ffd700':sc>=7?(T[drawnCard.tier]||{}).color:'var(--text)', fontWeight:700 }}>{Math.round(sc*10)/10}</span>
                           </div>
                         );
                       })}

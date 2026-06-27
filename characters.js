@@ -7,6 +7,7 @@ window.CHARACTERS = [
   {id:'aegon-i',name:'Aegon I (The Conqueror)',houses:['Targaryen'],gender:'M',birth:-27,age:64,scores:S(9.9,7.5,9.0,10.0,8.5,8.5,8.0,8.5,10.0,7.2),DR:10.0,notes:'Founded dynasty; conqueror and solid ruler.'},
   {id:'aenys-i',name:'Aenys I',houses:['Targaryen'],gender:'M',birth:7,age:35,scores:S(3.8,3.0,4.2,3.2,3.0,2.8,3.0,5.8,3.2,3.0),DR:4.2,notes:'Weak; couldn\'t control Maegor.'},
   {id:'maegor-i',name:'Maegor I (The Cruel)',houses:['Targaryen'],gender:'M',birth:12,age:36,scores:S(4.2,2.0,4.0,8.5,9.5,8.0,2.2,7.0,7.2,2.0),DR:8.5,notes:'Brutal tyrant; devastating personal fighter.'},
+  {id:'aegon-uncrowned',name:'Aegon the Uncrowned',houses:['Targaryen'],gender:'M',birth:11,age:23,scores:S(5.5,3.5,8.5,7.0,7.0,6.5,3.5,5.0,7.5,5.0),DR:5.0,notes:'Aenys I\'s eldest son and rightful heir; crowned by his supporters but slain by Maegor at the Battle of the Gods Eye.'},
   {id:'jaehaerys-i',name:'Jaehaerys I (The Conciliator)',houses:['Targaryen'],gender:'M',birth:34,age:69,scores:S(10.0,9.0,10.0,7.2,5.0,5.0,10.0,9.2,10.0,10.0),DR:6.5,notes:'Greatest ruler in Westerosi history.'},
   {id:'viserys-i',name:'Viserys I',houses:['Targaryen'],gender:'M',birth:77,age:52,scores:S(5.2,4.0,5.0,4.0,3.2,3.0,4.2,7.8,5.0,4.2),DR:4.2,notes:'Indecisive; caused the Dance.'},
   {id:'daemon-targaryen',name:'Daemon Targaryen (The Rogue Prince)',houses:['Targaryen'],gender:'M',birth:81,age:49,scores:S(7.2,5.2,8.2,9.5,9.8,9.8,5.0,7.0,10.0,6.2),DR:10.0,notes:'Greatest swordsman of his age (Dark Sister).'},
