@@ -172,24 +172,21 @@
   // reverse. Night's Watch and Kingsguard cannot rule, wed, or inherit (always
   // 1). Weak roles are allowed to stay genuinely weak.
   function genScores(charId, tier, vi, spec) {
-    const r = TIER_RANGES[tier];
-    const priority = CHAR_PRIORITY[charId] ?? 0.20;
-    // Headline "overall" = a prestige rating kept inside the tier's band; it is
-    // independent of the spiky per-position ability scores below.
-    const jitter = (sr(`${charId}_${tier}_${vi}_jo`) - 0.5) * 2;
-    const overall = Math.min(r.max, Math.max(r.min, r.min + priority * (r.max - r.min) + jitter));
-
+    // NOTE: TIER_RANGES and CHAR_PRIORITY above are no longer used to set the
+    // headline "overall" (see below) — they are retained only for reference.
     const ch = (window.CHARACTERS || []).find(c => c.id === charId);
     const bs = ch?.scores || {};
     const isNW = !!ch?.isNW, isKG = !!ch?.isKG;
     const sc = TIER_SCALE[tier] || { mult:0.86, lift:0.05 };
 
     const obj = {};
+    let total = 0;
     POS.forEach((p, i) => {
       // Lore rule: sworn brothers of the Watch and the Kingsguard forfeit any
       // claim to rule, take a consort, or inherit.
       if ((isNW || isKG) && (p === 'ruler' || p === 'consort' || p === 'heir')) {
         obj[p] = 1;
+        total += 1;
         return;
       }
       const raw = bs[POS_TO_CHKEY[p]];
@@ -204,8 +201,13 @@
       // exceed 100. Only the floor of 1 is enforced.
       s = Math.max(1, Math.round(s * 10) / 10);
       obj[p] = s;
+      total += s;
     });
-    obj.overall = Math.round(overall * 10) / 10;
+    // "Overall" is the exact total of the ten position scores above, so a card's
+    // headline number always equals the sum of its per-position values. Tier is
+    // assigned per variant (independent of this total): position scores climb with
+    // tier via TIER_SCALE, so higher tiers still trend toward higher totals.
+    obj.overall = Math.round(total * 10) / 10;
     return obj;
   }
 

@@ -6871,13 +6871,14 @@ function deckTierLabel(owned) {
   if (!owned || owned.length === 0) return 'starter';
   const cards = owned.map(id => getCollCard(id)).filter(Boolean);
   if (!cards.length) return 'starter';
-  const avg = cards.reduce((s, c) => s + (c.overall || 0), 0) / cards.length;
-  if (avg >= 90) return 'mythic';
-  if (avg >= 80) return 'legendary';
-  if (avg >= 70) return 'hero';
-  if (avg >= 60) return 'rare';
-  if (avg >= 50) return 'uncommon';
-  return 'starter';
+  // Deck tier = the deck's average card rarity. Overall is now a position-total
+  // (its per-tier averages are too compressed to classify a deck reliably), so we
+  // average the stored card tiers instead — robust and independent of Overall.
+  // Rounding reproduces the old avg-Overall behaviour (a deck levels up once its
+  // average card rarity passes the halfway point toward the next tier).
+  const ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
+  const avgIdx = cards.reduce((s, c) => s + Math.max(0, ORDER.indexOf(c.tier)), 0) / cards.length;
+  return ORDER[Math.max(0, Math.min(5, Math.round(avgIdx)))] || 'starter';
 }
 
 function deckAvgOverall(owned) {
@@ -7059,7 +7060,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
 
 const TUTORIAL_STEPS = [
   { title:'Welcome to Collector Mode!', body:'Collector Mode lets you build a deck of thousands of unique Character Cards — exclusive variants not found in any other game mode. Grow your collection and compete against the CPU!' },
-  { title:'Card Tiers', body:'Every card has a tier: Starter (green), Uncommon (blue), Rare (orange), Hero (purple), Legendary (black), or Mythic (red). Each card\'s Overall rating (0–100) determines its tier. Higher tiers mean more powerful cards.' },
+  { title:'Card Tiers', body:'Every card has a tier: Starter (green), Uncommon (blue), Rare (orange), Hero (purple), Legendary (black), or Mythic (red). A card\'s Overall rating is the TOTAL of its ten position scores, so it always reflects exactly how the card performs across every role. Higher tiers are rarer and pull from stronger versions of each character, so they trend toward higher Overalls.' },
   { title:'Your Deck', body:'You start with 20 cards from your Starting Deck Pull (18 Starters + 2 Uncommons). You must always have at least 20 cards. Grow your deck through Daily Pulls, the Store, and Win Pulls!' },
   { title:'How Games Work', body:'You and the CPU take turns drafting a court. Each turn you Draw Fate — a random card from your deck — and place it in one of 10 positions: Ruler, Consort, Heir, Hand, Army Commander, Kingsguard Commander, Kingsguard, Small Council, Ally, and Bank. You can freely reposition cards between slots, then Confirm your lineup to end your turn and pass to the CPU. Every card shows its score for each position, so place it where it fits best. Fill all 10 to finish!' },
   { title:'Rerolls', body:'Don\'t like your Fate draw? Spend a Reroll to draw again! You can use up to 3 rerolls per game. Buy more Rerolls in the Store for 20 Gold each. You start with 0 — use your starting Gold wisely!' },
@@ -7244,12 +7245,15 @@ function CollectorMyDeck({ save, onUpdate }) {
   ownedCards.forEach(c=>{ if(comp[c.tier]!==undefined) comp[c.tier]++; });
   const totalOwned = ownedCards.length || 1;
   const compSegments = COLL_TIER_ORDER.filter(t=>comp[t]>0).map(t=>({ pct: comp[t]/totalOwned*100, color:(T[t]||{}).color||'#888' }));
-  const TIER_FLOOR = { starter:40, uncommon:50, rare:60, hero:70, legendary:80, mythic:90 };
   const TIER_NEXT  = { starter:'uncommon', uncommon:'rare', rare:'hero', hero:'legendary', legendary:'mythic', mythic:null };
   const nextTier = TIER_NEXT[deckTier];
-  const curFloor = TIER_FLOOR[deckTier]||40;
-  const nextFloor = nextTier ? TIER_FLOOR[nextTier] : 100;
-  const tierProgress = nextTier ? Math.max(0, Math.min(100, (avgOvr-curFloor)/(nextFloor-curFloor)*100)) : 100;
+  // Progress toward the next deck tier on the same average-rarity scale deckTierLabel
+  // uses: each tier is a 1.0-wide band centred on its index, so the deck advances a
+  // tier once its average card rarity crosses the halfway point to the next.
+  const _ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
+  const avgIdx = ownedCards.length ? ownedCards.reduce((s,c)=>s+Math.max(0,_ORDER.indexOf(c.tier)),0)/ownedCards.length : 0;
+  const curIdx = Math.max(0, _ORDER.indexOf(deckTier));
+  const tierProgress = nextTier ? Math.max(0, Math.min(100, (avgIdx - curIdx + 0.5) * 100)) : 100;
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
@@ -7291,7 +7295,7 @@ function CollectorMyDeck({ save, onUpdate }) {
             <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:8 }}>
               <span style={{ fontSize:'0.5rem', color:'var(--text2)', width:54, fontFamily:'Cinzel,serif' }}>Next tier</span>
               <div style={{ flex:1 }}><CollBar pct={tierProgress} color={(T[nextTier]||{}).color} height={5} /></div>
-              <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.52rem', color:'var(--text2)', width:70, textAlign:'right' }}>avg {avgOvr} → {nextFloor}</span>
+              <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.52rem', color:'var(--text2)', width:70, textAlign:'right' }}>avg card {avgOvr}</span>
             </div>
           )}
         </div>
