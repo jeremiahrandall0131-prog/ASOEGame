@@ -1271,6 +1271,7 @@ const buildBoard   = window.buildBoard;
 const calcScore    = window.calcScore;
 const getSlotScore = window.getSlotScore;
 const checkBoardConstraints = window.checkBoardConstraints;
+const checkHardConstraints = window.checkHardConstraints;
 const getEffectiveAge = window.getEffectiveAge;
 const getTier      = window.getTier;
 const buildChaosLineup = window.buildChaosLineup;
@@ -3259,6 +3260,10 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
   function handleConfirmPick() {
     try {
       const errors = checkBoardConstraints(currentBoard);
+      // Age-ordering violations always block (even on the last round); other constraints
+      // only block before the final round.
+      const hardErrors = checkHardConstraints(currentBoard);
+      if (hardErrors.length > 0) { setConfirmError(hardErrors[0]); return; }
       if (errors.length > 0 && !isLastRound) { setConfirmError(errors[0]); return; }
       setConfirmError('');
 
@@ -3332,10 +3337,12 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
       const discards = (gs.dynDiscards?.[activeIdx] || 0);
       if (placedCount !== gs.round - discards) return false;
     }
-    // On the final round of any mode, allow finishing even if constraints can't be satisfied.
-    // Wildcard positions, forced rolls, and chaos rungs can all create unavoidable conflicts.
-    // Constraint errors are still shown in the UI but must not block the last confirm.
-    if (isLastRound) return true;
+    // On the final round of any mode, allow finishing even if SOFT constraints can't be satisfied
+    // (wildcard positions, forced rolls, and chaos rungs can create unavoidable gender/dragon
+    // conflicts). But age-ordering violations (Heir older than Ruler/Consort, etc.) are ALWAYS
+    // correctable by rearranging the board, so they must still block the final confirm — the
+    // button stays greyed and the warning is shown until the player fixes the ages.
+    if (isLastRound) return checkHardConstraints(currentBoard).length === 0;
     return checkBoardConstraints(currentBoard).length === 0;
   })();
 

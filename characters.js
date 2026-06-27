@@ -1000,3 +1000,12 @@ window.checkBoardConstraints = function(board) {
   return errors;
 };
 
+// "Hard" constraints = the Ruler/Consort vs Heir (and Dynasty age-slot) age-ordering rules.
+// These are ALWAYS satisfiable by rearranging the characters already on the board (just make
+// the oldest the Ruler), so unlike gender/dragon-type conflicts — which a forced roll can make
+// genuinely unavoidable — an age violation is always the player's to correct. It must therefore
+// block finalizing a board in EVERY round (including the last) and in every board-building mode.
+window.checkHardConstraints = function(board) {
+  return window.checkBoardConstraints(board).filter(e => /younger than or same age as (RULER|CONSORT)$/.test(e));
+};
+
