@@ -1015,7 +1015,7 @@
       { name:"Lord of the Seven Kingdoms", age:42,
         desc:"Conqueror, lawgiver, and dragonlord without peer: at the summit of his powers Aegon is Westeros itself made flesh — no host can stand against him, no corner lies beyond his reach, no name is written larger.",
         scores: A(36,2,2,14,26,14,1,5,7,1) },
-      { name:"Aegon the First and Greatest", age:50,
+      { name:"Aegon the First and Greatest", age:50, exact:true,
         desc:"The measure against which every king who follows is found wanting — the man who looked upon seven warring realms and made them one, whose dragons wrote his name across history in fire that has never gone out.",
         scores: A(38,2,2,14,26,13,1,5,8,1) },
     ],
@@ -10056,7 +10056,9 @@
         authored.forEach(v => {
           const base = {};
           POS.forEach(p => { base[p] = Math.max(0.1, Math.round((+(v.scores[p] ?? 0.1)) * 10) / 10); });
-          const scores = textureScores(base, char.id + '_' + (v.name || ''));
+          // `exact` cards (e.g. Aegon's 110 peak) use their authored scores verbatim — no
+          // decimal jitter — so the Overall lands on its precise intended total.
+          const scores = v.exact ? Object.assign({}, base) : textureScores(base, char.id + '_' + (v.name || ''));
           // Overall is the EXACT decimal sum of the (textured) position scores.
           let sum = Math.round(POS.reduce((a, p) => a + scores[p], 0) * 10) / 10;
           if (sum > 110) { // preserve the global cap (Aegon's peak)

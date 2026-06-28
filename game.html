@@ -6845,6 +6845,85 @@ const COLL_POS = [
   { id:'ally',         label:'Ally' },
   { id:'bank',         label:'Bank' },
 ];
+// Collector boards obey the SAME succession rules as every other mode: Ruler & Consort
+// must be opposite genders, and the Heir may not be older than the Ruler or the Consort.
+// (board is a { posId: card } map; cards carry .gender and .age.)
+function collConstraintErrors(board) {
+  const errs = [];
+  const r = board && board.ruler, c = board && board.consort, h = board && board.heir;
+  if (r && c && r.gender === c.gender) errs.push('Ruler & Consort must be opposite genders.');
+  if (h && r && (h.age||0) > (r.age||0)) errs.push('Heir cannot be older than the Ruler.');
+  if (h && c && (h.age||0) > (c.age||0)) errs.push('Heir cannot be older than the Consort.');
+  return errs;
+}
+function collBoardLegal(board) { return collConstraintErrors(board).length === 0; }
+// Plain-language help for fixing an illegal board, naming the valid cards on the board that
+// could fill the offending slot — or telling the player they may forfeit it (leave it empty
+// → scores 0) when no card on the board qualifies.
+function collFixHint(board) {
+  const r = board.ruler, c = board.consort, h = board.heir;
+  const named = arr => arr.map(x => x.name).join(', ');
+  if (r && c && r.gender === c.gender) {
+    const opp = Object.values(board).filter(Boolean).filter(x => x.gender !== r.gender);
+    return opp.length
+      ? `Ruler & Consort are both ${r.gender === 'M' ? 'male' : 'female'}. Make one of these your Consort: ${named(opp)}.`
+      : `Every card here is the same gender — move a card off the Consort (or Ruler) to leave it empty; that slot scores 0.`;
+  }
+  if ((h && r && (h.age||0) > (r.age||0)) || (h && c && (h.age||0) > (c.age||0))) {
+    const lim = Math.min(r ? (r.age||0) : Infinity, c ? (c.age||0) : Infinity);
+    const younger = Object.entries(board).filter(([pid, x]) => x && pid !== 'heir' && (x.age||0) <= lim).map(([, x]) => x);
+    return younger.length
+      ? `The Heir is older than the Ruler/Consort. Move a younger card to Heir: ${named(younger)}.`
+      : `No card is young enough to be Heir — move the Heir off to leave it empty; that slot scores 0.`;
+  }
+  return '';
+}
+// True when the drawn card has at least one LEGAL home on the board. Only when this is false —
+// the EXTREME case (e.g. every card is the same gender and just Ruler/Consort remain open) —
+// may the player forfeit the card (leave that position empty, scoring 0) instead of being
+// forced into an illegal placement. In normal play there is always a legal slot, so the
+// forfeit option stays hidden.
+function canPlaceDrawnLegally(board, card) {
+  if (!card) return true;
+  const open = COLL_POS.map(p => p.id).filter(id => !board[id]);
+  if (!open.length) return true;                                   // board already full
+  if (open.some(id => id !== 'ruler' && id !== 'consort' && id !== 'heir')) return true; // any free slot fits
+  const r = board.ruler, c = board.consort, h = board.heir;
+  for (const id of open) {
+    if (id === 'ruler'   && (!c || c.gender !== card.gender) && (!h || (h.age||0) <= (card.age||0))) return true;
+    if (id === 'consort' && (!r || r.gender !== card.gender) && (!h || (h.age||0) <= (card.age||0))) return true;
+    if (id === 'heir'    && (!r || (card.age||0) <= (r.age||0)) && (!c || (card.age||0) <= (c.age||0))) return true;
+  }
+  return false;
+}
+// Build the CPU's hidden deck: a fully random multiset drawn from the WHOLE card pool (any
+// tier, duplicates allowed, the same card the player owns is fair game) whose cumulative
+// Overall lands within ±2% of the player's cumulative deck Overall, with at least 20 cards.
+// Completely random and different every game; never revealed during play.
+function genCpuDeck(targetOverall) {
+  const pool = (typeof getCollCards === 'function' ? getCollCards() : (window.COLLECTOR_CARDS||[]));
+  if (!pool.length) return [];
+  const MIN = 20;
+  if (!(targetOverall > 0)) { const d=[]; for (let i=0;i<MIN;i++) d.push(pool[Math.floor(Math.random()*pool.length)]); return d; }
+  const lo = targetOverall*0.98, hi = targetOverall*1.02;
+  const minCard = Math.min(...pool.map(c=>c.overall||0)) || 1;
+  for (let attempt=0; attempt<60; attempt++) {
+    const deck=[]; let sum=0, guard=0;
+    while (guard++ < 3000) {
+      const stillNeed = Math.max(0, MIN - deck.length);
+      const reserve = stillNeed>0 ? (stillNeed-1)*minCard : 0; // keep room to still reach 20 cards
+      let cands = pool.filter(c => sum + (c.overall||0) + reserve <= hi);
+      if (!cands.length) cands = pool.filter(c => (c.overall||0) <= minCard + 0.5);
+      if (!cands.length) cands = pool;
+      const c = cands[Math.floor(Math.random()*cands.length)];
+      deck.push(c); sum += (c.overall||0);
+      if (deck.length>=MIN && sum>=lo && sum<=hi) return deck;
+      if (deck.length>=80) break;
+    }
+  }
+  const d=[]; let s=0; while ((d.length<MIN || s<lo) && d.length<80) { const c=pool[Math.floor(Math.random()*pool.length)]; d.push(c); s+=(c.overall||0); }
+  return d;
+}
 const COLL_TIER_ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
 const COLL_AUCTION_GOLD  = { starter:15, uncommon:25, rare:40, hero:75, legendary:150, mythic:300 };
 const COLL_BUY_GOLD      = { starter:50, uncommon:75, rare:100 };
@@ -7032,7 +7111,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
         <div style={{ flex:1 }}>
           <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, fontSize:'0.75rem', color:T.color, marginBottom:2 }}>{card.name}</div>
           <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>{card.houses?.join(' · ')} · {card.gender === 'F' ? '♀' : '♂'} · Age {card.age}</div>
-          {card.identity && <div style={{ fontSize:'0.58rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginTop:3 }}>Identity: <span style={{ color:'var(--gold)' }}>{card.identity}</span></div>}
+          {card.identity && <div style={{ fontSize:'0.58rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginTop:3 }}>Identity: <span style={{ color:'var(--gold)' }}>{card.identity}</span>{card.gender && <span> · {card.gender==='F'?'♀ Female':'♂ Male'}</span>}</div>}
         </div>
         <div style={{ textAlign:'right', marginLeft:8 }}>
           <CollTierBadge tier={card.tier} />
@@ -7700,6 +7779,7 @@ function CollectorStore({ save, onUpdate }) {
   const [upgradeSelected, setUpgradeSelected] = React.useState(null);
   const [detailCard, setDetailCard] = React.useState(null);
   const [storeMsg, setStoreMsg] = React.useState('');
+  const [pendingBuy, setPendingBuy] = React.useState(null); // misclick guard: { label, action }
   const [showcaseCards, setShowcaseCards] = React.useState(() => {
     const now = Date.now();
     const needRefresh = !save.storeRefresh || (now - save.storeRefresh > 86400000);
@@ -7724,21 +7804,25 @@ function CollectorStore({ save, onUpdate }) {
     const price = { starter:50, uncommon:75, rare:100, hero:150, legendary:300, mythic:500 }[card.tier] || 50;
     if ((save.gold||0) < price) { msg(`Not enough Gold! Need ${price}G.`); return; }
     if (owned.has(cardId)) { msg('You already own this card!'); return; }
+    setPendingBuy({ label:`Buy ${card.name} for ${price}G?`, action: () => {
     const newSave = { ...save, gold:(save.gold||0)-price, owned:[...(save.owned||[]),cardId] };
     saveCollSave(newSave);
     onUpdate(newSave);
     setShowcaseCards(prev => prev.filter(id=>id!==cardId));
     msg(`Purchased ${card.name} for ${price}G!`);
+    }});
   }
 
   function buyDirectCard(card) {
     const price = COLL_BUY_GOLD[card.tier] || 50;
     if ((save.gold||0) < price) { msg(`Not enough Gold! Need ${price}G.`); return; }
     if (owned.has(card.id)) { msg('You already own this card!'); return; }
+    setPendingBuy({ label:`Buy ${card.name} for ${price}G?`, action: () => {
     const newSave = { ...save, gold:(save.gold||0)-price, owned:[...(save.owned||[]),card.id] };
     saveCollSave(newSave);
     onUpdate(newSave);
     msg(`Purchased ${card.name} for ${price}G!`);
+    }});
   }
 
   const LOTTERY_PROBS = {
@@ -7750,6 +7834,7 @@ function CollectorStore({ save, onUpdate }) {
   function doLotterySpin() {
     const cost = COLL_LOTTERY_COST[lotteryType];
     if ((save.gold||0) < cost) { msg(`Need ${cost}G for this spin!`); return; }
+    setPendingBuy({ label:`Spin the ${lotteryType} lottery for ${cost}G?`, action: () => {
     setLotterySpinning(true);
     setTimeout(() => {
       const all = getCollCards();
@@ -7762,6 +7847,7 @@ function CollectorStore({ save, onUpdate }) {
       setLotteryResult(card);
       setLotterySpinning(false);
     }, 1500);
+    }});
   }
 
   function doUpgrade(card) {
@@ -7773,21 +7859,25 @@ function CollectorStore({ save, onUpdate }) {
     const all = getCollCards();
     const nextCards = all.filter(c => c.charId === card.charId && c.tier === nextTier && !owned.has(c.id));
     if (!nextCards.length) { msg(`No available ${nextTier} cards for ${card.name}!`); return; }
+    setPendingBuy({ label:`Upgrade ${card.name} to a ${nextTier} card for ${cost}G?`, action: () => {
     const nextCard = nextCards[Math.floor(Math.random()*nextCards.length)];
     const newSave = { ...save, gold:(save.gold||0)-cost, owned:[...(save.owned||[]),nextCard.id] };
     saveCollSave(newSave);
     onUpdate(newSave);
     setUpgradeSelected(null);
     msg(`Upgraded to ${nextCard.name}!`);
+    }});
   }
 
   function buyRerolls(n) {
     const cost = n * REROLL_COST;
     if ((save.gold||0) < cost) { msg(`Need ${cost}G!`); return; }
+    setPendingBuy({ label:`Buy ${n} reroll${n>1?'s':''} for ${cost}G?`, action: () => {
     const newSave = { ...save, gold:(save.gold||0)-cost, rerolls:(save.rerolls||0)+n };
     saveCollSave(newSave);
     onUpdate(newSave);
     msg(`Purchased ${n} reroll${n>1?'s':''}!`);
+    }});
   }
 
   const STORE_TABS = [
@@ -7806,6 +7896,18 @@ function CollectorStore({ save, onUpdate }) {
         ))}
       </div>
       {storeMsg && <div style={{ fontSize:'0.7rem', color:'var(--gold)', background:'rgba(212,168,48,0.1)', border:'1px solid var(--gold)', borderRadius:4, padding:'6px 10px', marginBottom:8 }}>{storeMsg}</div>}
+      {pendingBuy && (
+        <div onClick={() => setPendingBuy(null)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:400, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+          <div onClick={e => e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'var(--gold)', textAlign:'center' }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.85rem', color:'var(--gold)', marginBottom:6 }}>Confirm Purchase</div>
+            <div style={{ fontSize:'0.8rem', color:'var(--text)', marginBottom:14 }}>{pendingBuy.label}</div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button className="btn btn-ghost" style={{ flex:1, fontSize:'0.78rem' }} onClick={() => setPendingBuy(null)}>Cancel</button>
+              <button className="btn btn-gold" style={{ flex:1, fontSize:'0.78rem' }} onClick={() => { const a = pendingBuy.action; setPendingBuy(null); a && a(); }}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="scroll" style={{ flex:1 }}>
         {tab === 'showcase' && (
@@ -8056,7 +8158,6 @@ function CollectorWinPull({ winPullCards, onPick, onSkip }) {
           <button className="btn btn-gold" style={{ width:'100%' }} onClick={() => onPick(selected)}>Add to Deck</button>
         </div>
       )}
-      <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:8 }} onClick={onSkip}>Skip Win Pull</button>
     </div>
   );
 }
@@ -8099,61 +8200,106 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
   const [cpuBoard, setCpuBoard] = React.useState({});   // built turn-by-turn (optimal assignment)
   const [cpuDraftedCards, setCpuDraftedCards] = React.useState([]); // every card the CPU has drafted
   const [lastCpuCard, setLastCpuCard] = React.useState(null);
+  // CPU's hidden preset deck (±2% of the player's cumulative deck Overall), the cards it has
+  // drawn so far, and its own reroll budget. Generated once per game; never shown until the end.
+  const [cpuDeck] = React.useState(() => genCpuDeck((save.owned||[]).reduce((s,id)=>s+((getCollCard(id)||{}).overall||0),0)));
+  const [cpuDrawnIds, setCpuDrawnIds] = React.useState(() => new Set());
+  const [cpuRerollsLeft, setCpuRerollsLeft] = React.useState(GAME_REROLL_LIMIT);
   const [phase, setPhase] = React.useState('draw'); // draw | place | done
   const [showCpu, setShowCpu] = React.useState(false);
   const [selectedPos, setSelectedPos] = React.useState(null);
+  const [heldDisplaced, setHeldDisplaced] = React.useState(false); // holding a card swapped out of a slot
+  const [detailCard, setDetailCard] = React.useState(null); // card whose stats popup is open
+  const [showSettings, setShowSettings] = React.useState(false);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
 
-  // The CPU draws from the player's overall DECK LEVEL — the game's canonical deck tier
-  // (deckTierLabel, based on the deck's average Overall), NOT the tier of whatever card the
-  // player happened to draw this round. A Mythic-level deck always faces a Mythic CPU, even
-  // on rounds the player plays a lower-tier card.
-  const deckLevel = React.useMemo(() => deckTierLabel(save.owned), [save.owned]);
-
-  // CPU drafts a card from the deck-level tier's full pool — never duplicating a character
-  // already on either board, except infinitely-duplicatable (unlimited) characters.
-  function cpuDraftCard(playerBoardNow, cpuDraftedNow) {
-    const all = getCollCards();
-    const taken = new Set([
-      ...Object.values(playerBoardNow).filter(Boolean).map(c=>c.charId),
-      ...cpuDraftedNow.map(c=>c.charId),
-    ]);
-    const usable = c => c.unlimited || !taken.has(c.charId);
-    let pool = all.filter(c => c.tier === deckLevel && usable(c));
-    if (!pool.length) pool = all.filter(usable);            // fallback: any tier
-    if (!pool.length) return null;
-    return pool[Math.floor(Math.random()*pool.length)];
+  // The CPU draws fate from its OWN hidden deck each round (like the player), spending up to
+  // 3 rerolls wisely on weak draws, then always re-fields its optimal LEGAL lineup. It tries
+  // its hardest to win; its deck strength tracks the player's so games stay competitive.
+  function cpuDrawAndPlace(draftedNow) {
+    const undrawn = cpuDeck.filter(c => !cpuDrawnIds.has(c));
+    if (!undrawn.length) return draftedNow;
+    const overalls = cpuDeck.map(c => c.overall||0).slice().sort((a,b)=>a-b);
+    const med = overalls[Math.floor(overalls.length/2)] || 0;
+    const roundsLeftAfter = COLL_POS.length - draftedNow.length - 1;
+    let rerolls = cpuRerollsLeft;
+    let pick = undrawn[Math.floor(Math.random()*undrawn.length)];
+    const considered = new Set([pick]);
+    // Wise rerolls: keep drawing for a stronger card while the current pick is below-median
+    // and enough cards remain undrawn to still fill the board; keep the best draw seen.
+    while (rerolls > 0 && (pick.overall||0) < med && (undrawn.length - considered.size) > roundsLeftAfter) {
+      const others = undrawn.filter(c => !considered.has(c));
+      if (!others.length) break;
+      const cand = others[Math.floor(Math.random()*others.length)];
+      considered.add(cand);
+      rerolls--;
+      if ((cand.overall||0) > (pick.overall||0)) pick = cand;
+    }
+    const nextDrawn = new Set(cpuDrawnIds); nextDrawn.add(pick);
+    setCpuDrawnIds(nextDrawn);
+    setCpuRerollsLeft(rerolls);
+    const drafted = [...draftedNow, pick];
+    setCpuDraftedCards(drafted);
+    setCpuBoard(optimalAssign(drafted));
+    setLastCpuCard(pick);
+    return drafted;
   }
 
   // Assign a set of cards to positions to MAXIMISE total score (greedy seed + pairwise-swap
   // local search — optimal for boards this small). The CPU always fields this best lineup,
   // re-optimising (repositioning) every time it drafts a new card.
   function optimalAssign(cards) {
-    const pids = COLL_POS.map(p => p.id);
-    const pairs = [];
-    cards.forEach((c, ci) => pids.forEach(pid => pairs.push({ ci, pid, s: c.scores?.[pid] || 0 })));
-    pairs.sort((a, b) => b.s - a.s);
-    const assign = {}; const usedC = new Set(), usedP = new Set();
-    for (const pr of pairs) { if (usedC.has(pr.ci) || usedP.has(pr.pid)) continue; assign[pr.pid] = cards[pr.ci]; usedC.add(pr.ci); usedP.add(pr.pid); }
-    let improved = true;
-    while (improved) {
-      improved = false;
-      const ps = Object.keys(assign);
-      for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
-        const p1 = ps[i], p2 = ps[j], c1 = assign[p1], c2 = assign[p2];
-        if (((c1.scores?.[p2] || 0) + (c2.scores?.[p1] || 0)) > ((c1.scores?.[p1] || 0) + (c2.scores?.[p2] || 0))) {
-          assign[p1] = c2; assign[p2] = c1; improved = true;
-        }
-      }
+    // The three constrained slots (ruler/consort/heir) are chosen by exhaustive search —
+    // each may be left empty if no legal card fits, and that slot simply scores 0 (the
+    // natural "forfeit"). The remaining slots are filled greedily for max score. The CPU
+    // therefore always fields the best LEGAL lineup it can from its drafted cards.
+    const constrained = new Set(['ruler','consort','heir']);
+    const freePids = COLL_POS.map(p => p.id).filter(p => !constrained.has(p));
+    const scoreOf = a => COLL_POS.reduce((s, p) => s + (a[p.id]?.scores?.[p.id] || 0), 0);
+    function fillFree(fixed, usedCards) {
+      const a = { ...fixed };
+      const rem = cards.filter(c => !usedCards.has(c));
+      const pairs = [];
+      rem.forEach(c => freePids.forEach(pid => pairs.push({ c, pid, s: c.scores?.[pid] || 0 })));
+      pairs.sort((x, y) => y.s - x.s);
+      const uc = new Set(), up = new Set();
+      for (const pr of pairs) { if (uc.has(pr.c) || up.has(pr.pid)) continue; a[pr.pid] = pr.c; uc.add(pr.c); up.add(pr.pid); }
+      return a;
     }
-    return assign;
+    const cand = [null, ...cards];
+    let best = null, bestS = -1;
+    for (const r of cand) for (const c of cand) for (const h of cand) {
+      if ((r && c && r === c) || (r && h && r === h) || (c && h && c === h)) continue;
+      const fixed = {}, used = new Set();
+      if (r) { fixed.ruler = r; used.add(r); }
+      if (c) { fixed.consort = c; used.add(c); }
+      if (h) { fixed.heir = h; used.add(h); }
+      if (!collBoardLegal(fixed)) continue;
+      const a = fillFree(fixed, used);
+      const s = scoreOf(a);
+      if (s > bestS) { bestS = s; best = a; }
+    }
+    return best || {};
   }
 
   function drawFate() {
     const available = playerDeck.filter(c => !usedCardIds.has(c.id) && !Object.values(playerBoard).some(pc=>pc?.id===c.id));
     if (!available.length) { setPhase('done'); return; }
-    const card = available[Math.floor(Math.random()*available.length)];
+    let pool = available;
+    // Anti-softlock: if every card on the board is the same gender and only the last slot or
+    // two remain, force the draw toward an opposite-gender card (if the deck holds one) so a
+    // legal Ruler/Consort pairing stays possible. If none remain, the slot can be forfeited.
+    const placed = Object.values(playerBoard).filter(Boolean);
+    if (placed.length && (COLL_POS.length - placed.length) <= 2) {
+      const genders = new Set(placed.map(c => c.gender));
+      if (genders.size === 1) {
+        const opp = available.filter(c => c.gender !== [...genders][0]);
+        if (opp.length) pool = opp;
+      }
+    }
+    const card = pool[Math.floor(Math.random()*pool.length)];
     setDrawnCard(card);
+    setHeldDisplaced(false);
     setPhase('place');
   }
 
@@ -8167,11 +8313,34 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
     setRerollsUsed(r=>r+1);
   }
 
+  // Forfeit the card in hand: don't place it, leaving a slot empty (it scores 0). Lets the
+  // player decline a placement that would otherwise force an illegal board.
+  function discardDrawn() {
+    if (!drawnCard) return;
+    setUsedCardIds(new Set([...usedCardIds, drawnCard.id]));
+    setDrawnCard(null);
+    setHeldDisplaced(false);
+    setSelectedPos(null);
+    setPhase('arrange');
+  }
+
   function placeCard(posId) {
-    if (!drawnCard || playerBoard[posId]) return;
+    if (!drawnCard) return;
+    const occupant = playerBoard[posId];
+    if (occupant) {
+      // Placing onto an occupied slot SWAPS: the drawn card takes the slot and the displaced
+      // card becomes the new card-in-hand to place elsewhere (no forced empty-slot placement).
+      setPlayerBoard({ ...playerBoard, [posId]: drawnCard });
+      setUsedCardIds(new Set([...usedCardIds, drawnCard.id]));
+      setDrawnCard(occupant);
+      setHeldDisplaced(true);
+      setSelectedPos(null);
+      return; // stay in 'place' phase, now holding the displaced card
+    }
     setPlayerBoard({ ...playerBoard, [posId]: drawnCard });
     setUsedCardIds(new Set([...usedCardIds, drawnCard.id]));
     setDrawnCard(null);
+    setHeldDisplaced(false);
     setSelectedPos(null);
     setPhase('arrange'); // let the player reposition, then confirm to pass the turn
   }
@@ -8190,17 +8359,12 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
     setSelectedPos(null);
   }
 
-  // End the player's turn: the CPU drafts from the deck-level pool and re-fields its optimal
-  // lineup, then play returns to the player (or finishes when the board is full).
+  // End the player's turn: the CPU draws fate from its own hidden deck and re-fields its
+  // optimal lineup, then play returns to the player (or finishes when the board is full).
   function confirmTurn() {
     if (phase !== 'arrange') return;
-    const cpuCard = cpuDraftCard(playerBoard, cpuDraftedCards);
-    if (cpuCard) {
-      const drafted = [...cpuDraftedCards, cpuCard];
-      setCpuDraftedCards(drafted);
-      setCpuBoard(optimalAssign(drafted));
-      setLastCpuCard(cpuCard);
-    }
+    if (!collBoardLegal(playerBoard)) return; // gender/age violation — must be fixed first
+    cpuDrawAndPlace(cpuDraftedCards);
     setSelectedPos(null);
     if (Object.keys(playerBoard).length >= COLL_POS.length) setPhase('done');
     else setPhase('draw');
@@ -8221,23 +8385,17 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
   function handleFinish() {
     const isWin = playerScore > cpuScore;
     const margin = playerScore - cpuScore;
-    let goldEarned = 5; // completion gold
-    if (isWin) {
-      if (margin >= 10) goldEarned = 30;
-      else if (margin >= 5) goldEarned = 15;
-      else goldEarned = 10;
-    }
+    // Gold breakdown — every line below is itemised on the scorecard.
+    const baseGold = isWin ? (margin >= 10 ? 30 : margin >= 5 ? 15 : 10) : 5; // win-by-margin, else completion
+    const baseLabel = isWin ? (margin >= 10 ? 'Decisive win' : margin >= 5 ? 'Solid win' : 'Win') : 'Completion';
     // Graduated score bonus — rewards how well your cards fit their positions
-    // (the new spiky scoring puts a typical board ~45-70 and a perfect court at 100).
-    if (playerScore >= 100) goldEarned += 500;       // a perfect court
-    else if (playerScore >= 90) goldEarned += 150;
-    else if (playerScore >= 80) goldEarned += 75;
-    else if (playerScore >= 70) goldEarned += 40;
-    else if (playerScore >= 60) goldEarned += 20;
-    let finalGold = (save.gold||0) + goldEarned;
-    if (isWin) finalGold += wager;
-    else finalGold -= wager;
-    finalGold = Math.max(0, finalGold);
+    // (a typical board is ~45-70; a perfect court hits 100).
+    const scoreBonus = playerScore >= 100 ? 500 : playerScore >= 90 ? 150 : playerScore >= 80 ? 75 : playerScore >= 70 ? 40 : playerScore >= 60 ? 20 : 0;
+    const goldEarned = baseGold + scoreBonus;
+    const wagerDelta = wager > 0 ? (isWin ? wager : -wager) : 0;
+    const netGold = goldEarned + wagerDelta;
+    const finalGold = Math.max(0, (save.gold||0) + netGold);
+    const goldBreakdown = { baseGold, baseLabel, scoreBonus, wager, wagerDelta, goldEarned, netGold, startGold: (save.gold||0), finalGold };
 
     // Update stats
     const cardPlays = { ...(save.stats?.cardPlays||{}) };
@@ -8265,7 +8423,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
     };
     saveCollSave(newSave);
     onUpdate(newSave);
-    const result = { isWin, playerScore, cpuScore, goldEarned, playerBoard, cpuBoard, wager, margin, rerollsUsed };
+    const result = { isWin, playerScore, cpuScore, goldEarned, goldBreakdown, playerBoard, cpuBoard, cpuDeck, wager, margin, rerollsUsed };
     const collUnlocked = checkCollectorAchievements(newSave, result);
     collUnlocked.forEach(id => window.dispatchEvent(new CustomEvent('asoe-achievement', { detail: id })));
     onEnd(result);
@@ -8299,6 +8457,48 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
           </div>
         </div>
       )}
+      {detailCard && (() => { const dc = detailCard; const ct = T[dc.tier]||{color:'#888'};
+        return (
+        <div onClick={()=>setDetailCard(null)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:350, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:340, width:'100%', borderColor:ct.color, maxHeight:'85%', overflowY:'auto' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+              <div>
+                <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:ct.color, fontWeight:700 }}>{dc.name}</div>
+                <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginTop:2 }}>{dc.identity||dc.name} · {dc.gender==='F'?'♀ Female':'♂ Male'} · Age {dc.age}</div>
+              </div>
+              <button onClick={()=>setDetailCard(null)} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'1.1rem', cursor:'pointer', lineHeight:1 }}>✕</button>
+            </div>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
+              <CollTierBadge tier={dc.tier} />
+              <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>Overall {dc.overall}</span>
+              <span style={{ marginLeft:'auto', fontSize:'0.55rem', color:'var(--text2)' }}>{dc.houses?.[0]}</span>
+            </div>
+            {dc.desc && <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginTop:8, lineHeight:1.5, fontStyle:'italic' }}>{dc.desc}</div>}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:'2px 10px', marginTop:10, paddingTop:8, borderTop:'1px solid var(--border)' }}>
+              {COLL_POS.map(p => { const sc = dc.scores?.[p.id]||0; return (
+                <div key={p.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'0.58rem' }}>
+                  <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
+                  <span style={{ color: sc>=9?'#ffd700':sc>=7?ct.color:'var(--text)', fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+                </div>
+              ); })}
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+      {showSettings && (
+        <div onClick={()=>setShowSettings(false)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.82)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:300, width:'100%', borderColor:'var(--gold)' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+              <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.9rem', color:'var(--gold)' }}>⚙ Settings</div>
+              <button onClick={()=>setShowSettings(false)} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'1.1rem', cursor:'pointer', lineHeight:1 }}>✕</button>
+            </div>
+            <div style={{ fontSize:'0.6rem', color:'var(--text2)', fontFamily:'Cinzel,serif', letterSpacing:'0.1em', marginBottom:8 }}>MUSIC VOLUME</div>
+            <VolumeBar />
+            <div style={{ fontSize:'0.55rem', color:'var(--text2)', marginTop:14, fontStyle:'italic', lineHeight:1.5 }}>Collector Mode always plays its own theme.</div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="nav-bar">
         <div className="nav-side">
@@ -8311,7 +8511,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
           </div>
         </div>
         <div className="nav-side" style={{ justifyContent:'flex-end' }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowCpu(s=>!s)} style={{ fontSize:'0.55rem' }}>{showCpu?'My Board':'CPU Board'}</button>
+          <button onClick={() => setShowSettings(true)} title="Settings" style={{ width:30, height:30, borderRadius:'50%', background:'var(--bg3)', border:'1px solid var(--border2)', color:'var(--gold)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1.05rem', padding:0, lineHeight:1 }}>⚙</button>
         </div>
       </div>
 
@@ -8329,10 +8529,10 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
         {wager > 0 && <div style={{ fontSize:'0.6rem', color:'var(--gold)' }}>🎲 {wager}G</div>}
       </div>
 
-      {/* Music volume */}
-      <div style={{ display:'flex', justifyContent:'flex-end', alignItems:'center', gap:8, padding:'3px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
-        <span style={{ fontSize:'0.5rem', color:'var(--text2)', fontFamily:'Cinzel,serif', letterSpacing:'0.1em' }}>MUSIC</span>
-        <VolumeBar />
+      {/* Board view toggle — switch between your board and the CPU's, like the other modes */}
+      <div style={{ display:'flex', gap:6, padding:'6px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
+        <button className={`btn btn-${!showCpu?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setShowCpu(false)}>My Board ({playerScore})</button>
+        <button className={`btn btn-${showCpu?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setShowCpu(true)}>CPU Board ({cpuScore})</button>
       </div>
 
       {/* Board */}
@@ -8358,14 +8558,14 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
             )}
             {phase === 'place' && drawnCard && (
               <div className="card" style={{ marginBottom:10, borderColor:(T[drawnCard.tier]||{}).color||'var(--gold)' }}>
-                <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:6 }}>FATE DREW:</div>
+                <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:6 }}>{heldDisplaced ? '✋ HOLDING — place this card:' : 'FATE DREW:'}</div>
                 <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                   <div style={{ flex:1 }}>
                     <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:(T[drawnCard.tier]||{}).color||'var(--gold)', fontWeight:700 }}>{drawnCard.name}</div>
                     <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>{drawnCard.houses?.[0]} · Overall: {drawnCard.overall}</div>
                     <CollTierBadge tier={drawnCard.tier} />
                   </div>
-                  {rerollsLeft > 0 && rerollsUsed < GAME_REROLL_LIMIT && (
+                  {rerollsLeft > 0 && rerollsUsed < GAME_REROLL_LIMIT && !heldDisplaced && (
                     <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.6rem' }} onClick={doReroll}>
                       🎲 Reroll ({rerollsLeft})
                     </button>
@@ -8392,15 +8592,20 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
                   );
                 })()}
                 <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginTop:8, fontStyle:'italic' }}>
-                  Select a position below to place this card ↓ (best fit highlighted)
+                  Tap an empty slot to place — or an occupied slot to swap. (Best fit highlighted.)
                 </div>
+                {!canPlaceDrawnLegally(playerBoard, drawnCard) && (
+                  <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:8, fontSize:'0.58rem', color:'#c98a3a', borderColor:'#c98a3a' }} onClick={discardDrawn}>
+                    🗑 No legal position for this card — forfeit it (that slot scores 0)
+                  </button>
+                )}
               </div>
             )}
             {/* Position grid */}
             <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
               {COLL_POS.map(pos => {
                 const placed = playerBoard[pos.id];
-                const canPlace = phase === 'place' && drawnCard && !placed;
+                const canPlace = phase === 'place' && !!drawnCard; // empty slot = place, occupied = swap
                 const canArrange = phase === 'arrange';
                 const isSelected = canArrange && selectedPos === pos.id;
                 const clickable = canPlace || canArrange;
@@ -8418,7 +8623,10 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
                     <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginBottom:2 }}>{pos.label}</div>
                     {placed ? (
                       <>
-                        <div style={{ fontSize:'0.65rem', color:ct.color, fontWeight:700 }}>{placed.name}</div>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:4 }}>
+                          <span style={{ fontSize:'0.65rem', color:ct.color, fontWeight:700 }}>{placed.name}</span>
+                          <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(placed); }} title="View card" style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, flexShrink:0 }}>ⓘ</button>
+                        </div>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
                           <CollTierBadge tier={placed.tier} />
                           <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{Math.floor(score*10)/10}</span>
@@ -8444,7 +8652,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
           /* CPU Board */
           <div>
             <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10 }}>
-              CPU Board · {Object.keys(cpuBoard).length}/{COLL_POS.length} drafted · The CPU draws from your deck level ({(T[deckLevel]||{}).label||deckLevel}) and always fields its optimal lineup.
+              CPU Board · {Object.keys(cpuBoard).length}/{COLL_POS.length} drafted · The CPU drafts its own court each round and always fields its optimal lineup.
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
               {COLL_POS.map(pos => {
@@ -8456,7 +8664,10 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
                     <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginBottom:2 }}>{pos.label}</div>
                     {card ? (
                       <>
-                        <div style={{ fontSize:'0.65rem', color:ct.color, fontWeight:700 }}>{card.name}</div>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:4 }}>
+                          <span style={{ fontSize:'0.65rem', color:ct.color, fontWeight:700 }}>{card.name}</span>
+                          <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(card); }} title="View card" style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, flexShrink:0 }}>ⓘ</button>
+                        </div>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
                           <CollTierBadge tier={card.tier} />
                           <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{Math.floor(score*10)/10}</span>
@@ -8474,16 +8685,25 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
       </div>
 
       {/* Bottom action */}
-      {phase === 'arrange' && !showCpu && (
+      {phase === 'arrange' && !showCpu && (() => {
+        const cErrs = collConstraintErrors(playerBoard);
+        const fixHint = cErrs.length ? collFixHint(playerBoard) : '';
+        return (
         <div style={{ padding:'10px 12px', borderTop:'1px solid var(--border)', background:'var(--bg2)' }}>
+          {cErrs.length > 0 && (
+            <div style={{ fontSize:'0.6rem', color:'#e05555', textAlign:'center', marginBottom:6, padding:'6px 8px', background:'rgba(224,85,85,0.1)', borderRadius:6, border:'1px solid rgba(224,85,85,0.35)', lineHeight:1.45 }}>
+              ⚠ {fixHint || cErrs[0]}
+            </div>
+          )}
           <div style={{ fontSize:'0.58rem', color:'var(--text2)', textAlign:'center', marginBottom:6, fontStyle:'italic' }}>
             {selectedPos ? 'Tap another slot to move/swap — or tap the same card to cancel.' : 'Tap any placed card to reposition it, then confirm your lineup.'}
           </div>
-          <button className="btn btn-gold" style={{ width:'100%', padding:'13px', fontSize:'0.85rem', letterSpacing:'0.08em' }} onClick={confirmTurn}>
+          <button className="btn btn-gold" style={{ width:'100%', padding:'13px', fontSize:'0.85rem', letterSpacing:'0.08em', opacity: cErrs.length?0.45:1, cursor: cErrs.length?'not-allowed':'pointer' }} onClick={confirmTurn} disabled={cErrs.length>0}>
             ✓ CONFIRM LINEUP — END TURN
           </button>
         </div>
-      )}
+        );
+      })()}
       {phase === 'done' && (
         <div style={{ padding:'10px 12px', borderTop:'1px solid var(--border)', background:'var(--bg2)' }}>
           <button className="btn btn-gold" style={{ width:'100%', padding:'14px', fontSize:'0.9rem' }} onClick={handleFinish}>
@@ -8502,6 +8722,12 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
   const T = window.COLLECTOR_TIERS || {};
   const [boardView, setBoardView] = React.useState('mine'); // mine | cpu
   const shownBoard = boardView === 'mine' ? (result.playerBoard||{}) : (result.cpuBoard||{});
+  const [revealDeck, setRevealDeck] = React.useState(false);
+  const [deckPage, setDeckPage] = React.useState(0);
+  const gb = result.goldBreakdown;
+  const cpuDeck = result.cpuDeck || [];
+  const DECK_PAGE = 12;
+  const deckPages = Math.max(1, Math.ceil(cpuDeck.length / DECK_PAGE));
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
@@ -8521,13 +8747,19 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
               <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>CPU SCORE</div>
             </div>
           </div>
-          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)', marginBottom:4 }}>
-            +{goldEarned} Gold earned
-          </div>
-          {wager > 0 && (
-            <div style={{ fontSize:'0.7rem', color: isWin?'#4caf50':'#e05555' }}>
-              {isWin ? `+${wager}G wager won!` : `-${wager}G wager lost`}
+          {gb ? (
+            <div style={{ maxWidth:268, margin:'0 auto', fontSize:'0.62rem' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', marginBottom:2 }}><span>{gb.baseLabel}</span><span style={{ color:'var(--gold)' }}>+{gb.baseGold}G</span></div>
+              {gb.scoreBonus > 0 && <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', marginBottom:2 }}><span>Court bonus (score {playerScore})</span><span style={{ color:'var(--gold)' }}>+{gb.scoreBonus}G</span></div>}
+              {gb.wager > 0 && <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}><span style={{ color:'var(--text2)' }}>Wager {isWin ? 'won' : 'lost'}</span><span style={{ color: isWin ? '#4caf50' : '#e05555' }}>{gb.wagerDelta >= 0 ? '+' : ''}{gb.wagerDelta}G</span></div>}
+              <div style={{ display:'flex', justifyContent:'space-between', borderTop:'1px solid var(--border)', marginTop:4, paddingTop:4, fontFamily:'Cinzel,serif' }}><span style={{ color:'var(--text)' }}>Net this game</span><span style={{ color: gb.netGold >= 0 ? 'var(--gold)' : '#e05555', fontWeight:700 }}>{gb.netGold >= 0 ? '+' : ''}{gb.netGold}G</span></div>
+              <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', fontSize:'0.56rem', marginTop:3 }}><span>Gold</span><span>🪙 {gb.startGold} → {gb.finalGold}</span></div>
             </div>
+          ) : (
+            <>
+              <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)', marginBottom:4 }}>+{goldEarned} Gold earned</div>
+              {wager > 0 && <div style={{ fontSize:'0.7rem', color: isWin?'#4caf50':'#e05555' }}>{isWin ? `+${wager}G wager won!` : `-${wager}G wager lost`}</div>}
+            </>
           )}
         </div>
 
@@ -8545,9 +8777,9 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
               <div key={pos.id} style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4, fontSize:'0.62rem' }}>
                 <div style={{ width:96, fontSize:'0.52rem', color:'var(--text2)', fontFamily:'Cinzel,serif', lineHeight:1.15 }}>{pos.label}</div>
                 <div style={{ flex:1, color:(T[pCard?.tier]||{}).color||'var(--text2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{pCard?.name||'—'}</div>
-                <div style={{ fontFamily:'Cinzel,serif', width:34, textAlign:'right', color: pSc>cSc?'#4caf50':pSc<cSc?'#e05555':'var(--text)' }}>{pSc}</div>
-                <div style={{ color:'var(--text2)', padding:'0 2px' }}>·</div>
-                <div style={{ fontFamily:'Cinzel,serif', width:34, textAlign:'right', color:'#e05555' }}>{cSc}</div>
+                <div style={{ fontFamily:'Cinzel,serif', width:34, textAlign:'right', color: pSc>cSc?'#4caf50':pSc<cSc?'var(--text2)':'var(--text)' }}>{pSc}</div>
+                <div style={{ width:16, textAlign:'center', fontWeight:900, color: pSc>cSc?'#4caf50':pSc<cSc?'#e05555':'var(--text2)' }}>{pSc>cSc?'◄':pSc<cSc?'►':'='}</div>
+                <div style={{ fontFamily:'Cinzel,serif', width:34, textAlign:'right', color: cSc>pSc?'#e05555':'var(--text2)' }}>{cSc}</div>
               </div>
             );
           })}
@@ -8584,6 +8816,38 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
           </div>
         </div>
 
+        {/* Reveal opponent deck — every card the CPU brought, drawn or not (paginated) */}
+        {cpuDeck.length > 0 && (
+          <div className="card" style={{ marginBottom:12 }}>
+            <button className="btn btn-ghost btn-sm" style={{ width:'100%', fontSize:'0.62rem' }} onClick={()=>setRevealDeck(v=>!v)}>
+              {revealDeck ? '▲ Hide Opponent Deck' : `👁 Reveal Opponent Deck (${cpuDeck.length} cards)`}
+            </button>
+            {revealDeck && (
+              <div style={{ marginTop:10 }}>
+                <div style={{ fontSize:'0.55rem', color:'var(--text2)', marginBottom:8, fontStyle:'italic' }}>Every card the CPU brought this game — drawn or not.</div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
+                  {cpuDeck.slice(deckPage*DECK_PAGE, deckPage*DECK_PAGE+DECK_PAGE).map((card,i) => { const ct=T[card.tier]||{color:'#888',bg:'#111'}; return (
+                    <div key={i} style={{ border:`1px solid ${ct.color}`, borderRadius:6, padding:'6px 8px', background:ct.bg }}>
+                      <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{card.name}</div>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
+                        <CollTierBadge tier={card.tier} />
+                        <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.7rem' }}>{card.overall}</span>
+                      </div>
+                    </div>
+                  ); })}
+                </div>
+                {deckPages > 1 && (
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:12, marginTop:10 }}>
+                    <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.6rem' }} disabled={deckPage===0} onClick={()=>setDeckPage(p=>Math.max(0,p-1))}>‹ Prev</button>
+                    <span style={{ fontSize:'0.58rem', color:'var(--text2)' }}>Page {deckPage+1} / {deckPages}</span>
+                    <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.6rem' }} disabled={deckPage>=deckPages-1} onClick={()=>setDeckPage(p=>Math.min(deckPages-1,p+1))}>Next ›</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ display:'flex', gap:8 }}>
           {isWin && <button className="btn btn-gold" style={{ flex:2 }} onClick={onWinPull}>⭐ Win Pull</button>}
           <button className="btn btn-ghost" style={{ flex:1 }} onClick={onHome}>Back to Hub</button>
@@ -8607,7 +8871,12 @@ function CollectorHub({ onHome }) {
   function handleUpdate(newSave) { setSave(newSave); }
 
   React.useEffect(() => {
+    // Collector Mode ALWAYS plays its own theme: force it and ignore any global soundtrack
+    // override while inside Collector, restoring the player's choice when they leave.
+    const prevOverride = _soundtrackOverride;
+    _soundtrackOverride = 'collector';
     AudioManager.startCollectorMusic();
+    return () => { _soundtrackOverride = prevOverride; applyNavMusic(); };
   }, []);
 
   React.useEffect(() => {
@@ -8709,7 +8978,7 @@ function CollectorHub({ onHome }) {
         </div>
         <div className="nav-side" style={{ justifyContent:'flex-end', gap:8 }}>
           <VolumeBar />
-          <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.55rem' }} onClick={() => setShowTutorial(true)}>?</button>
+          <button onClick={() => setShowTutorial(true)} title="How to Play" style={{ width:34, height:34, borderRadius:'50%', background:'#b01a1a', border:'2px solid #e0484a', color:'#fff', cursor:'pointer', fontSize:'1.25rem', fontWeight:900, lineHeight:1, padding:0, display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 0 10px rgba(224,72,74,0.55)', flexShrink:0 }}>?</button>
         </div>
       </div>
 
