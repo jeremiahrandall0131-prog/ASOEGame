@@ -7224,7 +7224,7 @@ const TUTORIAL_STEPS = [
   { title:'Card Stats', tab:'stats', point:'up', body:'Stats tracks how each of your cards has actually performed across the games you\'ve played.' },
   { title:'The Store', tab:'store', point:'up', body:'Spend Gold here: the rotating Showcase, direct Buy Cards, Lottery spins, Upgrade, Trade, and Rerolls. Every purchase asks you to confirm first, so you won\'t spend by mistake.' },
   { title:'Trade', tab:'store', point:'up', body:'In the Trade tab, hand in any card from your deck for a random card of the SAME tier but a different character — costs 20 Gold. Great for reshaping a tier you\'re stuck on.' },
-  { title:'Evolve & God Tier', tab:'store', point:'up', body:'Owning a card never removes it from the pools — so you can get a duplicate. When you do, the two MERGE and Evolve into the next tier up! Merge two Mythics and you create a one-of-a-kind GOD-tier card with DOUBLE scores in every position.' },
+  { title:'Evolve & God Tier', tab:'store', point:'up', body:'Owning a card never removes it from the pools — so you can pull the EXACT same card again. When you do, that matching pair MERGES and Evolves one tier up! (Only identical cards merge — different variants of a character never do, so collect as many variants as you like.) Merge two Mythics to forge a one-of-a-kind GOD-tier card with DOUBLE scores in every position.' },
   { title:'Daily Rewards', tab:'daily', point:'up', body:'Come back every 24 hours for a free Daily Card Pull and a Gold reward. Free progress, just for showing up!' },
   { title:'Settings & Music', tab:'deck', point:'up', body:'The ⚙ cog (top right) adjusts music volume. Collector Mode always plays its own theme.' },
   { title:'Playing a Game', body:'Press PLAY to start. Each turn you Draw Fate — a random card from your deck — and place it in one of 10 court positions. Tap any placed card\'s ⓘ to see its full stats, drop a card on an occupied slot to swap, and reposition freely until you Confirm your lineup.' },
@@ -9244,9 +9244,9 @@ function CollectorHub({ onHome }) {
             DECK: <CollTierBadge tier={deckTier} /> · {save.owned?.length||0} CARDS
           </div>
         </div>
-        <div className="nav-side" style={{ justifyContent:'flex-end', gap:8 }}>
-          <VolumeBar />
+        <div className="nav-side" style={{ display:'flex', width:'auto', alignItems:'center', justifyContent:'flex-end', gap:10 }}>
           <button onClick={() => { setScreen('hub'); setTourActive(true); }} title="How to Play" style={{ width:34, height:34, borderRadius:'50%', background:'#b01a1a', border:'2px solid #e0484a', color:'#fff', cursor:'pointer', fontSize:'1.25rem', fontWeight:900, lineHeight:1, padding:0, display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 0 10px rgba(224,72,74,0.55)', flexShrink:0 }}>?</button>
+          <VolumeBar />
         </div>
       </div>
 
