@@ -180,6 +180,8 @@ body{font-family:'Crimson Text',Georgia,serif;color:var(--text);overscroll-behav
 .error-text{color:#ff6b6b;font-size:0.75rem;font-family:'Cinzel',serif;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .fade-in{animation:fadeIn 0.25s ease both;}
+@keyframes evolvePulse{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(1.06);filter:brightness(1.35)}}
+.evolve-pulse{animation:evolvePulse 0.7s ease-in-out infinite;}
 h1{font-family:'Cinzel',serif;font-size:1.4rem;font-weight:900;color:var(--gold2);letter-spacing:0.08em;text-align:center;}
 h2{font-family:'Cinzel',serif;font-size:1rem;font-weight:700;color:var(--gold);}
 /* ── screen transitions ──────────────────────────────────────────────────── */
@@ -1575,7 +1577,7 @@ function CharacterBrowser({ house, gender, draftedIds, showScores, scoreGridKeys
 }
 
 // ─── PositionBoard ───────────────────────────────────────────────────────────
-function PositionBoard({ board, selectedChar, onSlotClick, showScores, playerLabel, playerColor, readOnly, highlightSlotId, playerHighlightSlotId, groupFilter }) {
+function PositionBoard({ board, selectedChar, onSlotClick, showScores, playerLabel, playerColor, readOnly, highlightSlotId, playerHighlightSlotId, groupFilter, onCardInfo }) {
   const highlightRef = React.useRef(null);
   React.useEffect(() => {
     if (highlightSlotId && highlightRef.current) {
@@ -1688,6 +1690,9 @@ function PositionBoard({ board, selectedChar, onSlotClick, showScores, playerLab
                 </div>
                 {isOccupied && showScores && (
                   <div className={`slot-score ${score >= 9 ? 'val-high' : score >= 7 ? 'val-mid' : 'val-low'}`}>{Math.floor(score * 10) / 10}</div>
+                )}
+                {isOccupied && showScores && onCardInfo && (
+                  <button onClick={(e) => { e.stopPropagation(); onCardInfo(slot.character); }} title="View stats" style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.85rem', cursor:'pointer', padding:'0 4px', lineHeight:1, flexShrink:0 }}>ⓘ</button>
                 )}
                 {isOccupied && !selectedChar && !readOnly && (
                   <div style={{ fontSize:'0.6rem', color:'var(--text2)', paddingLeft:4, opacity:0.6 }}>›</div>
@@ -2587,6 +2592,7 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
   // Snapshot the live game on every change so a mobile background-reload resumes mid-game.
   useEffect(() => { saveLiveGs(modeKey, gs); }, [gs]);
   const [showScores, setShowScores] = useState(initShowScores);
+  const [infoChar, setInfoChar] = useState(null); // character whose stats popup is open (scores-on only)
   const [viewTab, setViewTab] = useState('roll');
   const [dynastyBoardGroup, setDynastyBoardGroup] = useState('House');
   const [confirmError, setConfirmError] = useState('');
@@ -3423,6 +3429,20 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
   return (
     <React.Fragment>
     <div className="app" style={{ position: 'relative' }}>
+      {infoChar && (
+        <div onClick={() => setInfoChar(null)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:340, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:330, width:'100%', borderColor:'var(--gold)' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+              <div>
+                <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:'var(--gold)', fontWeight:700 }}>{infoChar.name}</div>
+                <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginTop:2 }}>{(infoChar.houses||[]).join(' · ')} · {infoChar.gender==='F'?'♀ Female':'♂ Male'} · Age {getEffectiveAge(infoChar)}</div>
+              </div>
+              <button onClick={()=>setInfoChar(null)} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'1.1rem', cursor:'pointer', lineHeight:1 }}>✕</button>
+            </div>
+            <div style={{ marginTop:10 }}><ScoreGrid char={infoChar} showAll /></div>
+          </div>
+        </div>
+      )}
       {passDevice && (
         <div className="pass-overlay">
           <div style={{ fontFamily: 'Cinzel,serif', fontSize: '0.7rem', color: 'var(--text2)', letterSpacing: '0.2em', marginBottom: 8 }}>PASS THE DEVICE TO</div>
@@ -3593,6 +3613,7 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
               highlightSlotId={cpuActive ? cpuLastPlacedSlotId : null}
               playerHighlightSlotId={cpuActive ? null : playerLastSlotId}
               groupFilter={mode?.isDynasty ? dynastyBoardGroup : null}
+              onCardInfo={setInfoChar}
             />
           </React.Fragment>
         )}
@@ -3614,6 +3635,7 @@ function GameScreen({ modeKey, showScores: initShowScores, numPlayers: propNumPl
               playerColor={PLAYER_COLORS[i] || 'var(--p2)'}
               readOnly
               groupFilter={mode?.isDynasty ? dynastyBoardGroup : null}
+              onCardInfo={setInfoChar}
             />
           </React.Fragment>
         ))}
@@ -6950,7 +6972,55 @@ function saveCollSave(s) {
 
 // All collector cards (generated)
 function getCollCards() { return window.COLLECTOR_CARDS || []; }
-function getCollCard(id) { return getCollCards().find(c => c.id === id); }
+function getCollCard(id) {
+  // Synthetic "God tier" cards (only obtainable by Evolving a Mythic): id is
+  // "<mythicId>__god" and the card is that Mythic with ALL scores x2.
+  if (typeof id === 'string' && id.slice(-5) === '__god') {
+    const base = getCollCards().find(c => c.id === id.slice(0, -5));
+    if (!base) return undefined;
+    const scores = {};
+    Object.keys(base.scores || {}).forEach(k => { scores[k] = (base.scores[k] || 0) * 2; });
+    return { ...base, id, tier: 'god', scores, overall: Math.round((base.overall || 0) * 2 * 10) / 10, _god: true };
+  }
+  return getCollCards().find(c => c.id === id);
+}
+
+// God ranks above every pool tier; used for sorting/labeling (NOT pool generation).
+function collTierRank(tier) { return tier === 'god' ? COLL_TIER_ORDER.length : COLL_TIER_ORDER.indexOf(tier); }
+
+// Where a duplicate of `card` evolves to: same character one tier up, or a
+// synthetic God card if it's already Mythic. null = no higher tier exists.
+function collEvolveTargetId(card, owned) {
+  if (card.tier === 'god') return null;            // already the top tier
+  if (card.tier === 'mythic') return card.id + '__god';
+  const nextTier = COLL_TIER_ORDER[COLL_TIER_ORDER.indexOf(card.tier) + 1];
+  if (!nextTier) return null;
+  const pool = getCollCards().filter(c => c.charId === card.charId && c.tier === nextTier);
+  if (!pool.length) return null;
+  const notOwned = pool.filter(c => !(owned || []).includes(c.id));
+  const pick = notOwned.length ? notOwned : pool;
+  return pick[Math.floor(Math.random() * pick.length)].id;
+}
+
+// Add a card to an owned[] list. Owning a card no longer blocks it from pools;
+// acquiring a duplicate MERGES the two into one card of the next tier up
+// (Mythic+Mythic -> God). Returns { owned, evolved, card, from }.
+function collAcquire(owned, cardId) {
+  owned = owned || [];
+  const card = getCollCard(cardId);
+  if (!card) return { owned: owned.slice(), evolved: false, card: null };
+  if (!owned.includes(cardId)) {
+    return { owned: [...owned, cardId], evolved: false, card };
+  }
+  const targetId = collEvolveTargetId(card, owned);
+  if (!targetId || targetId === cardId) {
+    return { owned: [...owned, cardId], evolved: false, card }; // no higher tier — just keep the copy
+  }
+  const newOwned = owned.slice();
+  newOwned.splice(newOwned.indexOf(cardId), 1); // consume the existing copy
+  newOwned.push(targetId);                        // add the evolved card
+  return { owned: newOwned, evolved: true, card: getCollCard(targetId), from: card };
+}
 
 // Player's average deck overall → tier label
 function deckTierLabel(owned) {
@@ -6963,7 +7033,7 @@ function deckTierLabel(owned) {
   // Rounding reproduces the old avg-Overall behaviour (a deck levels up once its
   // average card rarity passes the halfway point toward the next tier).
   const ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
-  const avgIdx = cards.reduce((s, c) => s + Math.max(0, ORDER.indexOf(c.tier)), 0) / cards.length;
+  const avgIdx = cards.reduce((s, c) => s + (c.tier === 'god' ? 5 : Math.max(0, ORDER.indexOf(c.tier))), 0) / cards.length;
   return ORDER[Math.max(0, Math.min(5, Math.round(avgIdx)))] || 'starter';
 }
 
@@ -7002,8 +7072,7 @@ function weightedDraw(pool, probs, excludeIds, seed) {
 // Generate store showcase (5 cards: starter, uncommon, rare, hero, then 2 random-tier)
 function genStoreShowcase(save) {
   const all = getCollCards();
-  const owned = new Set(save.owned || []);
-  const available = all.filter(c => !owned.has(c.id));
+  const available = all; // owned cards may re-appear now (duplicates Evolve)
   const showcase = [];
   const used = new Set();
   const fixed = ['starter','uncommon','rare','hero'];
@@ -7027,7 +7096,7 @@ function genWinPullCards(cpuCards, save) {
   const owned = new Set(save.owned || []);
   const probs = {starter:.50,uncommon:.10,rare:.10,hero:.10,legendary:.05,mythic:.05};
   const result = [];
-  const usedIds = new Set(owned);
+  const usedIds = new Set(); // only dedupe within this pull; owned cards may appear (Evolve)
   cpuCards.forEach((card, i) => {
     // Find a card for the same charId at a randomly determined tier
     const r = Math.random();
@@ -7145,48 +7214,59 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
 
 // ─── Tutorial ──────────────────────────────────────────────────────────────
 
+// Interactive tour steps. `tab` (when set) switches the Hub to that real screen
+// behind the tooltip so you SEE what's described; `point` adds a directional arrow.
 const TUTORIAL_STEPS = [
-  { title:'Welcome to Collector Mode!', body:'Collector Mode lets you build a deck of thousands of unique Character Cards — exclusive variants not found in any other game mode. Grow your collection and compete against the CPU!' },
-  { title:'Card Tiers', body:'Every card has a tier: Starter (green), Uncommon (blue), Rare (orange), Hero (purple), Legendary (black), or Mythic (red). A card\'s Overall rating is the TOTAL of its ten position scores, so it always reflects exactly how the card performs across every role. Higher tiers are rarer and pull from stronger versions of each character, so they trend toward higher Overalls.' },
-  { title:'Your Deck', body:'You start with 20 cards from your Starting Deck Pull (18 Starters + 2 Uncommons). You must always have at least 20 cards. Grow your deck through Daily Pulls, the Store, and Win Pulls!' },
-  { title:'How Games Work', body:'You and the CPU take turns drafting a court. Each turn you Draw Fate — a random card from your deck — and place it in one of 10 positions: Ruler, Consort, Heir, Hand, Army Commander, Kingsguard Commander, Kingsguard, Small Council, Ally, and Bank. You can freely reposition cards between slots, then Confirm your lineup to end your turn and pass to the CPU. Every card shows its score for each position, so place it where it fits best. Fill all 10 to finish!' },
-  { title:'Rerolls', body:'Don\'t like your Fate draw? Spend a Reroll to draw again! You can use up to 3 rerolls per game. Buy more Rerolls in the Store for 20 Gold each. You start with 0 — use your starting Gold wisely!' },
-  { title:'The CPU', body:'There is no preset score to beat — the CPU builds its court alongside you, one card at a time. Each turn it draws Fate from your DECK LEVEL — the highest card tier in your deck — choosing from EVERY character in that tier (so a Mythic-level deck always faces a Mythic CPU, regardless of which card you happen to play that round). It never drafts a character already on either board (except infinitely-duplicatable ones), and it always fields its optimal lineup. Outscore it across all 10 positions to win!' },
-  { title:'Earning Gold', body:'Complete a game: +5 Gold. Win: +10 (by 5+: +15 · by 10+: +30). Score bonus — the better your cards fit their positions, the higher you score: 60+ → +20 · 70+ → +40 · 80+ → +75 · 90+ → +150 · a perfect 100 → +500 Gold! You can also Wager up to 100 Gold per game.' },
-  { title:'Win Pulls', body:'After every win, you get a Win Pull — the 10 characters the CPU played are each randomly turned into a card variant of some tier. Pick ONE card to add to your deck for free!' },
-  { title:'The Store & Daily', body:'Visit the Store for the rotating Showcase (5 cards every 24h), direct Buy Cards (Starter/Uncommon/Rare), Lottery spins, Upgrades, and Rerolls. Use the Daily sections for free card pulls and Gold coin rewards every 24 hours!' },
-  { title:'Auction', body:'Don\'t need a card? Auction it for Gold! Starter: 15G · Uncommon: 25G · Rare: 40G · Hero: 75G · Legendary: 150G · Mythic: 300G. Auctioned cards re-enter the available pool. You must keep at least 20 cards in your deck.' },
+  { title:'Welcome to Collector Mode!', body:'Build a deck from thousands of unique Character Cards — exclusive variants found in no other mode — and match courts against the CPU. This quick tour walks through each screen. Tap Next!' },
+  { title:'Your Deck', tab:'deck', point:'up', body:'This is your deck. You start with 20 cards (18 Starters + 2 Uncommons) and must always keep at least 20. A card\'s Overall is the TOTAL of its ten position scores, so it reflects exactly how it performs across every role. Sort and filter at the top right.' },
+  { title:'Card Tiers', tab:'deck', point:'up', body:'Tiers run Starter (green) · Uncommon (blue) · Rare (orange) · Hero (purple) · Legendary (silver) · Mythic (red) — and the radiant God tier above them all. Higher tiers are rarer and trend toward higher Overalls.' },
+  { title:'Card Index', tab:'index', point:'up', body:'The Index lets you browse every character and variant in the game, owned or not — handy for planning what to chase next.' },
+  { title:'Card Stats', tab:'stats', point:'up', body:'Stats tracks how each of your cards has actually performed across the games you\'ve played.' },
+  { title:'The Store', tab:'store', point:'up', body:'Spend Gold here: the rotating Showcase, direct Buy Cards, Lottery spins, Upgrade, Trade, and Rerolls. Every purchase asks you to confirm first, so you won\'t spend by mistake.' },
+  { title:'Trade', tab:'store', point:'up', body:'In the Trade tab, hand in any card from your deck for a random card of the SAME tier but a different character — costs 20 Gold. Great for reshaping a tier you\'re stuck on.' },
+  { title:'Evolve & God Tier', tab:'store', point:'up', body:'Owning a card never removes it from the pools — so you can get a duplicate. When you do, the two MERGE and Evolve into the next tier up! Merge two Mythics and you create a one-of-a-kind GOD-tier card with DOUBLE scores in every position.' },
+  { title:'Daily Rewards', tab:'daily', point:'up', body:'Come back every 24 hours for a free Daily Card Pull and a Gold reward. Free progress, just for showing up!' },
+  { title:'Settings & Music', tab:'deck', point:'up', body:'The ⚙ cog (top right) adjusts music volume. Collector Mode always plays its own theme.' },
+  { title:'Playing a Game', body:'Press PLAY to start. Each turn you Draw Fate — a random card from your deck — and place it in one of 10 court positions. Tap any placed card\'s ⓘ to see its full stats, drop a card on an occupied slot to swap, and reposition freely until you Confirm your lineup.' },
+  { title:'Court Rules', body:'Your court must be legal: the Ruler and Consort must be opposite genders, and the Heir must be younger than BOTH of them. If a lineup breaks a rule, Confirm is disabled and a hint tells you exactly how to fix it.' },
+  { title:'Rerolls', body:'Don\'t like a Fate draw? Spend a Reroll to draw again — up to 3 per game. Buy more in the Store for 20 Gold each.' },
+  { title:'The CPU', body:'The CPU builds its own court each round and always fields its best possible lineup — and it gets stronger as your own collection grows, so it\'s always a real fight. Outscore it across all 10 positions to win!' },
+  { title:'Winning & Win Pulls', body:'After every win you get a Win Pull: the 10 cards the CPU played are each turned into a random variant — pick ONE to add to your deck for free.' },
+  { title:'Spin the Wheel', body:'String together a 5-win streak and you earn a Spin the Wheel — 30 cards, 5 of every tier, evenly spaced. Give it a spin for a bonus card!' },
+  { title:'Earning Gold', body:'Complete a game: +5 Gold. Win for more (by 5+ or 10+ pays extra), plus a Score Bonus the better your court fits (a perfect 100 pays +500!). You can also Wager up to 100 Gold per game.' },
+  { title:'Go Build Your Dynasty!', body:'That\'s everything. Tap the red ? any time to see this tour again. Now go forge the finest court in the realm!' },
 ];
 
-function CollectorTutorial({ onDone, onBack }) {
+// Interactive guided tour: dims the Hub, switches to the real tab each step
+// describes, and points an arrow at it. Rendered INSIDE the Hub so onTab works.
+function CollectorTour({ onClose, onTab }) {
   const [step, setStep] = React.useState(0);
   const cur = TUTORIAL_STEPS[step];
   const isLast = step === TUTORIAL_STEPS.length - 1;
+  React.useEffect(() => { if (cur.tab && onTab) onTab(cur.tab); }, [step]);
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.88)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
-      <div className="card" style={{ maxWidth:440, width:'100%', borderColor:'var(--gold)', padding:24 }}>
-        {/* Top row: back to main menu + skip */}
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
-          <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.6rem' }} onClick={onBack}>← Main Menu</button>
-          {!isLast && (
-            <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.6rem', color:'var(--text2)' }} onClick={onDone}>Skip Tutorial</button>
-          )}
-        </div>
-        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--gold)', marginBottom:8, letterSpacing:'0.1em' }}>
-          TUTORIAL · STEP {step+1} OF {TUTORIAL_STEPS.length}
-        </div>
-        <h2 style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color:'var(--gold)', marginBottom:12 }}>{cur.title}</h2>
-        <p style={{ fontSize:'0.8rem', color:'var(--text)', lineHeight:1.6, marginBottom:20 }}>{cur.body}</p>
-        <div style={{ display:'flex', gap:8 }}>
-          {step > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setStep(s=>s-1)} style={{ flex:1 }}>← Back</button>}
-          <button className="btn btn-gold btn-sm" onClick={() => isLast ? onDone() : setStep(s=>s+1)} style={{ flex:2 }}>
-            {isLast ? 'Start Collecting!' : 'Next →'}
-          </button>
-        </div>
-        <div style={{ display:'flex', gap:4, justifyContent:'center', marginTop:12 }}>
-          {TUTORIAL_STEPS.map((_,i) => (
-            <div key={i} style={{ width:6, height:6, borderRadius:'50%', background: i===step ? 'var(--gold)' : 'var(--border)' }} />
-          ))}
+    <div style={{ position:'fixed', inset:0, zIndex:9999, pointerEvents:'none' }}>
+      <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.55)', pointerEvents:'auto' }} />
+      {cur.point === 'up' && (
+        <div style={{ position:'absolute', top:122, left:'50%', transform:'translateX(-50%)', fontSize:'1.7rem', color:'var(--gold2,#f0c84a)', textShadow:'0 0 10px rgba(240,200,74,0.8)' }} className="evolve-pulse">▲</div>
+      )}
+      <div style={{ position:'absolute', left:'50%', bottom:22, transform:'translateX(-50%)', width:'92%', maxWidth:440, pointerEvents:'auto' }}>
+        <div className="card" style={{ borderColor:'var(--gold)', padding:20, boxShadow:'0 8px 44px rgba(0,0,0,0.92)' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.58rem', color:'var(--gold)', letterSpacing:'0.12em' }}>TOUR · {step+1}/{TUTORIAL_STEPS.length}</div>
+            <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.58rem', color:'var(--text2)' }} onClick={onClose}>Skip ✕</button>
+          </div>
+          <h2 style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color:'var(--gold)', marginBottom:10 }}>{cur.title}</h2>
+          <p style={{ fontSize:'0.78rem', color:'var(--text)', lineHeight:1.55, marginBottom:16 }}>{cur.body}</p>
+          <div style={{ display:'flex', gap:8 }}>
+            {step > 0 && <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={() => setStep(s=>s-1)}>← Back</button>}
+            <button className="btn btn-gold btn-sm" style={{ flex:2 }} onClick={() => isLast ? onClose() : setStep(s=>s+1)}>{isLast ? 'Start Collecting!' : 'Next →'}</button>
+          </div>
+          <div style={{ display:'flex', gap:3, justifyContent:'center', marginTop:10, flexWrap:'wrap' }}>
+            {TUTORIAL_STEPS.map((_,i) => (
+              <div key={i} style={{ width:5, height:5, borderRadius:'50%', background: i===step ? 'var(--gold)' : 'var(--border)' }} />
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -7299,7 +7379,7 @@ function CollectorMyDeck({ save, onUpdate }) {
   let cards = [...ownedCards];
   if (filterTier !== 'all') cards = cards.filter(c => c.tier === filterTier);
   if (sort === 'overall') cards.sort((a,b) => b.overall - a.overall);
-  else if (sort === 'tier') cards.sort((a,b) => COLL_TIER_ORDER.indexOf(b.tier) - COLL_TIER_ORDER.indexOf(a.tier) || b.overall - a.overall);
+  else if (sort === 'tier') cards.sort((a,b) => collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall);
   else if (sort === 'name') cards.sort((a,b) => a.name.localeCompare(b.name));
   else if (sort === 'house') cards.sort((a,b) => (a.houses?.[0]||'').localeCompare(b.houses?.[0]||'') || b.overall - a.overall);
 
@@ -7478,7 +7558,7 @@ function CollectorCardIndex({ save }) {
     const q = search.trim().toLowerCase();
     cards = cards.filter(c => c.name.toLowerCase().includes(q) || c.charId.toLowerCase().includes(q) || (c.houses||[]).some(h=>h.toLowerCase().includes(q)));
   }
-  cards = [...cards].sort((a,b) => COLL_TIER_ORDER.indexOf(b.tier) - COLL_TIER_ORDER.indexOf(a.tier) || b.overall - a.overall);
+  cards = [...cards].sort((a,b) => collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall);
   const totalPages = Math.max(1, Math.ceil(cards.length / PER_PAGE));
   const pageCards = cards.slice(page * PER_PAGE, (page+1) * PER_PAGE);
 
@@ -7682,6 +7762,7 @@ function CollectorDailySection({ save, onUpdate }) {
   const [rewardCountdown, setRewardCountdown] = React.useState(timeUntil24h(save.lastDailyReward));
   const [pulledCard, setPulledCard] = React.useState(null);
   const [rewardGold, setRewardGold] = React.useState(null);
+  const [evolveAnim, setEvolveAnim] = React.useState(null); // { from, to } when a daily pull merges
 
   React.useEffect(() => {
     const iv = setInterval(() => {
@@ -7695,14 +7776,14 @@ function CollectorDailySection({ save, onUpdate }) {
 
   function doDailyPull() {
     const all = getCollCards();
-    const owned = new Set(save.owned || []);
-    const available = all.filter(c => !owned.has(c.id));
-    const card = weightedDraw(available, DAILY_PULL_PROBS, owned, 'dailypull');
+    const card = weightedDraw(all, DAILY_PULL_PROBS, new Set(), 'dailypull'); // owned may appear (Evolve)
     if (!card) return;
-    const newSave = { ...save, lastDailyPull: Date.now(), owned: [...(save.owned||[]), card.id] };
+    const res = collAcquire(save.owned || [], card.id);
+    const newSave = { ...save, lastDailyPull: Date.now(), owned: res.owned };
     saveCollSave(newSave);
     onUpdate(newSave);
-    setPulledCard(card);
+    setPulledCard(res.evolved ? res.card : card);
+    if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
     setPullReady(false);
   }
 
@@ -7720,10 +7801,11 @@ function CollectorDailySection({ save, onUpdate }) {
 
   return (
     <div className="scroll" style={{ height:'100%' }}>
+      {evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}
       <div className="card" style={{ marginBottom:12, borderColor: pullReady ? 'var(--gold)' : 'var(--border)' }}>
         <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)', marginBottom:6 }}>🃏 DAILY CARD PULL</div>
         <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10, lineHeight:1.5 }}>
-          Once every 24 hours. Pulls from the entire card pool you don't own yet.<br/>
+          Once every 24 hours. Pulls from the entire card pool — a duplicate Evolves your card!<br/>
           60% Starter · 20% Uncommon · 10% Rare · 4% Hero · 3% Legendary · 3% Mythic
         </div>
         {pulledCard ? (
@@ -7780,6 +7862,8 @@ function CollectorStore({ save, onUpdate }) {
   const [detailCard, setDetailCard] = React.useState(null);
   const [storeMsg, setStoreMsg] = React.useState('');
   const [pendingBuy, setPendingBuy] = React.useState(null); // misclick guard: { label, action }
+  const [tradeSelected, setTradeSelected] = React.useState(null); // index of deck card chosen to trade
+  const [evolveAnim, setEvolveAnim] = React.useState(null); // { from, to } when a duplicate merges
   const [showcaseCards, setShowcaseCards] = React.useState(() => {
     const now = Date.now();
     const needRefresh = !save.storeRefresh || (now - save.storeRefresh > 86400000);
@@ -7798,30 +7882,34 @@ function CollectorStore({ save, onUpdate }) {
 
   function msg(text, dur=3000) { setStoreMsg(text); setTimeout(() => setStoreMsg(''), dur); }
 
+  // Apply a card acquisition (with optional gold/extra changes), persist, and
+  // trigger the Evolve animation if a duplicate merged into a higher tier.
+  function applyAcquire(cardId, extra) {
+    const res = collAcquire(save.owned || [], cardId);
+    const newSave = { ...save, ...(extra||{}), owned: res.owned };
+    saveCollSave(newSave); onUpdate(newSave);
+    if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
+    return res;
+  }
+
   function buyShowcaseCard(cardId) {
     const card = getCollCard(cardId);
     if (!card) return;
     const price = { starter:50, uncommon:75, rare:100, hero:150, legendary:300, mythic:500 }[card.tier] || 50;
     if ((save.gold||0) < price) { msg(`Not enough Gold! Need ${price}G.`); return; }
-    if (owned.has(cardId)) { msg('You already own this card!'); return; }
-    setPendingBuy({ label:`Buy ${card.name} for ${price}G?`, action: () => {
-    const newSave = { ...save, gold:(save.gold||0)-price, owned:[...(save.owned||[]),cardId] };
-    saveCollSave(newSave);
-    onUpdate(newSave);
+    setPendingBuy({ label:`Buy ${card.name} for ${price}G?${owned.has(cardId)?' (you own one — it will Evolve!)':''}`, action: () => {
+    const res = applyAcquire(cardId, { gold:(save.gold||0)-price });
     setShowcaseCards(prev => prev.filter(id=>id!==cardId));
-    msg(`Purchased ${card.name} for ${price}G!`);
+    msg(res.evolved ? `${card.name} Evolved into ${res.card.name}!` : `Purchased ${card.name} for ${price}G!`);
     }});
   }
 
   function buyDirectCard(card) {
     const price = COLL_BUY_GOLD[card.tier] || 50;
     if ((save.gold||0) < price) { msg(`Not enough Gold! Need ${price}G.`); return; }
-    if (owned.has(card.id)) { msg('You already own this card!'); return; }
-    setPendingBuy({ label:`Buy ${card.name} for ${price}G?`, action: () => {
-    const newSave = { ...save, gold:(save.gold||0)-price, owned:[...(save.owned||[]),card.id] };
-    saveCollSave(newSave);
-    onUpdate(newSave);
-    msg(`Purchased ${card.name} for ${price}G!`);
+    setPendingBuy({ label:`Buy ${card.name} for ${price}G?${owned.has(card.id)?' (you own one — it will Evolve!)':''}`, action: () => {
+    const res = applyAcquire(card.id, { gold:(save.gold||0)-price });
+    msg(res.evolved ? `${card.name} Evolved into ${res.card.name}!` : `Purchased ${card.name} for ${price}G!`);
     }});
   }
 
@@ -7838,12 +7926,10 @@ function CollectorStore({ save, onUpdate }) {
     setLotterySpinning(true);
     setTimeout(() => {
       const all = getCollCards();
-      const available = all.filter(c => !owned.has(c.id));
       const probs = LOTTERY_PROBS[lotteryType];
-      const card = weightedDraw(available, probs, owned, 'lottery'+Date.now());
-      const newSave = { ...save, gold:(save.gold||0)-cost, owned: card ? [...(save.owned||[]),card.id] : (save.owned||[]) };
-      saveCollSave(newSave);
-      onUpdate(newSave);
+      const card = weightedDraw(all, probs, new Set(), 'lottery'+Date.now());
+      if (card) applyAcquire(card.id, { gold:(save.gold||0)-cost });
+      else { const ns = { ...save, gold:(save.gold||0)-cost }; saveCollSave(ns); onUpdate(ns); }
       setLotteryResult(card);
       setLotterySpinning(false);
     }, 1500);
@@ -7880,11 +7966,30 @@ function CollectorStore({ save, onUpdate }) {
     }});
   }
 
+  const TRADE_COST = 20;
+  // Trade a deck card (by index) for a random card of the SAME tier but a DIFFERENT identity.
+  function doTrade(index) {
+    const owned = save.owned || [];
+    const card = getCollCard(owned[index]);
+    if (!card) return;
+    if ((save.gold||0) < TRADE_COST) { msg(`Not enough Gold! Need ${TRADE_COST}G.`); return; }
+    const pool = getCollCards().filter(c => c.tier === card.tier && c.charId !== card.charId);
+    if (!pool.length) { msg('No other card of that tier to trade for!'); return; }
+    setPendingBuy({ label:`Trade ${card.name} for a random ${(T[card.tier]||{}).label||card.tier} card? (${TRADE_COST}G)`, action: () => {
+      const got = pool[Math.floor(Math.random()*pool.length)];
+      const o = [...(save.owned||[])]; o.splice(index, 1); o.push(got.id);
+      const newSave = { ...save, gold:(save.gold||0)-TRADE_COST, owned:o };
+      saveCollSave(newSave); onUpdate(newSave); setTradeSelected(null);
+      msg(`Traded ${card.name} → ${got.name}!`);
+    }});
+  }
+
   const STORE_TABS = [
     { id:'showcase', label:'Showcase' },
     { id:'buy', label:'Buy Cards' },
     { id:'lottery', label:'Lottery' },
     { id:'upgrade', label:'Upgrade' },
+    { id:'trade', label:'Trade' },
     { id:'rerolls', label:'Rerolls' },
   ];
 
@@ -7896,6 +8001,7 @@ function CollectorStore({ save, onUpdate }) {
         ))}
       </div>
       {storeMsg && <div style={{ fontSize:'0.7rem', color:'var(--gold)', background:'rgba(212,168,48,0.1)', border:'1px solid var(--gold)', borderRadius:4, padding:'6px 10px', marginBottom:8 }}>{storeMsg}</div>}
+      {evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}
       {pendingBuy && (
         <div onClick={() => setPendingBuy(null)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:400, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
           <div onClick={e => e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'var(--gold)', textAlign:'center' }}>
@@ -7955,7 +8061,7 @@ function CollectorStore({ save, onUpdate }) {
               placeholder="Search..." value={buySearch} onChange={e=>{setBuySearch(e.target.value);setBuyPage(0);}} />
             {(() => {
               const price = COLL_BUY_GOLD[buyFilter];
-              let pool = getCollCards().filter(c => c.tier === buyFilter && !owned.has(c.id));
+              let pool = getCollCards().filter(c => c.tier === buyFilter); // owned may re-appear (Evolve)
               if (buySearch) { const q=buySearch.toLowerCase(); pool=pool.filter(c=>c.name.toLowerCase().includes(q)||(c.houses||[]).some(h=>h.toLowerCase().includes(q))); }
               pool.sort((a,b)=>b.overall-a.overall);
               const pp = 20;
@@ -8062,6 +8168,33 @@ function CollectorStore({ save, onUpdate }) {
           </div>
         )}
 
+        {tab === 'trade' && (
+          <div>
+            <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10 }}>
+              Trade a card from your deck for a random card of the <strong>same tier</strong> (a different character). Costs {TRADE_COST} Gold.
+            </div>
+            {(save.owned||[]).length === 0 ? (
+              <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>No cards to trade.</div>
+            ) : (
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
+                {(save.owned||[]).map((id,i) => { const c=getCollCard(id); if(!c) return null; const ct=T[c.tier]||{color:'#888',bg:'#111'}; const sel=tradeSelected===i; return (
+                  <div key={i} onClick={()=>setTradeSelected(i)} style={{ border:`2px solid ${sel?'#fff':ct.color}`, borderRadius:6, padding:'6px 8px', background:sel?'rgba(255,255,255,0.12)':ct.bg, cursor:'pointer' }}>
+                    <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
+                      <CollTierBadge tier={c.tier} />
+                      <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.7rem' }}>{c.overall}</span>
+                    </div>
+                  </div>
+                ); })}
+              </div>
+            )}
+            {tradeSelected != null && (save.owned||[])[tradeSelected] && (() => { const c=getCollCard((save.owned||[])[tradeSelected]); return (
+              <button className={`btn btn-${(save.gold||0)>=TRADE_COST?'gold':'ghost'} btn-sm`} style={{ width:'100%', marginTop:10 }} disabled={(save.gold||0)<TRADE_COST} onClick={()=>doTrade(tradeSelected)}>
+                🔄 Trade {c?c.name:''} — {TRADE_COST}G
+              </button>
+            ); })()}
+          </div>
+        )}
         {tab === 'rerolls' && (
           <div>
             <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:12 }}>
@@ -8423,7 +8556,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
     };
     saveCollSave(newSave);
     onUpdate(newSave);
-    const result = { isWin, playerScore, cpuScore, goldEarned, goldBreakdown, playerBoard, cpuBoard, cpuDeck, wager, margin, rerollsUsed };
+    const result = { isWin, playerScore, cpuScore, goldEarned, goldBreakdown, playerBoard, cpuBoard, cpuDeck, wager, margin, rerollsUsed, wheelEarned: isWin && currentStreak > 0 && currentStreak % 5 === 0, winStreak: currentStreak };
     const collUnlocked = checkCollectorAchievements(newSave, result);
     collUnlocked.forEach(id => window.dispatchEvent(new CustomEvent('asoe-achievement', { detail: id })));
     onEnd(result);
@@ -8857,16 +8990,140 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
   );
 }
 
+// ─── Spin the Wheel (5-win-streak reward) ───────────────────────────────────
+// 30 cards: 5 of each of the 6 tiers, all distinct identities, interleaved so
+// every tier is evenly spaced around the wheel (segment k -> tier k % 6).
+function genWheelCards() {
+  const all = getCollCards();
+  const usedChars = new Set();
+  const byTier = {};
+  COLL_TIER_ORDER.forEach(t => {
+    const pool = all.filter(c => c.tier === t);
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); const tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
+    const picked = [];
+    for (const c of pool) { if (picked.length >= 5) break; if (!usedChars.has(c.charId)) { picked.push(c); usedChars.add(c.charId); } }
+    byTier[t] = picked;
+  });
+  const wheel = [];
+  for (let i = 0; i < 5; i++) for (const t of COLL_TIER_ORDER) if (byTier[t][i]) wheel.push(byTier[t][i]);
+  return wheel;
+}
+
+function CollectorWheel({ onDone, streak }) {
+  const T = window.COLLECTOR_TIERS || {};
+  const [wheel] = React.useState(genWheelCards);
+  const n = wheel.length || 30;
+  const seg = 360 / n;
+  const [rotation, setRotation] = React.useState(0);
+  const [spinning, setSpinning] = React.useState(false);
+  const [won, setWon] = React.useState(null);
+
+  const grad = 'conic-gradient(from 0deg, ' + wheel.map((c,i) => {
+    const col = (T[c.tier]||{}).color || '#888';
+    return `${col} ${(i*seg).toFixed(3)}deg ${((i+1)*seg).toFixed(3)}deg`;
+  }).join(', ') + ')';
+
+  function spin() {
+    if (spinning || won) return;
+    setSpinning(true);
+    const idx = Math.floor(Math.random() * n);
+    const target = rotation + 360*6 + (360 - ((rotation + idx*seg + seg/2) % 360));
+    setRotation(target);
+    setTimeout(() => { setWon(wheel[idx]); setSpinning(false); }, 4300);
+  }
+
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, textAlign:'center' }}>
+      <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.25rem', color:'var(--gold)', fontWeight:700 }}>🎡 Spin the Wheel!</div>
+      <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginTop:4, marginBottom:18 }}>{streak||5}-win streak reward · 30 cards · 5 per tier</div>
+      <div style={{ position:'relative', width:280, height:280, marginBottom:18 }}>
+        <div style={{ position:'absolute', top:-4, left:'50%', transform:'translateX(-50%)', width:0, height:0, borderLeft:'12px solid transparent', borderRight:'12px solid transparent', borderTop:'22px solid var(--gold2,#f0c84a)', zIndex:5, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.85))' }} />
+        <div style={{ width:'100%', height:'100%', borderRadius:'50%', background:grad, border:'4px solid #2a2008', boxShadow:'0 0 30px rgba(0,0,0,0.7), inset 0 0 22px rgba(0,0,0,0.55)', transform:`rotate(${rotation}deg)`, transition: spinning ? 'transform 4.2s cubic-bezier(0.15,0.85,0.25,1)' : 'none' }} />
+        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', width:50, height:50, borderRadius:'50%', background:'#120d06', border:'3px solid var(--gold)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1.2rem', zIndex:4 }}>🎡</div>
+      </div>
+      {!won ? (
+        <button className="btn btn-gold" style={{ padding:'12px 40px', fontSize:'0.95rem', letterSpacing:'0.12em' }} disabled={spinning} onClick={spin}>
+          {spinning ? 'SPINNING…' : 'SPIN'}
+        </button>
+      ) : (
+        <div className="fade-in" style={{ width:'100%', maxWidth:320 }}>
+          <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginBottom:6 }}>You won:</div>
+          <div className="card" style={{ borderColor:(T[won.tier]||{}).color||'var(--gold)', marginBottom:14 }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:(T[won.tier]||{}).color||'var(--gold)', fontWeight:700 }}>{won.name}</div>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:6 }}>
+              <CollTierBadge tier={won.tier} />
+              <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:(T[won.tier]||{}).color||'var(--gold)' }}>{won.overall}</span>
+            </div>
+          </div>
+          <button className="btn btn-gold" style={{ width:'100%' }} onClick={() => onDone(won)}>Add to Deck ✓</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Evolve animation (shown when a duplicate merges into a higher tier) ────
+function EvolveOverlay({ from, to, onDone }) {
+  const T = window.COLLECTOR_TIERS || {};
+  const [phase, setPhase] = React.useState(0); // 0 = merging, 1 = revealed
+  React.useEffect(() => { const t = setTimeout(() => setPhase(1), 1500); return () => clearTimeout(t); }, []);
+  if (!from || !to) return null;
+  const fc = (T[from.tier]||{}), tc = (T[to.tier]||{});
+  const isGod = to.tier === 'god';
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.92)', zIndex:400, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, textAlign:'center' }}>
+      <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.35rem', fontWeight:800, letterSpacing:'0.1em', marginBottom:20, color: tc.color||'var(--gold)', textShadow:`0 0 20px ${tc.color||'#f0c84a'}` }}>
+        {isGod ? '✨ GOD TIER! ✨' : '✦ EVOLVE! ✦'}
+      </div>
+      {phase === 0 ? (
+        <div style={{ display:'flex', alignItems:'center', gap:8 }} className="evolve-pulse">
+          {[0,1].map(i => (
+            <div key={i} className="card" style={{ width:108, padding:'10px 8px', borderColor:fc.color||'#888', opacity:0.85 }}>
+              <div style={{ fontSize:'0.58rem', color:fc.color||'#aaa', fontWeight:700, lineHeight:1.2 }}>{from.name}</div>
+              <div style={{ marginTop:5 }}><CollTierBadge tier={from.tier} /></div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="fade-in" style={{ width:'100%', maxWidth:300 }}>
+          <div className="card" style={{ borderColor: tc.color||'var(--gold)', boxShadow:`0 0 28px ${tc.color||'#f0c84a'}`, marginBottom:16 }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color: tc.color||'var(--gold)', fontWeight:700 }}>{to.name}</div>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:8 }}>
+              <CollTierBadge tier={to.tier} />
+              <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: tc.color||'var(--gold)', fontSize:'1.05rem' }}>{to.overall}</span>
+            </div>
+            {isGod && <div style={{ fontSize:'0.58rem', color:'var(--text2)', marginTop:6, fontStyle:'italic' }}>×2 to all position scores</div>}
+          </div>
+          <button className="btn btn-gold" style={{ width:'100%' }} onClick={onDone}>Continue ✓</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Collector Hub ────────────────────────────────────────────────────────────
 
 function CollectorHub({ onHome }) {
   const [save, setSave] = React.useState(() => loadCollSave());
   const [tab, setTab] = React.useState('deck');
+  const [evolveAnim, setEvolveAnim] = React.useState(null); // { from, to } when a win-pull/wheel duplicate merges
   const [screen, setScreen] = React.useState('hub'); // hub | tutorial | startingPull | wager | game | result | winpull
   const [gameWager, setGameWager] = React.useState(0);
   const [gameResult, setGameResult] = React.useState(null);
   const [winPullCards, setWinPullCards] = React.useState([]);
-  const [showTutorial, setShowTutorial] = React.useState(false);
+  const [tourActive, setTourActive] = React.useState(false); // interactive guided tour overlay
+
+  // A cloud pull (cross-device sync) writes the latest deck/gold/stats to localStorage and
+  // fires 'asoe-cloud-sync'. Reload from it so the hub doesn't keep stale in-memory state
+  // (which would otherwise get pushed back and clobber the other device's progress). Guarded
+  // to the hub screen so it never yanks state out from under an in-progress game.
+  const screenRef = React.useRef(screen);
+  screenRef.current = screen;
+  React.useEffect(() => {
+    function onSync() { if (screenRef.current === 'hub') setSave(loadCollSave()); }
+    window.addEventListener('asoe-cloud-sync', onSync);
+    return () => window.removeEventListener('asoe-cloud-sync', onSync);
+  }, []);
 
   function handleUpdate(newSave) { setSave(newSave); }
 
@@ -8882,28 +9139,21 @@ function CollectorHub({ onHome }) {
   React.useEffect(() => {
     if (!save.tutorialSeen) {
       const needsPull = !save.owned || save.owned.length === 0;
-      if (needsPull) setScreen('tutorial');
-      else setScreen('hub');
+      if (needsPull) {
+        setScreen('startingPull'); // first-timer grabs a deck; the interactive tour launches right after
+      } else {
+        setScreen('hub'); setTourActive(true);
+        const ns = { ...save, tutorialSeen: true }; saveCollSave(ns); setSave(ns);
+      }
     }
   }, []);
-
-  function handleTutorialDone() {
-    if (!save.owned || save.owned.length === 0) {
-      setScreen('startingPull');
-    } else {
-      const newSave = { ...save, tutorialSeen: true };
-      saveCollSave(newSave);
-      setSave(newSave);
-      setScreen('hub');
-    }
-    setShowTutorial(false);
-  }
 
   function handleStartingPullDone(cardIds) {
     const newSave = { ...save, tutorialSeen: true, owned: cardIds };
     saveCollSave(newSave);
     setSave(newSave);
     setScreen('hub');
+    setTourActive(true); // launch the interactive guided tour now that they have a deck
   }
 
   function handlePlay() {
@@ -8933,9 +9183,24 @@ function CollectorHub({ onHome }) {
   }
 
   function handlePickWinPull(card) {
-    const newSave = { ...save, owned: [...(save.owned||[]), card.id] };
+    const res = collAcquire(save.owned || [], card.id);
+    const newSave = { ...save, owned: res.owned };
     saveCollSave(newSave);
     setSave(newSave);
+    if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
+    if (gameResult && gameResult.wheelEarned) { setScreen('wheel'); return; } // 5-win streak reward
+    setScreen('hub');
+    setGameResult(null);
+  }
+
+  function handleWheelDone(card) {
+    if (card) {
+      const res = collAcquire(save.owned || [], card.id);
+      const newSave = { ...save, owned: res.owned };
+      saveCollSave(newSave);
+      setSave(newSave);
+      if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
+    }
     setScreen('hub');
     setGameResult(null);
   }
@@ -8956,15 +9221,18 @@ function CollectorHub({ onHome }) {
   const pullCountdown = timeUntil24h(save.lastDailyPull);
   const rewardCountdown = timeUntil24h(save.lastDailyReward);
 
-  if (screen === 'tutorial' || showTutorial) return <CollectorTutorial onDone={handleTutorialDone} onBack={() => { setShowTutorial(false); setScreen('hub'); onHome(); }} />;
+  // (The old static tutorial screen is gone — the interactive CollectorTour now runs over the Hub.)
   if (screen === 'startingPull') return <CollectorStartingPull onDone={handleStartingPullDone} />;
   if (screen === 'wager') return <CollectorWager save={save} onStart={handleStartGame} onCancel={() => setScreen('hub')} />;
   if (screen === 'game') return <CollectorGame save={save} wager={gameWager} onEnd={handleGameEnd} onUpdate={handleUpdate} />;
   if (screen === 'result' && gameResult) return <CollectorGameResult result={gameResult} save={save} onWinPull={handleWinPull} onHome={() => { setScreen('hub'); setGameResult(null); }} />;
   if (screen === 'winpull') return <CollectorWinPull winPullCards={winPullCards} onPick={handlePickWinPull} onSkip={() => setScreen('hub')} />;
+  if (screen === 'wheel') return <React.Fragment>{evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}<CollectorWheel onDone={handleWheelDone} streak={gameResult ? gameResult.winStreak : 5} /></React.Fragment>;
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}
+      {tourActive && <CollectorTour onClose={() => setTourActive(false)} onTab={setTab} />}
       {/* Nav bar */}
       <div className="nav-bar">
         <div className="nav-side">
@@ -8978,7 +9246,7 @@ function CollectorHub({ onHome }) {
         </div>
         <div className="nav-side" style={{ justifyContent:'flex-end', gap:8 }}>
           <VolumeBar />
-          <button onClick={() => setShowTutorial(true)} title="How to Play" style={{ width:34, height:34, borderRadius:'50%', background:'#b01a1a', border:'2px solid #e0484a', color:'#fff', cursor:'pointer', fontSize:'1.25rem', fontWeight:900, lineHeight:1, padding:0, display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 0 10px rgba(224,72,74,0.55)', flexShrink:0 }}>?</button>
+          <button onClick={() => { setScreen('hub'); setTourActive(true); }} title="How to Play" style={{ width:34, height:34, borderRadius:'50%', background:'#b01a1a', border:'2px solid #e0484a', color:'#fff', cursor:'pointer', fontSize:'1.25rem', fontWeight:900, lineHeight:1, padding:0, display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 0 10px rgba(224,72,74,0.55)', flexShrink:0 }}>?</button>
         </div>
       </div>
 

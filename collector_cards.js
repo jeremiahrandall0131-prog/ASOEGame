@@ -32,6 +32,7 @@
     hero:      { label: 'Hero',      color: '#ce93d8', bg: '#1a0a2e', border: '#6a1b9a' },
     legendary: { label: 'Legendary', color: '#e0e0e0', bg: '#111111', border: '#555555' },
     mythic:    { label: 'Mythic',    color: '#ff4444', bg: '#1e0000', border: '#8b0000' },
+    god:       { label: 'God',       color: '#ffe9a8', bg: '#2a2410', border: '#d4af37' },
   };
 
   const TIER_ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
