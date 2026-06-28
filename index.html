@@ -182,6 +182,8 @@ body{font-family:'Crimson Text',Georgia,serif;color:var(--text);overscroll-behav
 .fade-in{animation:fadeIn 0.25s ease both;}
 @keyframes evolvePulse{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(1.06);filter:brightness(1.35)}}
 .evolve-pulse{animation:evolvePulse 0.7s ease-in-out infinite;}
+@keyframes tourGlow{0%,100%{box-shadow:0 0 0 9999px rgba(0,0,0,0.72), 0 0 9px 2px rgba(240,200,74,0.55)}50%{box-shadow:0 0 0 9999px rgba(0,0,0,0.72), 0 0 22px 6px rgba(240,200,74,0.95)}}
+.tour-spot{animation:tourGlow 1.5s ease-in-out infinite;}
 h1{font-family:'Cinzel',serif;font-size:1.4rem;font-weight:900;color:var(--gold2);letter-spacing:0.08em;text-align:center;}
 h2{font-family:'Cinzel',serif;font-size:1rem;font-weight:700;color:var(--gold);}
 /* ── screen transitions ──────────────────────────────────────────────────── */
@@ -7214,44 +7216,84 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
 
 // ─── Tutorial ──────────────────────────────────────────────────────────────
 
-// Interactive tour steps. `tab` (when set) switches the Hub to that real screen
-// behind the tooltip so you SEE what's described; `point` adds a directional arrow.
+// Interactive tour steps. `tab` switches the Hub to that real screen; `target`
+// is a CSS selector for the element to SPOTLIGHT (everything else dims). Steps
+// with no target show a centered card explaining an in-game concept.
 const TUTORIAL_STEPS = [
-  { title:'Welcome to Collector Mode!', body:'Build a deck from thousands of unique Character Cards — exclusive variants found in no other mode — and match courts against the CPU. This quick tour walks through each screen. Tap Next!' },
-  { title:'Your Deck', tab:'deck', point:'up', body:'This is your deck. You start with 20 cards (18 Starters + 2 Uncommons) and must always keep at least 20. A card\'s Overall is the TOTAL of its ten position scores, so it reflects exactly how it performs across every role. Sort and filter at the top right.' },
-  { title:'Card Tiers', tab:'deck', point:'up', body:'Tiers run Starter (green) · Uncommon (blue) · Rare (orange) · Hero (purple) · Legendary (silver) · Mythic (red) — and the radiant God tier above them all. Higher tiers are rarer and trend toward higher Overalls.' },
-  { title:'Card Index', tab:'index', point:'up', body:'The Index lets you browse every character and variant in the game, owned or not — handy for planning what to chase next.' },
-  { title:'Card Stats', tab:'stats', point:'up', body:'Stats tracks how each of your cards has actually performed across the games you\'ve played.' },
-  { title:'The Store', tab:'store', point:'up', body:'Spend Gold here: the rotating Showcase, direct Buy Cards, Lottery spins, Upgrade, Trade, and Rerolls. Every purchase asks you to confirm first, so you won\'t spend by mistake.' },
-  { title:'Trade', tab:'store', point:'up', body:'In the Trade tab, hand in any card from your deck for a random card of the SAME tier but a different character — costs 20 Gold. Great for reshaping a tier you\'re stuck on.' },
-  { title:'Evolve & God Tier', tab:'store', point:'up', body:'Owning a card never removes it from the pools — so you can pull the EXACT same card again. When you do, that matching pair MERGES and Evolves one tier up! (Only identical cards merge — different variants of a character never do, so collect as many variants as you like.) Merge two Mythics to forge a one-of-a-kind GOD-tier card with DOUBLE scores in every position.' },
-  { title:'Daily Rewards', tab:'daily', point:'up', body:'Come back every 24 hours for a free Daily Card Pull and a Gold reward. Free progress, just for showing up!' },
-  { title:'Settings & Music', tab:'deck', point:'up', body:'The ⚙ cog (top right) adjusts music volume. Collector Mode always plays its own theme.' },
-  { title:'Playing a Game', body:'Press PLAY to start. Each turn you Draw Fate — a random card from your deck — and place it in one of 10 court positions. Tap any placed card\'s ⓘ to see its full stats, drop a card on an occupied slot to swap, and reposition freely until you Confirm your lineup.' },
-  { title:'Court Rules', body:'Your court must be legal: the Ruler and Consort must be opposite genders, and the Heir must be younger than BOTH of them. If a lineup breaks a rule, Confirm is disabled and a hint tells you exactly how to fix it.' },
-  { title:'Rerolls', body:'Don\'t like a Fate draw? Spend a Reroll to draw again — up to 3 per game. Buy more in the Store for 20 Gold each.' },
-  { title:'The CPU', body:'The CPU builds its own court each round and always fields its best possible lineup — and it gets stronger as your own collection grows, so it\'s always a real fight. Outscore it across all 10 positions to win!' },
-  { title:'Winning & Win Pulls', body:'After every win you get a Win Pull: the 10 cards the CPU played are each turned into a random variant — pick ONE to add to your deck for free.' },
-  { title:'Spin the Wheel', body:'String together a 5-win streak and you earn a Spin the Wheel — 30 cards, 5 of every tier, evenly spaced. Give it a spin for a bonus card!' },
-  { title:'Earning Gold', body:'Complete a game: +5 Gold. Win for more (by 5+ or 10+ pays extra), plus a Score Bonus the better your court fits (a perfect 100 pays +500!). You can also Wager up to 100 Gold per game.' },
-  { title:'Go Build Your Dynasty!', body:'That\'s everything. Tap the red ? any time to see this tour again. Now go forge the finest court in the realm!' },
+  { title:'Welcome to Collector Mode!', body:'Build a deck from thousands of unique Character Cards — exclusive variants found in no other mode — and pit your court against the CPU. This tour visits each screen and highlights what matters. Tap Next!' },
+  { title:'Your Deck', tab:'deck', target:'[data-tour="deck-composition"]', body:'This is your deck. You start with 20 cards and must always keep at least 20. The bar shows your tier mix; a card\'s Overall is the TOTAL of its ten position scores, so it captures exactly how it performs across every role.' },
+  { title:'Sort & Filter', tab:'deck', target:'[data-tour="deck-controls"]', body:'As your collection grows, sort by Overall, tier, or name and filter down to a single tier to find cards fast.' },
+  { title:'Card Tiers', tab:'deck', target:'[data-tour="deck-composition"]', body:'Tiers run Starter (green) · Uncommon (blue) · Rare (orange) · Hero (purple) · Legendary (silver) · Mythic (red) — and the radiant God tier above them all. Higher tiers are rarer and trend toward higher Overalls.' },
+  { title:'Card Index', tab:'index', target:'[data-tour="hub-content"]', body:'The Index lets you browse every character and variant in the game — owned or not — so you can plan what to chase next.' },
+  { title:'Card Stats', tab:'stats', target:'[data-tour="hub-content"]', body:'Stats tracks how each of your cards has actually performed across the games you\'ve played.' },
+  { title:'The Store', tab:'store', target:'[data-tour="store-tabs"]', body:'Spend Gold here. These tabs hold the rotating Showcase, direct Buy Cards, Lottery spins, Upgrade, Trade, and Rerolls. Every purchase asks you to confirm first.' },
+  { title:'Trade', tab:'store', target:'[data-tour="store-trade"]', body:'The Trade tab swaps any card from your deck for a random card of the SAME tier but a different character — for 20 Gold. Great for reshaping a tier you\'re stuck on.' },
+  { title:'Evolve — Duplicates Merge', tab:'store', target:'[data-tour="hub-content"]', body:'Owning a card never removes it from the pools, so you can obtain it again — it\'s never MORE likely, just possible. Pull the EXACT same card (same character, tier AND variant) and the matching pair MERGES into one card of the next tier up. Different variants never merge, and there\'s no limit to how many variants you can own.' },
+  { title:'God Tier', tab:'store', target:'[data-tour="hub-content"]', body:'Merge two identical MYTHIC cards and they forge a one-of-a-kind GOD-tier card — the only way one can exist — with DOUBLE the score in every position. Evolving fires from ANY source: the Store, Daily pulls, Win Pulls, and the Wheel.' },
+  { title:'Daily Rewards', tab:'daily', target:'[data-tour="daily-pull"]', body:'Come back every 24 hours for a free Daily Card Pull and a Gold reward — steady progress just for showing up.' },
+  { title:'Music Volume', tab:'deck', target:'[data-tour="volume"]', body:'The volume control (top-right) sets the music level — tap to mute or slide to taste. Collector Mode always plays its own theme.' },
+  { title:'Gold & Rerolls', tab:'deck', target:'[data-tour="gold-bar"]', body:'Your Gold and in-game Rerolls show here, along with countdowns to your next free Daily pull and reward.' },
+  { title:'Start a Game', tab:'deck', target:'[data-tour="play-btn"]', body:'Press PLAY to begin. Each turn you Draw Fate — a random card from your deck — and place it in one of 10 court positions. Tap any placed card\'s ⓘ for its full stats, drop a card on an occupied slot to swap, and reposition freely before you Confirm.' },
+  { title:'Court Rules', body:'Your court must be legal: Ruler and Consort must be OPPOSITE genders, and the Heir must be younger than BOTH. Break a rule and Confirm is disabled, with a hint naming exactly how to fix it.' },
+  { title:'The CPU', body:'The CPU builds its own court each round and always fields its best possible lineup — and it grows stronger as your collection does, so it\'s always a real fight. Outscore it across all 10 positions to win!' },
+  { title:'Win Pulls & the Wheel', body:'Win and you earn a Win Pull — the 10 cards the CPU played become random variants; pick ONE for free. Stack a 5-win streak and you also earn a Spin the Wheel: 30 cards, 5 of every tier, for a bonus pull.' },
+  { title:'Earning Gold', body:'Complete a game for +5 Gold; win for more (winning by 5+ or 10+ pays extra), plus a Score Bonus the better your court fits — a perfect 100 pays +500! You can also Wager up to 100 Gold per game.' },
+  { title:'Go Build Your Dynasty!', body:'That\'s the tour. Tap the red ? any time to see it again. Now go forge the finest court in the realm!' },
 ];
 
-// Interactive guided tour: dims the Hub, switches to the real tab each step
-// describes, and points an arrow at it. Rendered INSIDE the Hub so onTab works.
+// Interactive guided tour. Each step switches to the real screen and SPOTLIGHTS
+// the relevant element (a glowing cut-out; everything else dims), with the
+// tooltip placed clear of it. Concept-only steps show a centered card.
 function CollectorTour({ onClose, onTab }) {
   const [step, setStep] = React.useState(0);
+  const [box, setBox] = React.useState(null); // measured target rect, or null
   const cur = TUTORIAL_STEPS[step];
   const isLast = step === TUTORIAL_STEPS.length - 1;
+
   React.useEffect(() => { if (cur.tab && onTab) onTab(cur.tab); }, [step]);
+
+  // Find + measure the target once the screen for this step has rendered.
+  React.useEffect(() => {
+    let raf, cancelled = false, tries = 0;
+    function measure() {
+      if (cancelled) return;
+      if (!cur.target) { setBox(null); return; }
+      const el = document.querySelector(cur.target);
+      if (el) {
+        try { el.scrollIntoView({ block:'center', inline:'nearest' }); } catch (e) {}
+        const b = el.getBoundingClientRect();
+        if (b.width > 1 && b.height > 1) { setBox({ left:b.left, top:b.top, width:b.width, height:b.height }); return; }
+      }
+      if (tries++ < 45) raf = requestAnimationFrame(measure); else setBox(null);
+    }
+    raf = requestAnimationFrame(measure);
+    return () => { cancelled = true; if (raf) cancelAnimationFrame(raf); };
+  }, [step]);
+
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+  const PAD = 6;
+  let tt; // tooltip position: clear of the spotlight
+  if (!box) tt = { left:'50%', bottom:24, transform:'translateX(-50%)' };
+  else if (box.height > vh * 0.5) tt = { left:'50%', bottom:18, transform:'translateX(-50%)' };       // big area → bottom, overlapping
+  else if (box.top + box.height / 2 < vh * 0.5) tt = { left:'50%', top: box.top + box.height + PAD + 14, transform:'translateX(-50%)' }; // target up top → tooltip below
+  else tt = { left:'50%', bottom: vh - box.top + PAD + 14, transform:'translateX(-50%)' };             // target low → tooltip above
+
   return (
     <div style={{ position:'fixed', inset:0, zIndex:9999, pointerEvents:'none' }}>
-      <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.55)', pointerEvents:'auto' }} />
-      {cur.point === 'up' && (
-        <div style={{ position:'absolute', top:122, left:'50%', transform:'translateX(-50%)', fontSize:'1.7rem', color:'var(--gold2,#f0c84a)', textShadow:'0 0 10px rgba(240,200,74,0.8)' }} className="evolve-pulse">▲</div>
+      {/* full-screen blocker: dims when there's no spotlight, transparent (but still click-blocking) when there is */}
+      <div style={{ position:'absolute', inset:0, pointerEvents:'auto', background: box ? 'transparent' : 'rgba(0,0,0,0.72)' }} />
+      {/* spotlight cut-out (dim comes from its huge box-shadow) */}
+      {box && (
+        <div className="tour-spot" style={{
+          position:'absolute', left:box.left - PAD, top:box.top - PAD,
+          width:box.width + PAD*2, height:box.height + PAD*2, borderRadius:10,
+          border:'2px solid var(--gold)', pointerEvents:'none',
+          transition:'left .25s ease, top .25s ease, width .25s ease, height .25s ease',
+        }} />
       )}
-      <div style={{ position:'absolute', left:'50%', bottom:22, transform:'translateX(-50%)', width:'92%', maxWidth:440, pointerEvents:'auto' }}>
-        <div className="card" style={{ borderColor:'var(--gold)', padding:20, boxShadow:'0 8px 44px rgba(0,0,0,0.92)' }}>
+      {/* tooltip */}
+      <div style={{ position:'absolute', ...tt, width:'92%', maxWidth:430, pointerEvents:'auto' }}>
+        <div className="card" style={{ borderColor:'var(--gold)', padding:18, boxShadow:'0 8px 44px rgba(0,0,0,0.92)' }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
             <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.58rem', color:'var(--gold)', letterSpacing:'0.12em' }}>TOUR · {step+1}/{TUTORIAL_STEPS.length}</div>
             <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.58rem', color:'var(--text2)' }} onClick={onClose}>Skip ✕</button>
@@ -7428,7 +7470,7 @@ function CollectorMyDeck({ save, onUpdate }) {
         <div style={{ fontSize:'0.7rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>
           {ownedCards.length} CARDS · AVG <span style={{ color:'var(--gold)' }}>{avgOvr}</span> · DECK TIER: <CollTierBadge tier={deckTier} />
         </div>
-        <div style={{ marginLeft:'auto', display:'flex', gap:4 }}>
+        <div data-tour="deck-controls" style={{ marginLeft:'auto', display:'flex', gap:4 }}>
           <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={sort} onChange={e=>{ setSort(e.target.value); setIdentityView(null); }}>
             <option value="overall">Sort: Overall</option>
             <option value="tier">Sort: Tier</option>
@@ -7445,7 +7487,7 @@ function CollectorMyDeck({ save, onUpdate }) {
 
       {/* Deck composition + next-tier progress */}
       {ownedCards.length > 0 && (
-        <div className="card" style={{ marginBottom:10, padding:'9px 12px' }}>
+        <div data-tour="deck-composition" className="card" style={{ marginBottom:10, padding:'9px 12px' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6 }}>
             <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--gold)', letterSpacing:'0.08em' }}>DECK COMPOSITION</span>
             {nextTier
@@ -7802,7 +7844,7 @@ function CollectorDailySection({ save, onUpdate }) {
   return (
     <div className="scroll" style={{ height:'100%' }}>
       {evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}
-      <div className="card" style={{ marginBottom:12, borderColor: pullReady ? 'var(--gold)' : 'var(--border)' }}>
+      <div data-tour="daily-pull" className="card" style={{ marginBottom:12, borderColor: pullReady ? 'var(--gold)' : 'var(--border)' }}>
         <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)', marginBottom:6 }}>🃏 DAILY CARD PULL</div>
         <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10, lineHeight:1.5 }}>
           Once every 24 hours. Pulls from the entire card pool — a duplicate Evolves your card!<br/>
@@ -7995,9 +8037,9 @@ function CollectorStore({ save, onUpdate }) {
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
-      <div style={{ display:'flex', gap:4, marginBottom:10, overflowX:'auto', paddingBottom:2 }}>
+      <div data-tour="store-tabs" style={{ display:'flex', gap:4, marginBottom:10, overflowX:'auto', paddingBottom:2 }}>
         {STORE_TABS.map(t => (
-          <button key={t.id} className={`btn btn-${tab===t.id?'gold':'ghost'} btn-sm`} onClick={() => setTab(t.id)} style={{ whiteSpace:'nowrap', fontSize:'0.6rem' }}>{t.label}</button>
+          <button key={t.id} data-tour={'store-'+t.id} className={`btn btn-${tab===t.id?'gold':'ghost'} btn-sm`} onClick={() => setTab(t.id)} style={{ whiteSpace:'nowrap', fontSize:'0.6rem' }}>{t.label}</button>
         ))}
       </div>
       {storeMsg && <div style={{ fontSize:'0.7rem', color:'var(--gold)', background:'rgba(212,168,48,0.1)', border:'1px solid var(--gold)', borderRadius:4, padding:'6px 10px', marginBottom:8 }}>{storeMsg}</div>}
@@ -8302,7 +8344,7 @@ function VolumeBar() {
   const [vol, setVol] = React.useState(() => AudioManager.getVolume());
   const [muted, setMuted] = React.useState(() => AudioManager.isMuted());
   return (
-    <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+    <div data-tour="volume" style={{ display:'flex', alignItems:'center', gap:6 }}>
       <button onClick={() => { const n=!muted; setMuted(n); AudioManager.setMute(n); }}
         style={{ background:'none', border:'none', cursor:'pointer', fontSize:'0.95rem', padding:0, lineHeight:1 }}
         title={muted?'Unmute music':'Mute music'}>{muted?'🔇':'🔊'}</button>
@@ -9251,7 +9293,7 @@ function CollectorHub({ onHome }) {
       </div>
 
       {/* Gold / Rerolls / Daily indicators */}
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
+      <div data-tour="gold-bar" style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
         <div style={{ fontFamily:'Cinzel,serif', color:'var(--gold)', fontSize:'0.75rem' }}>🪙 {save.gold||0} Gold</div>
         <div style={{ fontFamily:'Cinzel,serif', color:'var(--text2)', fontSize:'0.7rem' }}>🎲 {save.rerolls||0} Rerolls</div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
@@ -9283,7 +9325,7 @@ function CollectorHub({ onHome }) {
       </div>
 
       {/* Tab content */}
-      <div style={{ flex:1, overflow:'hidden', padding:'10px 12px' }}>
+      <div data-tour="hub-content" style={{ flex:1, overflow:'hidden', padding:'10px 12px' }}>
         {tab === 'deck'  && <CollectorMyDeck save={save} onUpdate={handleUpdate} />}
         {tab === 'index' && <CollectorCardIndex save={save} />}
         {tab === 'stats' && <CollectorCardStats save={save} />}
@@ -9293,7 +9335,7 @@ function CollectorHub({ onHome }) {
 
       {/* Play button */}
       <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
-        <button className="btn btn-gold" style={{ width:'100%', padding:'14px', fontSize:'0.9rem', letterSpacing:'0.12em' }} onClick={handlePlay}>
+        <button data-tour="play-btn" className="btn btn-gold" style={{ width:'100%', padding:'14px', fontSize:'0.9rem', letterSpacing:'0.12em' }} onClick={handlePlay}>
           ⚔ PLAY ⚔
         </button>
       </div>
