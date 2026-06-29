@@ -6958,6 +6958,9 @@ function genCpuDeck(targetOverall) {
 }
 const COLL_TIER_ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
 const COLL_AUCTION_GOLD  = { starter:15, uncommon:25, rare:40, hero:75, legendary:150, mythic:300 };
+// Blacksmith: cost to repair a card's negative (Devolve/Degrade) effects, by its CURRENT tier.
+// God can only have its Degrade repaired (a devolved God is no longer God) — never restored to God.
+const COLL_REPAIR_GOLD   = { starter:50, uncommon:100, rare:150, hero:200, legendary:250, mythic:300, god:500 };
 const COLL_BUY_GOLD      = { starter:50, uncommon:75, rare:100 };
 const COLL_UPGRADE_GOLD  = { starter:40, uncommon:100, rare:300, hero:400, legendary:600 };
 const COLL_LOTTERY_COST  = { hero:200, legendary:300, mythic:500 };
@@ -7076,82 +7079,122 @@ function getCollCards() { return window.COLLECTOR_CARDS || []; }
 //   "<id>__m<delta>" → stat mod: +delta to EVERY position score (Upgrade +3 / Degrade -3);
 //                      delta may be negative and scores may go below 0.
 // Both can combine, e.g. "<id>__god__m3". Overall is recomputed as the sum of scores.
-function collStripId(id) { return typeof id === 'string' ? id.replace(/__m-?\d+$/, '').replace(/__god$/, '') : id; }
+// Card-id grammar: "<baseId>__god?__d<origRank>?__m<delta>?" (suffixes in that order).
+//   __god        → God tier (all position scores x2; only via Evolving a Mythic)
+//   __d<origRank>→ Devolve marker: the collTierRank this card held BEFORE being knocked down,
+//                  so the Blacksmith knows it's damaged and what tier to restore it to.
+//   __m<delta>   → stat mod: +delta to every position score (Upgrade +3 / Degrade -3; may be negative)
+function collParseId(id) {
+  let s = String(id), mod = 0, dev = 0, god = false;
+  const m = s.match(/__m(-?\d+)$/); if (m) { mod = parseInt(m[1], 10) || 0; s = s.slice(0, m.index); }
+  const d = s.match(/__d(\d+)$/);   if (d) { dev = parseInt(d[1], 10) || 0; s = s.slice(0, d.index); }
+  if (s.slice(-5) === '__god') { god = true; s = s.slice(0, -5); }
+  return { baseId: s, god, dev, mod };
+}
+function collBuildId({ baseId, god, dev, mod }) {
+  return baseId + (god ? '__god' : '') + (dev ? '__d' + dev : '') + (mod ? '__m' + mod : '');
+}
+function collStripId(id) { return typeof id === 'string' ? collParseId(id).baseId : id; }
 function getCollCard(id) {
   if (typeof id !== 'string') return undefined;
-  let modDelta = 0, isGod = false, baseId = id;
-  const mMatch = baseId.match(/__m(-?\d+)$/);
-  if (mMatch) { modDelta = parseInt(mMatch[1], 10) || 0; baseId = baseId.slice(0, mMatch.index); }
-  if (baseId.slice(-5) === '__god') { isGod = true; baseId = baseId.slice(0, -5); }
-  const base = getCollCards().find(c => c.id === baseId);
+  const p = collParseId(id);
+  const base = getCollCards().find(c => c.id === p.baseId);
   if (!base) return undefined;
-  if (!isGod && !modDelta) return base; // plain card — return the pool object unchanged
+  if (!p.god && !p.mod && !p.dev) return base; // truly plain — return the pool object unchanged
   // `scores` carries the 10 court-position keys (plus an embedded 'overall'); only the
-  // positions get x2 (god) and +delta (mod). Overall is derived from base.overall.
+  // positions get x2 (god) and +delta (mod). Overall is derived from base.overall. The
+  // devolve marker (__d) is metadata only — the lower tier is already baked into baseId.
   const scores = { ...base.scores };
-  COLL_POS.forEach(p => { scores[p.id] = Math.round(((base.scores[p.id] || 0) * (isGod ? 2 : 1) + modDelta) * 10) / 10; });
-  const overall = Math.round(((base.overall || 0) * (isGod ? 2 : 1) + modDelta * COLL_POS.length) * 10) / 10;
+  COLL_POS.forEach(q => { scores[q.id] = Math.round(((base.scores[q.id] || 0) * (p.god ? 2 : 1) + p.mod) * 10) / 10; });
+  const overall = Math.round(((base.overall || 0) * (p.god ? 2 : 1) + p.mod * COLL_POS.length) * 10) / 10;
   scores.overall = overall;
-  return { ...base, id, tier: isGod ? 'god' : base.tier, scores, overall, _god: isGod, _mod: modDelta };
+  return { ...base, id, tier: p.god ? 'god' : base.tier, scores, overall, _god: p.god, _mod: p.mod, _devOrig: p.dev };
 }
-// Apply a +/- position-score mod to a card id, combining with any existing mod (keeps __god).
+// Apply a +/- position-score mod to a card id, combining with any existing mod (keeps __god/__d).
 function collApplyMod(id, delta) {
-  let g = '', baseId = id;
-  const mMatch = baseId.match(/__m(-?\d+)$/);
-  let cur = 0;
-  if (mMatch) { cur = parseInt(mMatch[1], 10) || 0; baseId = baseId.slice(0, mMatch.index); }
-  if (baseId.slice(-5) === '__god') { g = '__god'; baseId = baseId.slice(0, -5); }
-  const next = cur + delta;
-  return baseId + g + (next === 0 ? '' : '__m' + next);
+  const p = collParseId(id);
+  return collBuildId({ ...p, mod: p.mod + delta });
 }
 
 // God ranks above every pool tier; used for sorting/labeling (NOT pool generation).
 function collTierRank(tier) { return tier === 'god' ? COLL_TIER_ORDER.length : COLL_TIER_ORDER.indexOf(tier); }
 
-// Where `card` evolves to: same character one tier UP, or a synthetic God card if it's
-// already Mythic. Any stat-mod (+3/-3 Upgrade/Degrade) is CARRIED OVER to the new tier so
-// effects stack across evolves. null = already top.
+function collTierName(rank) { return rank === COLL_TIER_ORDER.length ? 'god' : COLL_TIER_ORDER[rank]; }
+
+// Where `card` evolves to: same character one tier UP, or a synthetic God card if it's already
+// Mythic. Evolving CLEANSES the card — the result is the STANDARD variant of the next tier with
+// NO stat-mod and NO devolve marker (any Devolve/Degrade is wiped; a +3 Upgrade is reset too),
+// so e.g. a degraded Mythic → God is x2 the CLEAN Mythic stats (the card's ceiling). null = already top.
 function collEvolveTargetId(card, owned) {
-  if (card.tier === 'god') return null;            // already the top tier
-  const baseId = collStripId(card.id);
-  const base = getCollCards().find(c => c.id === baseId);
+  const p = collParseId(card.id);
+  if (p.god) return null;                          // already the top tier
+  const base = getCollCards().find(c => c.id === p.baseId);
   if (!base) return null;
-  const mMatch = String(card.id).match(/__m(-?\d+)$/);
-  const delta = mMatch ? (parseInt(mMatch[1], 10) || 0) : 0;
-  let target;
-  if (base.tier === 'mythic') {
-    target = baseId + '__god';
-  } else {
-    const nextTier = COLL_TIER_ORDER[COLL_TIER_ORDER.indexOf(base.tier) + 1];
-    if (!nextTier) return null;
-    const pool = getCollCards().filter(c => c.charId === base.charId && c.tier === nextTier);
-    if (!pool.length) return null;
-    const notOwned = pool.filter(c => !(owned || []).includes(c.id));
-    const pick = notOwned.length ? notOwned : pool;
-    target = pick[Math.floor(Math.random() * pick.length)].id;
-  }
-  return delta ? collApplyMod(target, delta) : target;
+  if (base.tier === 'mythic') return p.baseId + '__god'; // clean God = x2 the base Mythic
+  const nextTier = COLL_TIER_ORDER[collTierRank(base.tier) + 1];
+  if (!nextTier) return null;
+  const pool = getCollCards().filter(c => c.charId === base.charId && c.tier === nextTier);
+  if (!pool.length) return null;
+  const notOwned = pool.filter(c => !(owned || []).includes(c.id));
+  const pick = notOwned.length ? notOwned : pool;
+  return pick[Math.floor(Math.random() * pick.length)].id; // clean standard variant, no mods
 }
 // Where `card` devolves to: same character one tier DOWN (God → its base Mythic). Any stat-mod
-// (+3/-3) is CARRIED OVER. Starters are unaffected (null). Every identity spans all tiers, so a target exists.
+// (+3/-3) is CARRIED OVER and a devolve marker (remembering the original tier) is set/kept.
+// Starters are unaffected (null). Every identity spans all tiers, so a target exists.
 function collDevolveTargetId(card) {
-  const baseId = collStripId(card.id);
-  const base = getCollCards().find(c => c.id === baseId);
+  const p = collParseId(card.id);
+  const base = getCollCards().find(c => c.id === p.baseId);
   if (!base) return null;
-  const mMatch = String(card.id).match(/__m(-?\d+)$/);
-  const delta = mMatch ? (parseInt(mMatch[1], 10) || 0) : 0;
-  let target;
-  if (card.tier === 'god') {
-    target = baseId;                               // God → the underlying Mythic
+  const curRank = p.god ? collTierRank('god') : collTierRank(base.tier);
+  const orig = p.dev || curRank;                   // remember the highest tier held (origin)
+  let newBase, newGod = false;
+  if (p.god) {
+    newBase = p.baseId;                            // God → the underlying Mythic
   } else {
     if (base.tier === 'starter') return null;      // Starters can't devolve
-    const prevTier = COLL_TIER_ORDER[COLL_TIER_ORDER.indexOf(base.tier) - 1];
+    const prevTier = COLL_TIER_ORDER[curRank - 1];
     if (!prevTier) return null;
     const pool = getCollCards().filter(c => c.charId === base.charId && c.tier === prevTier);
     if (!pool.length) return null;
-    target = pool[Math.floor(Math.random() * pool.length)].id;
+    newBase = pool[Math.floor(Math.random() * pool.length)].id;
   }
-  return delta ? collApplyMod(target, delta) : target;
+  return collBuildId({ baseId: newBase, god: newGod, dev: orig, mod: p.mod });
+}
+
+// ── Negative-effect inspection + Blacksmith repair ──
+// A card "has a negative effect" if its net stat-mod is below 0 (Degrade) and/or it carries a
+// devolve marker placing it below its original tier (Devolve).
+function collNegatives(card) {
+  if (!card) return { degrade: 0, devolvedFrom: 0 };
+  const degrade = (card._mod || 0) < 0 ? (card._mod || 0) : 0;
+  const orig = card._devOrig || 0;
+  const devolvedFrom = (orig && orig > collTierRank(card.tier)) ? orig : 0;
+  return { degrade, devolvedFrom };
+}
+function collHasNegative(card) { const n = collNegatives(card); return n.degrade < 0 || n.devolvedFrom > 0; }
+// Can the Blacksmith fix anything on this card? A Degrade is always repairable; a Devolve is
+// repairable UNLESS it would restore the card to God tier (a fallen God can't be reforged).
+function collCanRepair(card) {
+  const n = collNegatives(card);
+  if (n.degrade < 0) return true;
+  if (n.devolvedFrom > 0 && n.devolvedFrom < collTierRank('god')) return true;
+  return false;
+}
+// Return a repaired card id: clears a negative stat-mod and re-rolls the card back up to its
+// original tier (skipping a God restoration, which stays barred).
+function collRepairCard(card) {
+  if (!card) return card && card.id;
+  const p = collParseId(card.id);
+  let newBase = p.baseId, newGod = p.god, newDev = p.dev, newMod = p.mod;
+  if (newMod < 0) newMod = 0;                       // repair the Degrade
+  if (newDev && newDev < collTierRank('god')) {     // repair the Devolve (not back to God)
+    const base = getCollCards().find(c => c.id === p.baseId);
+    const targetTier = collTierName(newDev);
+    const variants = base ? getCollCards().filter(c => c.charId === base.charId && c.tier === targetTier) : [];
+    if (variants.length) { newBase = variants[Math.floor(Math.random() * variants.length)].id; newDev = 0; }
+  }
+  return collBuildId({ baseId: newBase, god: newGod, dev: newDev, mod: newMod });
 }
 
 // Add a card to an owned[] list. Owning a card no longer blocks it from pools;
@@ -7369,6 +7412,15 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
   const T = (window.COLLECTOR_TIERS||{})[card.tier] || { color:'#888', bg:'#111', border:'#333' };
   const pos = COLL_POS;
   const accentBorder = isOwned ? T.color : T.border;
+  // Negative-effect (Devolve / Degrade) mark + explanation, shown in My Deck and the Blacksmith.
+  const _TIERS = window.COLLECTOR_TIERS || {};
+  const neg = collNegatives(card);
+  const hasNeg = neg.degrade < 0 || neg.devolvedFrom > 0;
+  const negWord = (neg.devolvedFrom > 0 && neg.degrade < 0) ? 'Devolved + Degraded' : neg.devolvedFrom > 0 ? 'Devolved' : 'Degraded';
+  const negLabel = [
+    neg.devolvedFrom > 0 ? `Devolved — was ${(_TIERS[collTierName(neg.devolvedFrom)]||{}).label || collTierName(neg.devolvedFrom)}` : null,
+    neg.degrade < 0 ? `Degraded ${neg.degrade} to all positions` : null,
+  ].filter(Boolean).join(' · ');
   const style = {
     border: `2px solid ${accentBorder}`,
     borderRadius: 8,
@@ -7386,6 +7438,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
           {card.name}
         </div>
         <div style={{ fontSize:'0.55rem', color:'var(--text2)', marginBottom:4 }}>{card.houses?.[0]} · Age {card.age}</div>
+        {hasNeg && <div title={negLabel} style={{ fontSize:'0.5rem', color:'#e05555', fontWeight:700, marginBottom:4 }}>⚠ {negWord}</div>}
         <CollTierBadge tier={card.tier} />
         <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, fontSize:'1rem', color:T.color, marginTop:4, textAlign:'right' }}>
           {card.overall}
@@ -7413,6 +7466,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
           {isOwned ? '✓ In Your Deck' : '○ Not Owned'}
         </div>
       )}
+      {hasNeg && <div style={{ fontSize:'0.58rem', color:'#e05555', fontWeight:700, marginBottom:6, border:'1px solid #e05555', background:'rgba(224,85,85,0.12)', borderRadius:4, padding:'3px 6px' }}>⚠ {negLabel}</div>}
       <div style={{ fontSize:'0.6rem', color:'var(--text2)', fontStyle:'italic', marginBottom:8, lineHeight:1.4 }}>{card.desc}</div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:'2px 8px' }}>
         {pos.map(p => {
@@ -8149,6 +8203,7 @@ function CollectorStore({ save, onUpdate }) {
   const [auctionSelected, setAuctionSelected] = React.useState(null); // index of deck card chosen to auction
   const [auctionSort, setAuctionSort] = React.useState('overall'); // same sort options as My Deck
   const [auctionFilterTier, setAuctionFilterTier] = React.useState('all');
+  const [blacksmithSelected, setBlacksmithSelected] = React.useState(null); // owned index chosen to repair
   const [evolveAnim, setEvolveAnim] = React.useState(null); // { from, to } when a duplicate merges
   // Daily refresh (24h) regenerates BOTH the showcase and the Featured House together.
   const [refreshData] = React.useState(() => {
@@ -8303,6 +8358,21 @@ function CollectorStore({ save, onUpdate }) {
     }});
   }
 
+  // Blacksmith: repair a card's negative (Devolve/Degrade) effects for its current tier's price.
+  function doRepair(index) {
+    const owned = save.owned || [];
+    const card = getCollCard(owned[index]);
+    if (!card || !collCanRepair(card)) return;
+    const cost = COLL_REPAIR_GOLD[card.tier] || 0;
+    if ((save.gold||0) < cost) { msg(`You need ${cost}G to repair ${card.name}.`); return; }
+    setPendingBuy({ label:`Repair ${card.name} for ${cost}G? Its negative effects are mended.`, action: () => {
+      const o = [...(save.owned||[])]; o[index] = collRepairCard(card);
+      const newSave = { ...save, gold:(save.gold||0)-cost, owned:o };
+      saveCollSave(newSave); onUpdate(newSave); setBlacksmithSelected(null);
+      msg(`${card.name} reforged at the Blacksmith!`);
+    }});
+  }
+
   const STORE_TABS = [
     { id:'showcase', label:'Showcase' },
     { id:'buy', label:'Buy Cards' },
@@ -8310,6 +8380,7 @@ function CollectorStore({ save, onUpdate }) {
     { id:'upgrade', label:'Upgrade' },
     { id:'trade', label:'Trade' },
     { id:'auction', label:'Auction' },
+    { id:'blacksmith', label:'Blacksmith' },
     { id:'rerolls', label:'Rerolls' },
   ];
 
@@ -8586,6 +8657,45 @@ function CollectorStore({ save, onUpdate }) {
           </div>
           );
         })()}
+        {tab === 'blacksmith' && (() => {
+          // Every deck card carrying a negative (Devolve/Degrade) effect; blank if none.
+          const entries = (save.owned||[]).map((id,i) => ({ card:getCollCard(id), idx:i })).filter(e => e.card && collHasNegative(e.card));
+          const selCard = blacksmithSelected != null ? getCollCard((save.owned||[])[blacksmithSelected]) : null;
+          const selCost = selCard ? (COLL_REPAIR_GOLD[selCard.tier]||0) : 0;
+          const selRepairable = selCard ? collCanRepair(selCard) : false;
+          return (
+          <div>
+            <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:8, lineHeight:1.5 }}>
+              ⚒️ The Blacksmith reforges cards struck by a <span style={{color:'#e05555'}}>Devolve</span> or <span style={{color:'#e05555'}}>Degrade</span> effect. Cost rises with the card's tier. <span style={{fontStyle:'italic'}}>A God knocked down to Mythic can mend a Degrade but can never be restored to God.</span>
+            </div>
+            {entries.length === 0 ? (
+              <div style={{ fontSize:'0.7rem', color:'var(--text2)', textAlign:'center', marginTop:24, fontStyle:'italic' }}>No cards need repair — your deck is in perfect condition. ⚒️</div>
+            ) : (
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
+                {entries.map(e => { const c=e.card; const ct=T[c.tier]||{color:'#888',bg:'#111'}; const sel=blacksmithSelected===e.idx; const n=collNegatives(c); const cost=COLL_REPAIR_GOLD[c.tier]||0; const repairable=collCanRepair(c); return (
+                  <div key={e.idx} onClick={()=>setBlacksmithSelected(e.idx)} style={{ border:`2px solid ${sel?'#fff':ct.color}`, borderRadius:6, padding:'6px 8px', background:sel?'rgba(255,255,255,0.12)':ct.bg, cursor:'pointer' }}>
+                    <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
+                    <div style={{ fontSize:'0.5rem', color:'#e05555', fontWeight:700, margin:'2px 0', lineHeight:1.3 }}>⚠ {n.devolvedFrom>0?`Devolved (was ${(T[collTierName(n.devolvedFrom)]||{}).label||collTierName(n.devolvedFrom)})`:''}{n.devolvedFrom>0&&n.degrade<0?' · ':''}{n.degrade<0?`Degraded ${n.degrade}`:''}</div>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
+                      <CollTierBadge tier={c.tier} />
+                      <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: repairable?'var(--gold)':'var(--text2)', fontSize:'0.7rem' }}>{repairable?`⚒️ ${cost}G`:'unfixable'}</span>
+                    </div>
+                  </div>
+                ); })}
+              </div>
+            )}
+            {selCard && (
+              selRepairable ? (
+                <button className={`btn btn-${(save.gold||0)>=selCost?'gold':'ghost'} btn-sm`} style={{ width:'100%', marginTop:10 }} disabled={(save.gold||0)<selCost} onClick={()=>doRepair(blacksmithSelected)}>
+                  {(save.gold||0)<selCost ? `Need ${selCost}G to repair` : `⚒️ Repair ${selCard.name} — ${selCost}G`}
+                </button>
+              ) : (
+                <div style={{ fontSize:'0.62rem', color:'var(--text2)', textAlign:'center', marginTop:10, fontStyle:'italic' }}>A fallen God cannot be reforged back to God.</div>
+              )
+            )}
+          </div>
+          );
+        })()}
         {tab === 'rerolls' && (
           <div>
             <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:12 }}>
@@ -8612,6 +8722,7 @@ function CollectorStore({ save, onUpdate }) {
 
 function CollectorWager({ save, onStart, onCancel, numCpus = 1 }) {
   const [wager, setWager] = React.useState(0);
+  const canWager = (save.gold||0) > 0; // wagering needs a positive balance (not 0 or negative)
   const canAfford = (save.gold||0) >= wager;
   const tourney = numCpus > 1;
   const pot = wager * (numCpus + 1);
@@ -8626,22 +8737,23 @@ function CollectorWager({ save, onStart, onCancel, numCpus = 1 }) {
             : <>Place a wager before the game begins. Win your wager back doubled. Lose and you lose it.<br/>Maximum wager: {WAGER_MAX} Gold. Your Gold: {save.gold||0}G</>}
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
-          <input type="number" min={0} max={Math.min(WAGER_MAX, save.gold||0)} value={wager}
+          <input type="number" min={0} max={Math.max(0,Math.min(WAGER_MAX, save.gold||0))} value={wager} disabled={!canWager}
             onChange={e=>setWager(Math.max(0,Math.min(WAGER_MAX,Math.min(save.gold||0,parseInt(e.target.value)||0))))}
-            style={{ flex:1, fontSize:'1.1rem', padding:'8px 12px', background:'var(--bg2)', border:`1px solid ${canAfford?'var(--gold)':'#e05555'}`, color:'var(--gold)', borderRadius:4, fontFamily:'Cinzel,serif', textAlign:'center' }} />
+            style={{ flex:1, fontSize:'1.1rem', padding:'8px 12px', background:'var(--bg2)', border:`1px solid ${canAfford?'var(--gold)':'#e05555'}`, color:'var(--gold)', borderRadius:4, fontFamily:'Cinzel,serif', textAlign:'center', opacity:canWager?1:0.5 }} />
           <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)' }}>Gold</span>
         </div>
         <div style={{ display:'flex', gap:6, marginBottom:12 }}>
           {[0,10,25,50,100].map(v => (
-            <button key={v} className={`btn btn-ghost btn-sm`} style={{ flex:1, fontSize:'0.6rem' }}
-              onClick={() => setWager(Math.min(v, Math.min(WAGER_MAX, save.gold||0)))}>{v === 0 ? 'No Bet' : `${v}G`}</button>
+            <button key={v} className={`btn btn-ghost btn-sm`} style={{ flex:1, fontSize:'0.6rem' }} disabled={v>0 && !canWager}
+              onClick={() => setWager(Math.max(0, Math.min(v, Math.min(WAGER_MAX, save.gold||0))))}>{v === 0 ? 'No Bet' : `${v}G`}</button>
           ))}
         </div>
         {tourney && wager > 0 && <div style={{ fontSize:'0.66rem', color:'var(--gold)', textAlign:'center', marginBottom:10 }}>Total pot: <strong>{pot}G</strong> · win nets <strong>+{wager*numCpus}G</strong></div>}
-        {!canAfford && <div style={{ fontSize:'0.65rem', color:'#e05555', marginBottom:8 }}>Not enough Gold!</div>}
+        {!canWager && <div style={{ fontSize:'0.65rem', color:'#e0a84a', marginBottom:8 }}>You have no Gold to wager — you can still play for no stakes.</div>}
+        {canWager && !canAfford && <div style={{ fontSize:'0.65rem', color:'#e05555', marginBottom:8 }}>Not enough Gold!</div>}
         <div style={{ display:'flex', gap:8 }}>
           <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={onCancel}>Cancel</button>
-          <button className="btn btn-gold btn-sm" style={{ flex:2 }} onClick={() => onStart(wager)}>⚔ Play{wager>0?(tourney?` (pot ${pot}G)`:` (+${wager}G wager)`):''}</button>
+          <button className="btn btn-gold btn-sm" style={{ flex:2 }} onClick={() => onStart(Math.max(0, Math.min(wager, save.gold||0)))}>⚔ Play{wager>0?(tourney?` (pot ${pot}G)`:` (+${wager}G wager)`):''}</button>
         </div>
       </div>
     </div>
@@ -9459,6 +9571,11 @@ function CollDetailModal({ card, onClose }) {
   const T = window.COLLECTOR_TIERS || {};
   if (!card) return null;
   const ct = T[card.tier] || { color:'#888' };
+  const _neg = collNegatives(card);
+  const _negLabel = [
+    _neg.devolvedFrom > 0 ? `Devolved — was ${(T[collTierName(_neg.devolvedFrom)]||{}).label || collTierName(_neg.devolvedFrom)}` : null,
+    _neg.degrade < 0 ? `Degraded ${_neg.degrade} to all positions` : null,
+  ].filter(Boolean).join(' · ');
   return (
     <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:350, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
       <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:340, width:'100%', borderColor:ct.color, maxHeight:'85%', overflowY:'auto' }}>
@@ -9474,6 +9591,7 @@ function CollDetailModal({ card, onClose }) {
           <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>Overall {card.overall}</span>
           <span style={{ marginLeft:'auto', fontSize:'0.55rem', color:'var(--text2)' }}>{(card.houses||[]).join(' · ')}</span>
         </div>
+        {_negLabel && <div style={{ fontSize:'0.6rem', color:'#e05555', fontWeight:700, marginTop:8, border:'1px solid #e05555', background:'rgba(224,85,85,0.12)', borderRadius:4, padding:'4px 7px' }}>⚠ {_negLabel}</div>}
         {card.desc && <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginTop:8, lineHeight:1.5, fontStyle:'italic' }}>{card.desc}</div>}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:'2px 10px', marginTop:10, paddingTop:8, borderTop:'1px solid var(--border)' }}>
           {COLL_POS.map(p => { const sc = (card.scores&&card.scores[p.id])||0; return (
