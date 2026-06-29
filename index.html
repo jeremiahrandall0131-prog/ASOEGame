@@ -8409,17 +8409,20 @@ function CollectorStore({ save, onUpdate }) {
 
 // ─── Wager Screen ────────────────────────────────────────────────────────────
 
-function CollectorWager({ save, onStart, onCancel }) {
+function CollectorWager({ save, onStart, onCancel, numCpus = 1 }) {
   const [wager, setWager] = React.useState(0);
   const canAfford = (save.gold||0) >= wager;
+  const tourney = numCpus > 1;
+  const pot = wager * (numCpus + 1);
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.92)', zIndex:200, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
       <div className="card" style={{ maxWidth:380, width:'100%', borderColor:'var(--gold)', padding:24 }}>
-        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)', marginBottom:4 }}>⚔ PRE-GAME WAGER</div>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)', marginBottom:4 }}>{tourney ? '🏆 TOURNEY WAGER' : '⚔ PRE-GAME WAGER'}</div>
         <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginBottom:16, lineHeight:1.5 }}>
-          Place a wager before the game begins. Win your wager back doubled. Lose and you lose it.<br/>
-          Maximum wager: {WAGER_MAX} Gold. Your Gold: {save.gold||0}G
+          {tourney
+            ? <>Each of the {numCpus} rival CPUs matches your wager. Place first to take the whole pot; place anywhere else and you lose only your own wager.<br/>Maximum wager: {WAGER_MAX} Gold. Your Gold: {save.gold||0}G</>
+            : <>Place a wager before the game begins. Win your wager back doubled. Lose and you lose it.<br/>Maximum wager: {WAGER_MAX} Gold. Your Gold: {save.gold||0}G</>}
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
           <input type="number" min={0} max={Math.min(WAGER_MAX, save.gold||0)} value={wager}
@@ -8433,10 +8436,11 @@ function CollectorWager({ save, onStart, onCancel }) {
               onClick={() => setWager(Math.min(v, Math.min(WAGER_MAX, save.gold||0)))}>{v === 0 ? 'No Bet' : `${v}G`}</button>
           ))}
         </div>
+        {tourney && wager > 0 && <div style={{ fontSize:'0.66rem', color:'var(--gold)', textAlign:'center', marginBottom:10 }}>Total pot: <strong>{pot}G</strong> · win nets <strong>+{wager*numCpus}G</strong></div>}
         {!canAfford && <div style={{ fontSize:'0.65rem', color:'#e05555', marginBottom:8 }}>Not enough Gold!</div>}
         <div style={{ display:'flex', gap:8 }}>
           <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={onCancel}>Cancel</button>
-          <button className="btn btn-gold btn-sm" style={{ flex:2 }} onClick={() => onStart(wager)}>⚔ Play{wager>0?` (+${wager}G wager)`:''}</button>
+          <button className="btn btn-gold btn-sm" style={{ flex:2 }} onClick={() => onStart(wager)}>⚔ Play{wager>0?(tourney?` (pot ${pot}G)`:` (+${wager}G wager)`):''}</button>
         </div>
       </div>
     </div>
@@ -8453,7 +8457,7 @@ function CollectorWinPull({ winPullCards, onPick, onSkip }) {
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.95)', zIndex:300, display:'flex', flexDirection:'column', padding:16 }}>
       <div style={{ fontFamily:'Cinzel,serif', textAlign:'center', marginBottom:4 }}>
         <div style={{ fontSize:'1rem', color:'var(--gold)' }}>⚔ WIN PULL ⚔</div>
-        <div style={{ fontSize:'0.65rem', color:'var(--text2)' }}>Choose ONE card from the CPU's board to add to your deck</div>
+        <div style={{ fontSize:'0.65rem', color:'var(--text2)' }}>Choose ONE card from the defeated court{winPullCards.length>10?'s':''} to add to your deck</div>
       </div>
       <div className="scroll" style={{ flex:1, marginTop:10 }}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
@@ -8503,7 +8507,7 @@ function VolumeBar() {
   );
 }
 
-function CollectorGame({ save, wager, onEnd, onUpdate }) {
+function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
   // Player deck: shuffle owned cards
   const [playerDeck] = React.useState(() => {
     const cards = (save.owned||[]).map(id=>getCollCard(id)).filter(Boolean);
@@ -8520,52 +8524,47 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
   const [usedCardIds, setUsedCardIds] = React.useState(new Set());
   const [rerollsLeft, setRerollsLeft] = React.useState(Math.min(save.rerolls||0, GAME_REROLL_LIMIT));
   const [rerollsUsed, setRerollsUsed] = React.useState(0);
-  const [cpuBoard, setCpuBoard] = React.useState({});   // built turn-by-turn (optimal assignment)
-  const [cpuDraftedCards, setCpuDraftedCards] = React.useState([]); // every card the CPU has drafted
-  const [lastCpuCard, setLastCpuCard] = React.useState(null);
-  // CPU's hidden preset deck (±2% of the player's cumulative deck Overall), the cards it has
-  // drawn so far, and its own reroll budget. Generated once per game; never shown until the end.
-  const [cpuDeck] = React.useState(() => genCpuDeck((save.owned||[]).reduce((s,id)=>s+((getCollCard(id)||{}).overall||0),0)));
-  const [cpuDrawnIds, setCpuDrawnIds] = React.useState(() => new Set());
-  const [cpuRerollsLeft, setCpuRerollsLeft] = React.useState(GAME_REROLL_LIMIT);
+  // CPU opponents: 1 in Traditional, 3 in Tourney. Each gets its OWN hidden ±2% deck and
+  // drafts/places independently (same logic as the single Traditional CPU). Never shown until end.
+  const NCPU = numCpus || 1;
+  const [cpuDecks] = React.useState(() => {
+    const cum = (save.owned||[]).reduce((s,id)=>s+((getCollCard(id)||{}).overall||0),0);
+    return Array.from({ length: NCPU }, () => genCpuDeck(cum));
+  });
+  const [cpus, setCpus] = React.useState(() => Array.from({ length: NCPU }, () => ({ board:{}, drafted:[], drawn:new Set(), rerolls:GAME_REROLL_LIMIT, last:null })));
   const [phase, setPhase] = React.useState('draw'); // draw | place | done
-  const [showCpu, setShowCpu] = React.useState(false);
+  const [view, setView] = React.useState(-1); // -1 = player board, 0..NCPU-1 = a CPU's board
   const [selectedPos, setSelectedPos] = React.useState(null);
   const [heldDisplaced, setHeldDisplaced] = React.useState(false); // holding a card swapped out of a slot
   const [detailCard, setDetailCard] = React.useState(null); // card whose stats popup is open
   const [showSettings, setShowSettings] = React.useState(false);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
 
-  // The CPU draws fate from its OWN hidden deck each round (like the player), spending up to
-  // 3 rerolls wisely on weak draws, then always re-fields its optimal LEGAL lineup. It tries
-  // its hardest to win; its deck strength tracks the player's so games stay competitive.
-  function cpuDrawAndPlace(draftedNow) {
-    const undrawn = cpuDeck.filter(c => !cpuDrawnIds.has(c));
-    if (!undrawn.length) return draftedNow;
-    const overalls = cpuDeck.map(c => c.overall||0).slice().sort((a,b)=>a-b);
-    const med = overalls[Math.floor(overalls.length/2)] || 0;
-    const roundsLeftAfter = COLL_POS.length - draftedNow.length - 1;
-    let rerolls = cpuRerollsLeft;
-    let pick = undrawn[Math.floor(Math.random()*undrawn.length)];
-    const considered = new Set([pick]);
-    // Wise rerolls: keep drawing for a stronger card while the current pick is below-median
-    // and enough cards remain undrawn to still fill the board; keep the best draw seen.
-    while (rerolls > 0 && (pick.overall||0) < med && (undrawn.length - considered.size) > roundsLeftAfter) {
-      const others = undrawn.filter(c => !considered.has(c));
-      if (!others.length) break;
-      const cand = others[Math.floor(Math.random()*others.length)];
-      considered.add(cand);
-      rerolls--;
-      if ((cand.overall||0) > (pick.overall||0)) pick = cand;
-    }
-    const nextDrawn = new Set(cpuDrawnIds); nextDrawn.add(pick);
-    setCpuDrawnIds(nextDrawn);
-    setCpuRerollsLeft(rerolls);
-    const drafted = [...draftedNow, pick];
-    setCpuDraftedCards(drafted);
-    setCpuBoard(optimalAssign(drafted));
-    setLastCpuCard(pick);
-    return drafted;
+  // Each CPU draws fate from its OWN hidden deck each round (like the player), spending up to
+  // 3 rerolls wisely on weak draws, then always re-fields its optimal LEGAL lineup. Their deck
+  // strength tracks the player's so games stay competitive. Returns the advanced CPU array.
+  function advanceCpus() {
+    return cpus.map((c, i) => {
+      const deck = cpuDecks[i];
+      const undrawn = deck.filter(card => !c.drawn.has(card));
+      if (!undrawn.length) return c;
+      const overalls = deck.map(card => card.overall||0).slice().sort((a,b)=>a-b);
+      const med = overalls[Math.floor(overalls.length/2)] || 0;
+      const roundsLeftAfter = COLL_POS.length - c.drafted.length - 1;
+      let rerolls = c.rerolls;
+      let pick = undrawn[Math.floor(Math.random()*undrawn.length)];
+      const considered = new Set([pick]);
+      while (rerolls > 0 && (pick.overall||0) < med && (undrawn.length - considered.size) > roundsLeftAfter) {
+        const others = undrawn.filter(card => !considered.has(card));
+        if (!others.length) break;
+        const cand = others[Math.floor(Math.random()*others.length)];
+        considered.add(cand); rerolls--;
+        if ((cand.overall||0) > (pick.overall||0)) pick = cand;
+      }
+      const drawn = new Set(c.drawn); drawn.add(pick);
+      const drafted = [...c.drafted, pick];
+      return { board: optimalAssign(drafted), drafted, drawn, rerolls, last: pick };
+    });
   }
 
   // Assign a set of cards to positions to MAXIMISE total score (greedy seed + pairwise-swap
@@ -8687,7 +8686,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
   function confirmTurn() {
     if (phase !== 'arrange') return;
     if (!collBoardLegal(playerBoard)) return; // gender/age violation — must be fixed first
-    cpuDrawAndPlace(cpuDraftedCards);
+    setCpus(advanceCpus());
     setSelectedPos(null);
     if (Object.keys(playerBoard).length >= COLL_POS.length) setPhase('done');
     else setPhase('draw');
@@ -8703,10 +8702,14 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
   }
 
   const playerScore = calcScore(playerBoard);
-  const cpuScore = calcScore(cpuBoard);
+  const cpuScores = cpus.map(c => calcScore(c.board));
+  const topCpuScore = cpuScores.length ? Math.max(...cpuScores) : 0;
+  const cpuScore = topCpuScore;               // back-compat alias (the toughest opponent)
+  const showCpu = view >= 0;                  // derived from the board-view index
+  const viewCpuBoard = (cpus[Math.max(0, view)] || {}).board || {};
 
   function handleFinish() {
-    const isWin = playerScore > cpuScore;
+    const isWin = playerScore > topCpuScore;  // Tourney: must outscore ALL opponents
     const margin = playerScore - cpuScore;
     // Gold breakdown — every line below is itemised on the scorecard.
     const baseGold = isWin ? (margin >= 10 ? 30 : margin >= 5 ? 15 : 10) : 5; // win-by-margin, else completion
@@ -8715,10 +8718,13 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
     // (a typical board is ~45-70; a perfect court hits 100).
     const scoreBonus = playerScore >= 100 ? 500 : playerScore >= 90 ? 150 : playerScore >= 80 ? 75 : playerScore >= 70 ? 40 : playerScore >= 60 ? 20 : 0;
     const goldEarned = baseGold + scoreBonus;
-    const wagerDelta = wager > 0 ? (isWin ? wager : -wager) : 0;
+    // Tourney: each of the N CPUs matches the wager, so a win takes the whole pot (+N×wager);
+    // a loss still costs only your own wager. Traditional (N=1) is unchanged (+wager / −wager).
+    const wagerDelta = wager > 0 ? (isWin ? wager * NCPU : -wager) : 0;
+    const pot = wager > 0 ? wager * (NCPU + 1) : 0;
     const netGold = goldEarned + wagerDelta;
     const finalGold = Math.max(0, (save.gold||0) + netGold);
-    const goldBreakdown = { baseGold, baseLabel, scoreBonus, wager, wagerDelta, goldEarned, netGold, startGold: (save.gold||0), finalGold };
+    const goldBreakdown = { baseGold, baseLabel, scoreBonus, wager, wagerDelta, pot, goldEarned, netGold, startGold: (save.gold||0), finalGold };
 
     // Update stats
     const cardPlays = { ...(save.stats?.cardPlays||{}) };
@@ -8746,7 +8752,11 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
     };
     saveCollSave(newSave);
     onUpdate(newSave);
-    const result = { isWin, playerScore, cpuScore, goldEarned, goldBreakdown, playerBoard, cpuBoard, cpuDeck, wager, margin, rerollsUsed, wheelEarned: isWin && currentStreak > 0 && currentStreak % 5 === 0, winStreak: currentStreak };
+    const topIdx = cpuScores.indexOf(topCpuScore);
+    const result = { isWin, playerScore, cpuScore, goldEarned, goldBreakdown, playerBoard,
+      cpuBoard: (cpus[topIdx] || cpus[0] || {}).board || {}, cpuDeck: cpuDecks[topIdx] || cpuDecks[0] || [],
+      cpuBoards: cpus.map(c => c.board), cpuScores, cpuDecks, numCpus: NCPU,
+      wager, margin, rerollsUsed, wheelEarned: isWin && currentStreak > 0 && currentStreak % 5 === 0, winStreak: currentStreak };
     const collUnlocked = checkCollectorAchievements(newSave, result);
     collUnlocked.forEach(id => window.dispatchEvent(new CustomEvent('asoe-achievement', { detail: id })));
     onEnd(result);
@@ -8840,23 +8850,43 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
       </div>
 
       {/* Score display */}
-      <div style={{ display:'flex', background:'var(--bg2)', borderBottom:'1px solid var(--border)', padding:'6px 12px', gap:12, alignItems:'center' }}>
-        <div style={{ flex:1, textAlign:'center' }}>
-          <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>YOUR SCORE</div>
-          <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'var(--gold)', fontWeight:700 }}>{playerScore}</div>
+      {NCPU === 1 ? (
+        <div style={{ display:'flex', background:'var(--bg2)', borderBottom:'1px solid var(--border)', padding:'6px 12px', gap:12, alignItems:'center' }}>
+          <div style={{ flex:1, textAlign:'center' }}>
+            <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>YOUR SCORE</div>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'var(--gold)', fontWeight:700 }}>{playerScore}</div>
+          </div>
+          <div style={{ fontSize:'0.65rem', color:'var(--text2)' }}>vs</div>
+          <div style={{ flex:1, textAlign:'center' }}>
+            <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>CPU SCORE</div>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'#e05555', fontWeight:700 }}>{cpuScore}</div>
+          </div>
+          {wager > 0 && <div style={{ fontSize:'0.6rem', color:'var(--gold)' }}>🎲 {wager}G</div>}
         </div>
-        <div style={{ fontSize:'0.65rem', color:'var(--text2)' }}>vs</div>
-        <div style={{ flex:1, textAlign:'center' }}>
-          <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>CPU SCORE</div>
-          <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'#e05555', fontWeight:700 }}>{cpuScore}</div>
+      ) : (() => {
+        // Live leaderboard: all 4 courts sorted by current score, highest on the far left.
+        const ranked = [{ label:'YOU', score:playerScore, me:true }]
+          .concat(cpuScores.map((s,i) => ({ label:`CPU ${i+1}`, score:s, me:false })))
+          .sort((a,b) => b.score - a.score);
+        return (
+        <div style={{ display:'flex', background:'var(--bg2)', borderBottom:'1px solid var(--border)', padding:'6px 10px', gap:8, alignItems:'center' }}>
+          {ranked.map((p, i) => (
+            <div key={p.label} style={{ flex:1, textAlign:'center', background: p.me?'rgba(212,168,48,0.14)':'transparent', borderRadius:4, padding:'2px 0' }}>
+              <div style={{ fontSize:'0.5rem', color: p.me?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</div>
+              <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.05rem', color: p.me?(i===0?'#4caf50':'var(--gold)'):'#e05555', fontWeight:700 }}>{p.score}</div>
+            </div>
+          ))}
+          {wager > 0 && <div style={{ fontSize:'0.52rem', color:'var(--gold)', whiteSpace:'nowrap' }}>🎲 {wager*(NCPU+1)}G pot</div>}
         </div>
-        {wager > 0 && <div style={{ fontSize:'0.6rem', color:'var(--gold)' }}>🎲 {wager}G</div>}
-      </div>
+        );
+      })()}
 
-      {/* Board view toggle — switch between your board and the CPU's, like the other modes */}
+      {/* Board view toggle — your board and each CPU's, like the other modes */}
       <div style={{ display:'flex', gap:6, padding:'6px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
-        <button className={`btn btn-${!showCpu?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setShowCpu(false)}>My Board ({playerScore})</button>
-        <button className={`btn btn-${showCpu?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setShowCpu(true)}>CPU Board ({cpuScore})</button>
+        <button className={`btn btn-${view<0?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize: NCPU>1?'0.55rem':'0.62rem' }} onClick={()=>setView(-1)}>{NCPU>1?`My (${playerScore})`:`My Board (${playerScore})`}</button>
+        {cpus.map((c,i)=>(
+          <button key={i} className={`btn btn-${view===i?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize: NCPU>1?'0.55rem':'0.62rem' }} onClick={()=>setView(i)}>{NCPU>1?`CPU ${i+1} (${cpuScores[i]})`:`CPU Board (${cpuScores[i]})`}</button>
+        ))}
       </div>
 
       {/* Board */}
@@ -8866,10 +8896,11 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
             {/* Drawn card */}
             {phase === 'draw' && (
               <div style={{ textAlign:'center', padding:'14px 0' }}>
-                {lastCpuCard && (
-                  <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginBottom:10, lineHeight:1.5 }}>
-                    🤖 CPU drafted <span style={{ color:(T[lastCpuCard.tier]||{}).color||'#e05555', fontWeight:700 }}>{lastCpuCard.name}</span>
-                    <span style={{ color:'var(--text2)' }}> ({(T[lastCpuCard.tier]||{}).label})</span>
+                {cpus.some(c=>c.last) && (
+                  <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginBottom:10, lineHeight:1.6 }}>
+                    {cpus.map((c,i) => c.last ? (
+                      <div key={i}>🤖 {NCPU>1?`CPU ${i+1} `:'CPU '}drafted <span style={{ color:(T[c.last.tier]||{}).color||'#e05555', fontWeight:700 }}>{c.last.name}</span><span style={{ color:'var(--text2)' }}> ({(T[c.last.tier]||{}).label})</span></div>
+                    ) : null)}
                   </div>
                 )}
                 <button className="btn btn-gold" style={{ width:'100%', padding:'14px', fontSize:'0.85rem', letterSpacing:'0.1em' }} onClick={drawFate}>
@@ -8976,11 +9007,11 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
           /* CPU Board */
           <div>
             <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10 }}>
-              CPU Board · {Object.keys(cpuBoard).length}/{COLL_POS.length} drafted · The CPU drafts its own court each round and always fields its optimal lineup.
+              {NCPU>1?`CPU ${view+1}`:'CPU'} Board · {Object.keys(viewCpuBoard).length}/{COLL_POS.length} drafted · {NCPU>1?'Each CPU drafts its own court':'The CPU drafts its own court each round'} and always fields its optimal lineup.
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
               {COLL_POS.map(pos => {
-                const card = cpuBoard[pos.id];
+                const card = viewCpuBoard[pos.id];
                 const ct = card ? (T[card.tier]||{color:'#888',bg:'#111'}) : null;
                 const score = card ? (card.scores?.[pos.id]||0) : null;
                 return (
@@ -9052,6 +9083,17 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
   const cpuDeck = result.cpuDeck || [];
   const DECK_PAGE = 12;
   const deckPages = Math.max(1, Math.ceil(cpuDeck.length / DECK_PAGE));
+  // Tourney placement: rank, how many CPUs the player outplaced (their boards feed the Win Pull),
+  // and the 4 courts sorted high→low for the scorecard. Win Pull is offered for any non-last finish.
+  const isTourney = result.numCpus > 1 && Array.isArray(result.cpuScores);
+  const cpuScoresArr = result.cpuScores || [cpuScore];
+  const beatenCount = cpuScoresArr.filter(s => s < playerScore).length;
+  const placeRank = 1 + cpuScoresArr.filter(s => s > playerScore).length;
+  const canWinPull = beatenCount > 0;
+  const ordinal = n => n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : n + 'th';
+  const rankedAll = [{ label:'YOU', score:playerScore, me:true }]
+    .concat(cpuScoresArr.map((s,i) => ({ label:`CPU ${i+1}`, score:s, me:false })))
+    .sort((a,b) => b.score - a.score);
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
@@ -9060,22 +9102,33 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
       </div>
       <div className="scroll" style={{ flex:1, padding:16 }}>
         <div className="card" style={{ textAlign:'center', borderColor: isWin?'var(--gold)':'#e05555', marginBottom:12 }}>
-          <div style={{ fontSize:'2rem', marginBottom:8 }}>{isWin ? '⚔ VICTORY! ⚔' : '💀 DEFEAT'}</div>
-          <div style={{ display:'flex', justifyContent:'center', gap:40, marginBottom:12 }}>
-            <div>
-              <div style={{ fontFamily:'Cinzel,serif', fontSize:'2rem', color:'var(--gold)' }}>{playerScore}</div>
-              <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>YOUR SCORE</div>
+          <div style={{ fontSize:'2rem', marginBottom:8 }}>{isTourney ? (placeRank===1 ? '⚔ 1ST PLACE! ⚔' : `${ordinal(placeRank)} of ${cpuScoresArr.length+1}`) : (isWin ? '⚔ VICTORY! ⚔' : '💀 DEFEAT')}</div>
+          {isTourney ? (
+            <>
+              <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:6 }}>{placeRank===1 ? 'You took 1st of 4 courts!' : beatenCount>0 ? `You outplaced ${beatenCount} of ${cpuScoresArr.length} rival courts.` : 'The rival courts all outscored you.'}</div>
+              <div style={{ display:'flex', justifyContent:'center', gap:14, marginBottom:12, flexWrap:'wrap' }}>
+                {rankedAll.map((p,i)=>(
+                  <div key={p.label}><div style={{ fontFamily:'Cinzel,serif', fontSize:'1.7rem', color: p.me?(i===0?'#4caf50':'var(--gold)'):'#e05555' }}>{p.score}</div><div style={{ fontSize:'0.55rem', color: p.me?'var(--gold)':'var(--text2)' }}>{p.label}</div></div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div style={{ display:'flex', justifyContent:'center', gap:40, marginBottom:12 }}>
+              <div>
+                <div style={{ fontFamily:'Cinzel,serif', fontSize:'2rem', color:'var(--gold)' }}>{playerScore}</div>
+                <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>YOUR SCORE</div>
+              </div>
+              <div>
+                <div style={{ fontFamily:'Cinzel,serif', fontSize:'2rem', color:'#e05555' }}>{cpuScore}</div>
+                <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>CPU SCORE</div>
+              </div>
             </div>
-            <div>
-              <div style={{ fontFamily:'Cinzel,serif', fontSize:'2rem', color:'#e05555' }}>{cpuScore}</div>
-              <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>CPU SCORE</div>
-            </div>
-          </div>
+          )}
           {gb ? (
             <div style={{ maxWidth:268, margin:'0 auto', fontSize:'0.62rem' }}>
               <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', marginBottom:2 }}><span>{gb.baseLabel}</span><span style={{ color:'var(--gold)' }}>+{gb.baseGold}G</span></div>
               {gb.scoreBonus > 0 && <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', marginBottom:2 }}><span>Court bonus (score {playerScore})</span><span style={{ color:'var(--gold)' }}>+{gb.scoreBonus}G</span></div>}
-              {gb.wager > 0 && <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}><span style={{ color:'var(--text2)' }}>Wager {isWin ? 'won' : 'lost'}</span><span style={{ color: isWin ? '#4caf50' : '#e05555' }}>{gb.wagerDelta >= 0 ? '+' : ''}{gb.wagerDelta}G</span></div>}
+              {gb.wager > 0 && <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}><span style={{ color:'var(--text2)' }}>{result.numCpus > 1 ? (isWin ? `Pot won (${gb.pot}G)` : 'Wager lost') : `Wager ${isWin ? 'won' : 'lost'}`}</span><span style={{ color: isWin ? '#4caf50' : '#e05555' }}>{gb.wagerDelta >= 0 ? '+' : ''}{gb.wagerDelta}G</span></div>}
               <div style={{ display:'flex', justifyContent:'space-between', borderTop:'1px solid var(--border)', marginTop:4, paddingTop:4, fontFamily:'Cinzel,serif' }}><span style={{ color:'var(--text)' }}>Net this game</span><span style={{ color: gb.netGold >= 0 ? 'var(--gold)' : '#e05555', fontWeight:700 }}>{gb.netGold >= 0 ? '+' : ''}{gb.netGold}G</span></div>
               <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', fontSize:'0.56rem', marginTop:3 }}><span>Gold</span><span>🪙 {gb.startGold} → {gb.finalGold}</span></div>
             </div>
@@ -9173,7 +9226,7 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
         )}
 
         <div style={{ display:'flex', gap:8 }}>
-          {isWin && <button className="btn btn-gold" style={{ flex:2 }} onClick={onWinPull}>⭐ Win Pull</button>}
+          {canWinPull && <button className="btn btn-gold" style={{ flex:2 }} onClick={onWinPull}>⭐ Win Pull{isTourney ? ` (${beatenCount*10} cards)` : ''}</button>}
           <button className="btn btn-ghost" style={{ flex:1 }} onClick={onHome}>Back to Hub</button>
         </div>
       </div>
@@ -9741,7 +9794,8 @@ function CollectorHub({ onHome }) {
   const [gameResult, setGameResult] = React.useState(null);
   const [winPullCards, setWinPullCards] = React.useState([]);
   const [tourActive, setTourActive] = React.useState(false); // interactive guided tour overlay
-  const [showModeChoice, setShowModeChoice] = React.useState(false); // Traditional vs House Wars
+  const [showModeChoice, setShowModeChoice] = React.useState(false); // Traditional / Tourney / House Wars
+  const [gameMode, setGameMode] = React.useState('traditional'); // 'traditional' (1 CPU) | 'tourney' (3 CPUs)
   const [wheelSpinsLeft, setWheelSpinsLeft] = React.useState(1);     // multi-spin wheel (HW grants 5)
   // House Wars active-game state
   const [hwUserHouse, setHwUserHouse] = React.useState(null);
@@ -9808,7 +9862,8 @@ function CollectorHub({ onHome }) {
     }
     setShowModeChoice(true);
   }
-  function startTraditional() { setShowModeChoice(false); setScreen('wager'); }
+  function startTraditional() { setGameMode('traditional'); setShowModeChoice(false); setScreen('wager'); }
+  function startTourney() { setGameMode('tourney'); setShowModeChoice(false); setScreen('wager'); }
   function startHouseWars() {
     if (hwEligibleHouses(save.owned).length === 0) return; // locked — no fieldable house
     setShowModeChoice(false); setScreen('hwSpin');
@@ -9914,7 +9969,14 @@ function CollectorHub({ onHome }) {
   }
 
   function handleWinPull() {
-    const cpuBoardCards = Object.values(gameResult.cpuBoard||{}).filter(Boolean);
+    // Win Pull draws only from the boards the player OUTPLACED. Tourney: 1st→all 30, 2nd→20,
+    // 3rd→10. Traditional: the single CPU's board on a win.
+    const r = gameResult;
+    const boards = (r.cpuBoards && r.cpuBoards.length) ? r.cpuBoards : [r.cpuBoard || {}];
+    const scores = (r.cpuScores && r.cpuScores.length) ? r.cpuScores : [r.cpuScore || 0];
+    const beaten = boards.filter((b, i) => (scores[i] || 0) < (r.playerScore || 0));
+    const pool = beaten.length ? beaten : boards;
+    const cpuBoardCards = pool.reduce((acc, b) => acc.concat(Object.values(b||{}).filter(Boolean)), []);
     const pullCards = genWinPullCards(cpuBoardCards, save);
     setWinPullCards(pullCards);
     setScreen('winpull');
@@ -9964,8 +10026,8 @@ function CollectorHub({ onHome }) {
 
   // (The old static tutorial screen is gone — the interactive CollectorTour now runs over the Hub.)
   if (screen === 'startingPull') return <CollectorStartingPull onDone={handleStartingPullDone} />;
-  if (screen === 'wager') return <CollectorWager save={save} onStart={handleStartGame} onCancel={() => setScreen('hub')} />;
-  if (screen === 'game') return <CollectorGame save={save} wager={gameWager} onEnd={handleGameEnd} onUpdate={handleUpdate} />;
+  if (screen === 'wager') return <CollectorWager save={save} onStart={handleStartGame} onCancel={() => setScreen('hub')} numCpus={gameMode==='tourney'?3:1} />;
+  if (screen === 'game') return <CollectorGame save={save} wager={gameWager} onEnd={handleGameEnd} onUpdate={handleUpdate} numCpus={gameMode==='tourney'?3:1} />;
   if (screen === 'result' && gameResult) return <CollectorGameResult result={gameResult} save={save} onWinPull={handleWinPull} onHome={() => { setScreen('hub'); setGameResult(null); }} />;
   if (screen === 'winpull') return <CollectorWinPull winPullCards={winPullCards} onPick={handlePickWinPull} onSkip={() => setScreen('hub')} />;
   if (screen === 'hwSpin') return <CollectorHouseWarsSpin save={save} onDone={handleHwSpinDone} onCancel={() => setScreen('hub')} onRolled={handleHwRolled} onBackout={handleHwBackout} />;
@@ -9993,7 +10055,11 @@ function CollectorHub({ onHome }) {
             <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:'var(--gold)', textAlign:'center', marginBottom:14 }}>Choose Your Game</div>
             <button className="btn btn-gold" style={{ width:'100%', padding:'11px', marginBottom:10 }} onClick={startTraditional}>
               ⚔ Traditional
-              <div style={{ fontSize:'0.55rem', color:'rgba(0,0,0,0.6)', fontWeight:400 }}>10 seats · optional Gold wager</div>
+              <div style={{ fontSize:'0.55rem', color:'rgba(0,0,0,0.6)', fontWeight:400 }}>10 seats · 1 CPU · optional Gold wager</div>
+            </button>
+            <button onClick={startTourney} style={{ width:'100%', padding:'11px', marginBottom:10, background:'#1d3a5f', color:'#fff', border:'1px solid #3aa0ff', borderRadius:8, cursor:'pointer', fontFamily:'Cinzel,serif', fontWeight:700 }}>
+              🏆 Tourney
+              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>10 seats · 3 CPUs · winner takes the 4× pot</div>
             </button>
             <button disabled={locked} onClick={startHouseWars} style={{ width:'100%', padding:'11px', background: locked?'var(--bg2)':'#7a1010', color: locked?'var(--text2)':'#fff', border:'1px solid '+(locked?'var(--border)':'#b01a1a'), borderRadius:8, cursor: locked?'not-allowed':'pointer', opacity: locked?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
               {locked ? '🔒 House Wars' : '🏰 House Wars'}
