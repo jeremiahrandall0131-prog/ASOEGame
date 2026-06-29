@@ -9235,7 +9235,7 @@ function CollDetailModal({ card, onClose }) {
 }
 
 // ─── House Wars: the two spinners ───────────────────────────────────────────
-function CollectorHouseWarsSpin({ save, onDone, onCancel }) {
+function CollectorHouseWarsSpin({ save, onDone, onCancel, onRolled, onBackout }) {
   const hw = save.hw || {};
   const eligible = React.useState(() => hwEligibleHouses(save.owned))[0];
   // Rotation: bench the recently-played house only when ≥2 houses are eligible.
@@ -9248,6 +9248,7 @@ function CollectorHouseWarsSpin({ save, onDone, onCancel }) {
   const [userFace, setUserFace] = React.useState(HW_HOUSES[0]);
   const [cpuFace, setCpuFace] = React.useState(HW_HOUSES[0]);
   const [done, setDone] = React.useState(false);
+  const [confirmBack, setConfirmBack] = React.useState(false);
 
   React.useEffect(() => {
     let delay = 55, elapsed = 0, t = null;
@@ -9255,7 +9256,11 @@ function CollectorHouseWarsSpin({ save, onDone, onCancel }) {
       elapsed += delay;
       setUserFace(HW_HOUSES[Math.floor(Math.random()*HW_HOUSES.length)]);
       setCpuFace(HW_HOUSES[Math.floor(Math.random()*HW_HOUSES.length)]);
-      if (elapsed >= 2700) { setUserFace(result.user); setCpuFace(result.cpu); setDone(true); return; }
+      if (elapsed >= 2700) {
+        setUserFace(result.user); setCpuFace(result.cpu); setDone(true);
+        if (onRolled) onRolled(result.user, result.cpu); // rolls finalized → commitment point
+        return;
+      }
       if (elapsed > 1900) delay += 40; // decelerate near the end
       t = setTimeout(tick, delay);
     }
@@ -9274,6 +9279,18 @@ function CollectorHouseWarsSpin({ save, onDone, onCancel }) {
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, textAlign:'center', background:'var(--bg)' }}>
+      {confirmBack && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmBack(false)}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
+            <div style={{ fontFamily:'Cinzel,serif', color:'#e05555', fontSize:'0.95rem', marginBottom:8 }}>Forfeit the Battle?</div>
+            <div style={{ fontSize:'0.72rem', color:'var(--text2)', marginBottom:14, lineHeight:1.5 }}>The houses are set. Backing out now forfeits a <b>random card from your deck</b>.</div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={()=>setConfirmBack(false)}>Keep Playing</button>
+              <button className="btn btn-sm" style={{ flex:1, background:'#7a1010', color:'#fff', border:'1px solid #b01a1a' }} onClick={onBackout}>Forfeit & Leave</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.25rem', color:'var(--gold)', fontWeight:700, letterSpacing:'0.08em' }}>⚔ HOUSE WARS ⚔</div>
       <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginTop:4, marginBottom:22 }}>The spinners choose your battlefield…</div>
       <div style={{ display:'flex', gap:14, width:'100%', maxWidth:430, marginBottom:22 }}>
@@ -9287,16 +9304,17 @@ function CollectorHouseWarsSpin({ save, onDone, onCancel }) {
       ) : (
         <div style={{ fontSize:'0.8rem', color:'var(--gold)', fontFamily:'Cinzel,serif' }}>Spinning…</div>
       )}
-      <button className="btn btn-ghost btn-sm" style={{ marginTop:16, fontSize:'0.6rem' }} onClick={onCancel}>← Back</button>
+      <button className="btn btn-ghost btn-sm" style={{ marginTop:16, fontSize:'0.6rem' }} onClick={() => done ? setConfirmBack(true) : onCancel()}>← Back</button>
     </div>
   );
 }
 
 // ─── House Wars: choose your 10-card lineup ─────────────────────────────────
-function CollectorHouseWarsLineup({ save, userHouse, cpuHouse, onConfirm, onCancel }) {
+function CollectorHouseWarsLineup({ save, userHouse, cpuHouse, onConfirm, onBackout }) {
   const deck = React.useState(() => hwHouseDeck(save.owned, userHouse))[0]; // [{id, card}]
   const [selected, setSelected] = React.useState([]); // indices into deck
   const [detailCard, setDetailCard] = React.useState(null);
+  const [confirmBack, setConfirmBack] = React.useState(false);
   const T = window.COLLECTOR_TIERS || {};
   function toggle(i) {
     setSelected(sel => sel.indexOf(i) !== -1 ? sel.filter(x => x !== i) : (sel.length >= 10 ? sel : [...sel, i]));
@@ -9306,8 +9324,20 @@ function CollectorHouseWarsLineup({ save, userHouse, cpuHouse, onConfirm, onCanc
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
       {detailCard && <CollDetailModal card={detailCard} onClose={() => setDetailCard(null)} />}
+      {confirmBack && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmBack(false)}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
+            <div style={{ fontFamily:'Cinzel,serif', color:'#e05555', fontSize:'0.95rem', marginBottom:8 }}>Forfeit the Battle?</div>
+            <div style={{ fontSize:'0.72rem', color:'var(--text2)', marginBottom:14, lineHeight:1.5 }}>The houses are set. Backing out now forfeits a <b>random card from your deck</b>.</div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={()=>setConfirmBack(false)}>Keep Playing</button>
+              <button className="btn btn-sm" style={{ flex:1, background:'#7a1010', color:'#fff', border:'1px solid #b01a1a' }} onClick={onBackout}>Forfeit & Leave</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="nav-bar">
-        <div className="nav-side"><button className="btn btn-ghost btn-sm" onClick={onCancel}>← Back</button></div>
+        <div className="nav-side"><button className="btn btn-ghost btn-sm" onClick={()=>setConfirmBack(true)}>← Back</button></div>
         <div style={{ flex:1, textAlign:'center' }}>
           <div className="nav-title" style={{ fontSize:'0.8rem' }}>CHOOSE LINEUP</div>
           <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>
@@ -9757,10 +9787,10 @@ function CollectorHub({ onHome }) {
     }
   }, []);
 
-  // If a House Wars game was left active (the app closed mid-match), penalise it on load.
+  // If a House Wars game was left active (app closed after the roll or mid-match), penalise on load.
   React.useEffect(() => {
     const active = save.hw && save.hw.active;
-    if (active && Array.isArray(active.lineupIds) && active.lineupIds.length) applyHwAbandon(active);
+    if (active) applyHwAbandon(active);
   }, []);
 
   function handleStartingPullDone(cardIds) {
@@ -9790,15 +9820,23 @@ function CollectorHub({ onHome }) {
   }
 
   // ── House Wars flow ──────────────────────────────────────────────────────
+  function handleHwRolled(userHouse, cpuHouse) {
+    // The spin has finalized — this is the commitment point. Mark an active game so that
+    // backing out OR closing the app from here on forfeits a random card from the deck.
+    setHwUserHouse(userHouse); setHwCpuHouse(cpuHouse);
+    const newSave = { ...save, hw: { ...(save.hw||{}), active: { userHouse, cpuHouse, phase:'preGame' } } };
+    saveCollSave(newSave); setSave(newSave);
+  }
   function handleHwSpinDone(userHouse, cpuHouse) {
     setHwUserHouse(userHouse); setHwCpuHouse(cpuHouse); setScreen('hwLineup');
   }
+  function handleHwBackout() { applyHwAbandon(save.hw && save.hw.active); } // warned back-out → forfeit
   function handleHwLineupConfirm(cards, ids) {
     const cpuCards = genHouseLineup(hwCpuHouse, hwLineupTotal(cards)); // CPU lineup within ±2%
     setHwLineup({ cards, ids });
     setHwCpuCards(cpuCards);
-    // Mark the active game so an app-close mid-match is penalised on next load.
-    const newSave = { ...save, hw: { ...(save.hw||{}), active: { userHouse: hwUserHouse, cpuHouse: hwCpuHouse, lineupIds: ids } } };
+    // Upgrade the marker to the locked lineup (mid-match abandon now forfeits from these 10).
+    const newSave = { ...save, hw: { ...(save.hw||{}), active: { userHouse: hwUserHouse, cpuHouse: hwCpuHouse, lineupIds: ids, phase:'playing' } } };
     saveCollSave(newSave); setSave(newSave);
     setScreen('hwGame');
   }
@@ -9843,16 +9881,18 @@ function CollectorHub({ onHome }) {
     const newSave = { ...save, owned, hw: { ...(save.hw||{}), active: null } }; saveCollSave(newSave); setSave(newSave);
     setHwResult(null); setHwReward(null); setScreen('hub');
   }
-  function applyHwAbandon(active) { // quit / app-close → loss + random card forfeit
+  function applyHwAbandon(active) { // back-out / quit / app-close → forfeit a random card
     const hw = save.hw || {};
+    const phase = active && active.phase;
     let owned = (save.owned||[]).slice(); let lostName = null;
-    if (active && Array.isArray(active.lineupIds)) {
-      const present = active.lineupIds.filter(id => owned.indexOf(id) !== -1);
-      if (present.length) { const lostId = present[Math.floor(Math.random()*present.length)]; owned.splice(owned.indexOf(lostId), 1); lostName = (getCollCard(lostId)||{}).name || 'a card'; }
-    }
+    // preGame (backed out after the roll, no lineup locked) → forfeit any card in the deck;
+    // playing/lossPending → forfeit from the lineup / placed cards.
+    const poolIds = phase === 'preGame' ? owned.slice() : ((active && active.lineupIds) || []);
+    const present = poolIds.filter(id => owned.indexOf(id) !== -1);
+    if (present.length) { const lostId = present[Math.floor(Math.random()*present.length)]; owned.splice(owned.indexOf(lostId), 1); lostName = (getCollCard(lostId)||{}).name || 'a card'; }
     let newHw;
-    if (active && active.phase === 'lossPending') {
-      // The loss was already recorded at game end — just enforce the un-chosen card surrender.
+    if (phase === 'lossPending' || phase === 'preGame') {
+      // No stat change: a loss was already recorded (lossPending), or no game was played (preGame).
       newHw = { ...hw, active: null };
     } else {
       const house = (active && active.userHouse) || hw.recentHouse;
@@ -9860,8 +9900,9 @@ function CollectorHub({ onHome }) {
       newHw = { ...hw, games:(hw.games||0)+1, streak:0, recentHouse: house || hw.recentHouse, recentRun, active: null };
     }
     const newSave = { ...save, owned, hw: newHw }; saveCollSave(newSave); setSave(newSave);
-    if (lostName) setHwNotice(active && active.phase === 'lossPending'
-      ? `You left before surrendering a card — ${lostName} was taken from your collection.`
+    if (lostName) setHwNotice(
+      phase === 'preGame' ? `You backed out after the spin — ${lostName} was forfeited from your collection.`
+      : phase === 'lossPending' ? `You left before surrendering a card — ${lostName} was taken from your collection.`
       : `You abandoned a House Wars battle — counted as a loss, and ${lostName} was lost from your collection.`);
     setHwResult(null); setHwReward(null); setScreen('hub');
   }
@@ -9927,8 +9968,8 @@ function CollectorHub({ onHome }) {
   if (screen === 'game') return <CollectorGame save={save} wager={gameWager} onEnd={handleGameEnd} onUpdate={handleUpdate} />;
   if (screen === 'result' && gameResult) return <CollectorGameResult result={gameResult} save={save} onWinPull={handleWinPull} onHome={() => { setScreen('hub'); setGameResult(null); }} />;
   if (screen === 'winpull') return <CollectorWinPull winPullCards={winPullCards} onPick={handlePickWinPull} onSkip={() => setScreen('hub')} />;
-  if (screen === 'hwSpin') return <CollectorHouseWarsSpin save={save} onDone={handleHwSpinDone} onCancel={() => setScreen('hub')} />;
-  if (screen === 'hwLineup') return <CollectorHouseWarsLineup save={save} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onConfirm={handleHwLineupConfirm} onCancel={() => setScreen('hwSpin')} />;
+  if (screen === 'hwSpin') return <CollectorHouseWarsSpin save={save} onDone={handleHwSpinDone} onCancel={() => setScreen('hub')} onRolled={handleHwRolled} onBackout={handleHwBackout} />;
+  if (screen === 'hwLineup') return <CollectorHouseWarsLineup save={save} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onConfirm={handleHwLineupConfirm} onBackout={handleHwBackout} />;
   if (screen === 'hwGame' && hwLineup) return <CollectorHouseWarsGame playerCards={hwLineup.cards} cpuCards={hwCpuCards} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onEnd={handleHwEnd} />;
   if (screen === 'hwResult' && hwResult) return <CollectorHouseWarsResult result={hwResult} reward={hwReward} onClaim={handleHwClaim} onDiscard={handleHwDiscard} />;
   if (screen === 'wheel') return <React.Fragment>{evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}<CollectorWheel key={wheelSpinsLeft} spinsLeft={wheelSpinsLeft} onDone={handleWheelDone} streak={gameResult ? gameResult.winStreak : 5} /></React.Fragment>;
