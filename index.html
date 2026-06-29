@@ -8016,6 +8016,9 @@ function CollectorStore({ save, onUpdate }) {
   const [storeMsg, setStoreMsg] = React.useState('');
   const [pendingBuy, setPendingBuy] = React.useState(null); // misclick guard: { label, action }
   const [tradeSelected, setTradeSelected] = React.useState(null); // index of deck card chosen to trade
+  const [auctionSelected, setAuctionSelected] = React.useState(null); // index of deck card chosen to auction
+  const [auctionSort, setAuctionSort] = React.useState('overall'); // same sort options as My Deck
+  const [auctionFilterTier, setAuctionFilterTier] = React.useState('all');
   const [evolveAnim, setEvolveAnim] = React.useState(null); // { from, to } when a duplicate merges
   // Daily refresh (24h) regenerates BOTH the showcase and the Featured House together.
   const [refreshData] = React.useState(() => {
@@ -8154,12 +8157,29 @@ function CollectorStore({ save, onUpdate }) {
     }});
   }
 
+  // Sell a deck card for its tier's auction value (the same value shown on the card). Keeps the
+  // deck at its 20-card minimum.
+  function doAuction(index) {
+    const owned = save.owned || [];
+    const card = getCollCard(owned[index]);
+    if (!card) return;
+    if (owned.length <= 20) { msg('Must keep at least 20 cards in your deck.'); return; }
+    const gold = COLL_AUCTION_GOLD[card.tier] || 15;
+    setPendingBuy({ label:`Auction ${card.name} for ${gold}G? It leaves your deck.`, action: () => {
+      const o = [...(save.owned||[])]; o.splice(index, 1);
+      const newSave = { ...save, gold:(save.gold||0)+gold, owned:o };
+      saveCollSave(newSave); onUpdate(newSave); setAuctionSelected(null);
+      msg(`Auctioned ${card.name} for ${gold}G!`);
+    }});
+  }
+
   const STORE_TABS = [
     { id:'showcase', label:'Showcase' },
     { id:'buy', label:'Buy Cards' },
     { id:'lottery', label:'Lottery' },
     { id:'upgrade', label:'Upgrade' },
     { id:'trade', label:'Trade' },
+    { id:'auction', label:'Auction' },
     { id:'rerolls', label:'Rerolls' },
   ];
 
@@ -8385,6 +8405,57 @@ function CollectorStore({ save, onUpdate }) {
             ); })()}
           </div>
         )}
+        {tab === 'auction' && (() => {
+          // Build entries that remember each card's index in save.owned, then filter + sort with
+          // the SAME options as My Deck (Overall / Tier / A-Z / House / Identity + tier filter).
+          let entries = (save.owned||[]).map((id,i) => ({ card:getCollCard(id), idx:i })).filter(e => e.card);
+          if (auctionFilterTier !== 'all') entries = entries.filter(e => e.card.tier === auctionFilterTier);
+          if (auctionSort === 'overall') entries.sort((a,b) => b.card.overall - a.card.overall);
+          else if (auctionSort === 'tier') entries.sort((a,b) => collTierRank(b.card.tier) - collTierRank(a.card.tier) || b.card.overall - a.card.overall);
+          else if (auctionSort === 'name') entries.sort((a,b) => a.card.name.localeCompare(b.card.name));
+          else if (auctionSort === 'house') entries.sort((a,b) => ((a.card.houses||[])[0]||'').localeCompare((b.card.houses||[])[0]||'') || b.card.overall - a.card.overall);
+          else if (auctionSort === 'identity') entries.sort((a,b) => (a.card.charId||'').localeCompare(b.card.charId||'') || collTierRank(b.card.tier) - collTierRank(a.card.tier) || b.card.overall - a.card.overall);
+          const selCard = auctionSelected != null ? getCollCard((save.owned||[])[auctionSelected]) : null;
+          const tooFew = (save.owned||[]).length <= 20;
+          return (
+          <div>
+            <div style={{ display:'flex', alignItems:'center', gap:4, marginBottom:8, flexWrap:'wrap' }}>
+              <div style={{ fontSize:'0.6rem', color:'var(--text2)', flex:1, minWidth:110 }}>Sell deck cards for Gold (keep ≥20).</div>
+              <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={auctionSort} onChange={e=>setAuctionSort(e.target.value)}>
+                <option value="overall">Sort: Overall</option>
+                <option value="tier">Sort: Tier</option>
+                <option value="name">Sort: A-Z</option>
+                <option value="house">Sort: House</option>
+                <option value="identity">Sort: Identity</option>
+              </select>
+              <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={auctionFilterTier} onChange={e=>setAuctionFilterTier(e.target.value)}>
+                <option value="all">All Tiers</option>
+                {COLL_TIER_ORDER.map(t => <option key={t} value={t}>{(T[t]||{}).label||t}</option>)}
+              </select>
+            </div>
+            {entries.length === 0 ? (
+              <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>No cards{auctionFilterTier!=='all'?' of that tier':''} to auction.</div>
+            ) : (
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
+                {entries.map(e => { const c=e.card; const ct=T[c.tier]||{color:'#888',bg:'#111'}; const sel=auctionSelected===e.idx; const val=COLL_AUCTION_GOLD[c.tier]||15; return (
+                  <div key={e.idx} onClick={()=>setAuctionSelected(e.idx)} style={{ border:`2px solid ${sel?'#fff':ct.color}`, borderRadius:6, padding:'6px 8px', background:sel?'rgba(255,255,255,0.12)':ct.bg, cursor:'pointer' }}>
+                    <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
+                      <CollTierBadge tier={c.tier} />
+                      <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold)', fontSize:'0.7rem' }}>💰 {val}G</span>
+                    </div>
+                  </div>
+                ); })}
+              </div>
+            )}
+            {selCard && (
+              <button className={`btn btn-${tooFew?'ghost':'gold'} btn-sm`} style={{ width:'100%', marginTop:10 }} disabled={tooFew} onClick={()=>doAuction(auctionSelected)}>
+                {tooFew ? 'Must keep at least 20 cards' : `💰 Auction ${selCard.name} — ${COLL_AUCTION_GOLD[selCard.tier]||15}G`}
+              </button>
+            )}
+          </div>
+          );
+        })()}
         {tab === 'rerolls' && (
           <div>
             <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:12 }}>
