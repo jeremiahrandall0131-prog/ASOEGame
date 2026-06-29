@@ -6957,10 +6957,98 @@ const REROLL_COST = 20;
 const WAGER_MAX = 100;
 const GAME_REROLL_LIMIT = 3;
 
+// ─── House Wars ─────────────────────────────────────────────────────────────
+// A Collector sub-mode: both sides spin a House, each fields 10 eligible cards of
+// that House, and they draft a 5-seat court (Ruler/Hand/Kingsguard/Ally/Bank — a
+// set with no gender or age rules). Card stakes instead of gold.
+const HW_HOUSES = ['Arryn','Bannermen','Baratheon','Beyond the Wall','Blackfyre','Essos','Frey','Greyjoy','Hightower','Lannister','Magic','Martell',"Night's Watch",'Other','Stark','Targaryen','Tully','Tyrell','Velaryon'];
+const HW_POS = [
+  { id:'ruler',      label:'Ruler' },
+  { id:'hand',       label:'Hand' },
+  { id:'kingsguard', label:'Kingsguard' },
+  { id:'ally',       label:'Ally' },
+  { id:'bank',       label:'Bank' },
+];
+// Win reward tier odds (sum = 1). God is unobtainable here (Evolve only).
+const HW_REWARD_ODDS = [['starter',0.25],['uncommon',0.20],['rare',0.20],['hero',0.15],['legendary',0.12],['mythic',0.08]];
+
+function cardInHouse(card, house) { return !!card && Array.isArray(card.houses) && card.houses.indexOf(house) !== -1; }
+
+// Houses the player can field: ≥10 owned cards tagged with that House (no gender/age needed).
+function hwEligibleHouses(owned) {
+  const cards = (owned||[]).map(id => getCollCard(id)).filter(Boolean);
+  return HW_HOUSES.filter(h => cards.reduce((n,c) => n + (cardInHouse(c,h)?1:0), 0) >= 10);
+}
+// Owned entries ({ id, card }) belonging to a House — preserves duplicates.
+function hwHouseDeck(owned, house) {
+  return (owned||[]).map(id => ({ id, card: getCollCard(id) })).filter(x => x.card && cardInHouse(x.card, house));
+}
+// Total Overall of a set of card objects.
+function hwLineupTotal(cards) { return (cards||[]).reduce((s,c) => s + ((c&&c.overall)||0), 0); }
+
+// Generate the CPU's hidden 10-card lineup from a House, total Overall within ±2% of `target`.
+// Samples from the cards nearest the per-seat average so the sum reliably lands in the window.
+function genHouseLineup(house, target) {
+  const pool = getCollCards().filter(c => cardInHouse(c, house));
+  if (!pool.length) return [];
+  const avg = target / 10;
+  const near = pool.slice().sort((a,b) => Math.abs((a.overall||0)-avg) - Math.abs((b.overall||0)-avg));
+  const cand = near.slice(0, Math.min(near.length, 16));
+  let best = null, bestDelta = Infinity;
+  for (let attempt = 0; attempt < 600; attempt++) {
+    const pick = []; for (let i=0;i<10;i++) pick.push(cand[Math.floor(Math.random()*cand.length)]);
+    const tot = hwLineupTotal(pick);
+    if (tot >= target*0.98 && tot <= target*1.02) return pick;
+    const delta = Math.abs(tot - target);
+    if (delta < bestDelta) { bestDelta = delta; best = pick; }
+  }
+  return best || cand.slice(0,10);
+}
+
+// Roll a win-reward card from the CPU's House by the tier odds.
+function hwRollReward(house) {
+  const r = Math.random(); let cum = 0, tier = 'starter';
+  for (const [t,p] of HW_REWARD_ODDS) { cum += p; if (r < cum) { tier = t; break; } }
+  let pool = getCollCards().filter(c => cardInHouse(c, house) && c.tier === tier);
+  if (!pool.length) pool = getCollCards().filter(c => cardInHouse(c, house)); // every identity spans all tiers, so this never fires
+  if (!pool.length) return null;
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+
+// Best assignment of cards to the 5 House Wars seats (no constraints → greedy is optimal here).
+function hwOptimalAssign(cards) {
+  const pids = HW_POS.map(p => p.id);
+  const pairs = [];
+  cards.forEach(c => pids.forEach(pid => pairs.push({ c, pid, s: (c.scores && c.scores[pid]) || 0 })));
+  pairs.sort((x,y) => y.s - x.s);
+  const a = {}, uc = new Set(), up = new Set();
+  for (const pr of pairs) { if (uc.has(pr.c) || up.has(pr.pid)) continue; a[pr.pid] = pr.c; uc.add(pr.c); up.add(pr.pid); }
+  return a;
+}
+function hwScore(board) { return HW_POS.reduce((s,p) => s + ((board[p.id] && board[p.id].scores && board[p.id].scores[p.id]) || 0), 0); }
+
+// Daily store "Featured House": a random House and one buyable card at each of
+// Starter/Uncommon/Rare/Hero, all different characters where possible.
+const HW_FEATURED_PRICES = { starter:50, uncommon:75, rare:100, hero:150 };
+function genFeaturedHouse() {
+  const house = HW_HOUSES[Math.floor(Math.random()*HW_HOUSES.length)];
+  const all = getCollCards().filter(c => cardInHouse(c, house));
+  const usedChars = new Set(), cards = {};
+  for (const t of ['starter','uncommon','rare','hero']) {
+    let pool = all.filter(c => c.tier === t && !usedChars.has(c.charId));
+    if (!pool.length) pool = all.filter(c => c.tier === t);
+    if (pool.length) { const c = pool[Math.floor(Math.random()*pool.length)]; cards[t] = c.id; usedChars.add(c.charId); }
+  }
+  return { house, cards };
+}
+
 function collDefaultSave() {
   return { gold:100, rerolls:0, owned:[], lastDailyPull:null, lastDailyReward:null,
-           storeRefresh:null, storeShowcase:[], tutorialSeen:false,
-           stats:{ games:0, wins:0, totalScore:0, cardPlays:{}, cardScores:{} } };
+           storeRefresh:null, storeShowcase:[], featuredHouse:null, featuredHouseCards:{}, tutorialSeen:false,
+           stats:{ games:0, wins:0, totalScore:0, cardPlays:{}, cardScores:{} },
+           // House Wars: separate stats/streak, the 3-in-a-row rotation tracker, pending wheel
+           // spins, and an "active game" marker used to penalise quitting / closing mid-match.
+           hw:{ games:0, wins:0, streak:0, maxStreak:0, byHouse:{}, recentHouse:null, recentRun:0, wheelSpins:0, active:null } };
 }
 function loadCollSave() {
   try { return { ...collDefaultSave(), ...JSON.parse(localStorage.getItem(collKey())||'{}') }; }
@@ -7646,6 +7734,8 @@ function CollectorCardIndex({ save }) {
 
 function CollectorCardStats({ save }) {
   const stats = save.stats || {};
+  const [statMode, setStatMode] = React.useState('traditional'); // traditional | hw
+  const [houseFilter, setHouseFilter] = React.useState('all');
   const ownedCards = (save.owned||[]).map(id=>getCollCard(id)).filter(Boolean);
   const cardPlays = stats.cardPlays || {};
   const cardScores = stats.cardScores || {};
@@ -7667,6 +7757,17 @@ function CollectorCardStats({ save }) {
   const winRate = games ? Math.round(wins/games*100) : 0;
   const scoreAvg = games ? Math.floor((stats.totalScore||0)/games*10)/10 : 0;
   const curStreak = stats.winStreak||0, bestStreak = stats.maxWinStreak||0;
+  // ── House Wars record (optionally filtered by House) ──
+  const hw = save.hw || {};
+  const eligibleH = hwEligibleHouses(save.owned);
+  const hwSel = houseFilter === 'all' ? { games: hw.games||0, wins: hw.wins||0 } : ((hw.byHouse||{})[houseFilter] || { games:0, wins:0 });
+  const hwGames = hwSel.games||0, hwWins = hwSel.wins||0, hwLosses = Math.max(0, hwGames-hwWins);
+  const hwWinRate = hwGames ? Math.round(hwWins/hwGames*100) : 0;
+  const isHw = statMode === 'hw';
+  const recRows = isHw
+    ? [['Games',hwGames,'var(--gold)'],['Wins',hwWins,'#4caf50'],['Losses',hwLosses,'#e05555'],['Win Rate',hwWinRate+'%','var(--gold)'],['Streak',hw.streak||0,'#4caf50'],['Best',hw.maxStreak||0,'#ffd700']]
+    : [['Games',games,'var(--gold)'],['Wins',wins,'#4caf50'],['Losses',losses,'#e05555'],['Win Rate',winRate+'%','var(--gold)'],['Streak',curStreak,'#4caf50'],['Best',bestStreak,'#ffd700']];
+  const recWinRate = isHw ? hwWinRate : winRate;
   // ── Collection progress ──
   const allCards = getCollCards();
   const totalCards = allCards.length;
@@ -7679,12 +7780,23 @@ function CollectorCardStats({ save }) {
 
   return (
     <div className="scroll" style={{ height:'100%' }}>
-      {/* Combat record */}
+      {/* Combat record (Traditional / House Wars toggle) */}
       <div className="card" style={{ marginBottom:12 }}>
-        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)', marginBottom:8 }}>⚔ COMBAT RECORD</div>
+        <div style={{ display:'flex', gap:6, marginBottom:10 }}>
+          <button onClick={()=>setStatMode('traditional')} className={`btn btn-${!isHw?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.6rem' }}>Traditional</button>
+          <button onClick={()=>setStatMode('hw')} className={`btn btn-${isHw?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.6rem' }}>House Wars</button>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)' }}>⚔ {isHw?'HOUSE WARS':'COMBAT'} RECORD</div>
+          {isHw && (
+            <select value={houseFilter} onChange={e=>setHouseFilter(e.target.value)} style={{ fontSize:'0.55rem', padding:'2px 5px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }}>
+              <option value="all">All Houses</option>
+              {eligibleH.map(h=><option key={h} value={h}>{h}</option>)}
+            </select>
+          )}
+        </div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:10 }}>
-          {[['Games',games,'var(--gold)'],['Wins',wins,'#4caf50'],['Losses',losses,'#e05555'],
-            ['Win Rate',winRate+'%','var(--gold)'],['Streak',curStreak,'#4caf50'],['Best',bestStreak,'#ffd700']].map(([l,v,c])=>(
+          {recRows.map(([l,v,c])=>(
             <div key={l} style={{ textAlign:'center' }}>
               <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:c }}>{v}</div>
               <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>{l}</div>
@@ -7693,12 +7805,11 @@ function CollectorCardStats({ save }) {
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
           <span style={{ fontSize:'0.55rem', color:'var(--text2)', width:60 }}>Win Rate</span>
-          <div style={{ flex:1 }}><CollBar pct={winRate} color="#4caf50" /></div>
-          <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--text2)', width:34, textAlign:'right' }}>{winRate}%</span>
+          <div style={{ flex:1 }}><CollBar pct={recWinRate} color="#4caf50" /></div>
+          <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--text2)', width:34, textAlign:'right' }}>{recWinRate}%</span>
         </div>
-        <div style={{ fontSize:'0.55rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>
-          Avg score per game: <span style={{ color:'var(--gold)', fontFamily:'Cinzel,serif' }}>{scoreAvg}</span>
-        </div>
+        {!isHw && <div style={{ fontSize:'0.55rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>Avg score per game: <span style={{ color:'var(--gold)', fontFamily:'Cinzel,serif' }}>{scoreAvg}</span></div>}
+        {isHw && houseFilter!=='all' && <div style={{ fontSize:'0.5rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>Streak &amp; Best are tracked across all Houses.</div>}
       </div>
 
       {/* Collection progress */}
@@ -7906,18 +8017,23 @@ function CollectorStore({ save, onUpdate }) {
   const [pendingBuy, setPendingBuy] = React.useState(null); // misclick guard: { label, action }
   const [tradeSelected, setTradeSelected] = React.useState(null); // index of deck card chosen to trade
   const [evolveAnim, setEvolveAnim] = React.useState(null); // { from, to } when a duplicate merges
-  const [showcaseCards, setShowcaseCards] = React.useState(() => {
+  // Daily refresh (24h) regenerates BOTH the showcase and the Featured House together.
+  const [refreshData] = React.useState(() => {
     const now = Date.now();
-    const needRefresh = !save.storeRefresh || (now - save.storeRefresh > 86400000);
+    const needRefresh = !save.storeRefresh || (now - save.storeRefresh > 86400000) || !save.featuredHouse;
     if (needRefresh) {
       const sc = genStoreShowcase(save);
-      const newSave = { ...save, storeRefresh: now, storeShowcase: sc };
-      saveCollSave(newSave);
-      onUpdate(newSave);
-      return sc;
+      const fh = genFeaturedHouse();
+      const newSave = { ...save, storeRefresh: now, storeShowcase: sc, featuredHouse: fh.house, featuredHouseCards: fh.cards };
+      saveCollSave(newSave); onUpdate(newSave);
+      return { showcase: sc, featuredHouse: fh.house, featuredCards: fh.cards };
     }
-    return save.storeShowcase || [];
+    return { showcase: save.storeShowcase || [], featuredHouse: save.featuredHouse || null, featuredCards: save.featuredHouseCards || {} };
   });
+  const [showcaseCards, setShowcaseCards] = React.useState(refreshData.showcase);
+  const featuredHouse = refreshData.featuredHouse;
+  const featuredCards = refreshData.featuredCards;
+  const [featuredBought, setFeaturedBought] = React.useState({}); // tier -> true once purchased
 
   const T = window.COLLECTOR_TIERS || {};
   const owned = new Set(save.owned || []);
@@ -7952,6 +8068,18 @@ function CollectorStore({ save, onUpdate }) {
     setPendingBuy({ label:`Buy ${card.name} for ${price}G?${owned.has(card.id)?' (you own one — it will Evolve!)':''}`, action: () => {
     const res = applyAcquire(card.id, { gold:(save.gold||0)-price });
     msg(res.evolved ? `${card.name} Evolved into ${res.card.name}!` : `Purchased ${card.name} for ${price}G!`);
+    }});
+  }
+
+  function buyFeatured(tier) {
+    const id = featuredCards[tier]; if (!id) return;
+    const card = getCollCard(id); if (!card) return;
+    const price = HW_FEATURED_PRICES[tier] || 50;
+    if ((save.gold||0) < price) { msg(`Not enough Gold! Need ${price}G.`); return; }
+    setPendingBuy({ label:`Buy ${card.name} for ${price}G?${owned.has(id)?' (you own one — it will Evolve!)':''}`, action: () => {
+      const res = applyAcquire(id, { gold:(save.gold||0)-price });
+      setFeaturedBought(prev => ({ ...prev, [tier]: true }));
+      msg(res.evolved ? `${card.name} Evolved into ${res.card.name}!` : `Purchased ${card.name} for ${price}G!`);
     }});
   }
 
@@ -8084,6 +8212,26 @@ function CollectorStore({ save, onUpdate }) {
               })}
               {showcaseCards.length === 0 && <div style={{ color:'var(--text2)', fontSize:'0.7rem' }}>Showcase is empty. Refresh tomorrow!</div>}
             </div>
+            {featuredHouse && (
+              <div style={{ marginTop:18, paddingTop:14, borderTop:'2px solid var(--gold)' }}>
+                <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:'var(--gold)', letterSpacing:'0.06em' }}>🏰 FEATURED HOUSE · {featuredHouse}</div>
+                <div style={{ fontSize:'0.62rem', color:'var(--text2)', margin:'4px 0 10px' }}>One card per tier from House {featuredHouse}, refreshed daily — stock up to unlock House Wars.</div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:8 }}>
+                  {['starter','uncommon','rare','hero'].map(t => {
+                    const id = featuredCards[t]; const card = id && getCollCard(id);
+                    if (!card) return null;
+                    return (
+                      <div key={t}>
+                        <CollCardDisplay card={card} compact onClick={() => setDetailCard(card)} />
+                        {featuredBought[t]
+                          ? <div style={{ textAlign:'center', fontSize:'0.6rem', color:'var(--text2)', marginTop:4 }}>Purchased ✓</div>
+                          : <button className="btn btn-gold btn-sm" style={{ width:'100%', marginTop:4, fontSize:'0.6rem' }} onClick={() => buyFeatured(t)}>Buy {HW_FEATURED_PRICES[t]}G</button>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -8604,14 +8752,15 @@ function CollectorGame({ save, wager, onEnd, onUpdate }) {
     onEnd(result);
   }
 
-  // Quitting mid-game forfeits any Gold wagered on this game (the wager is otherwise only
-  // settled win/lose at the end, so an early exit must still cost the player their bet).
+  // Quitting mid-game forfeits any Gold wagered on this game AND counts as a loss (it breaks
+  // the win streak and adds a played game) — an early exit can't dodge a defeat.
   function handleQuit() {
-    if (wager > 0) {
-      const newSave = { ...save, gold: Math.max(0, (save.gold||0) - wager) };
-      saveCollSave(newSave);
-      onUpdate(newSave);
-    }
+    const s = save.stats || {};
+    const newSave = { ...save,
+      gold: wager > 0 ? Math.max(0, (save.gold||0) - wager) : (save.gold||0),
+      stats: { ...s, games: (s.games||0) + 1, winStreak: 0 } };
+    saveCollSave(newSave);
+    onUpdate(newSave);
     onEnd(null);
   }
 
@@ -9051,7 +9200,415 @@ function genWheelCards() {
   return wheel;
 }
 
-function CollectorWheel({ onDone, streak }) {
+// Reusable card-stats popup (full 10-position profile + gender/age).
+function CollDetailModal({ card, onClose }) {
+  const T = window.COLLECTOR_TIERS || {};
+  if (!card) return null;
+  const ct = T[card.tier] || { color:'#888' };
+  return (
+    <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:350, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+      <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:340, width:'100%', borderColor:ct.color, maxHeight:'85%', overflowY:'auto' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+          <div>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:ct.color, fontWeight:700 }}>{card.name}</div>
+            <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginTop:2 }}>{card.identity||card.name} · {card.gender==='F'?'♀ Female':'♂ Male'} · Age {card.age}</div>
+          </div>
+          <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'1.1rem', cursor:'pointer', lineHeight:1 }}>✕</button>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
+          <CollTierBadge tier={card.tier} />
+          <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>Overall {card.overall}</span>
+          <span style={{ marginLeft:'auto', fontSize:'0.55rem', color:'var(--text2)' }}>{(card.houses||[]).join(' · ')}</span>
+        </div>
+        {card.desc && <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginTop:8, lineHeight:1.5, fontStyle:'italic' }}>{card.desc}</div>}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:'2px 10px', marginTop:10, paddingTop:8, borderTop:'1px solid var(--border)' }}>
+          {COLL_POS.map(p => { const sc = (card.scores&&card.scores[p.id])||0; return (
+            <div key={p.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'0.58rem' }}>
+              <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
+              <span style={{ color: sc>=9?'#ffd700':sc>=7?ct.color:'var(--text)', fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+            </div>
+          ); })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── House Wars: the two spinners ───────────────────────────────────────────
+function CollectorHouseWarsSpin({ save, onDone, onCancel }) {
+  const hw = save.hw || {};
+  const eligible = React.useState(() => hwEligibleHouses(save.owned))[0];
+  // Rotation: bench the recently-played house only when ≥2 houses are eligible.
+  const userPool = (eligible.length >= 2 && hw.recentRun >= 3 && hw.recentHouse)
+    ? eligible.filter(h => h !== hw.recentHouse) : eligible;
+  const [result] = React.useState(() => ({
+    user: userPool[Math.floor(Math.random()*userPool.length)],
+    cpu: HW_HOUSES[Math.floor(Math.random()*HW_HOUSES.length)],
+  }));
+  const [userFace, setUserFace] = React.useState(HW_HOUSES[0]);
+  const [cpuFace, setCpuFace] = React.useState(HW_HOUSES[0]);
+  const [done, setDone] = React.useState(false);
+
+  React.useEffect(() => {
+    let delay = 55, elapsed = 0, t = null;
+    function tick() {
+      elapsed += delay;
+      setUserFace(HW_HOUSES[Math.floor(Math.random()*HW_HOUSES.length)]);
+      setCpuFace(HW_HOUSES[Math.floor(Math.random()*HW_HOUSES.length)]);
+      if (elapsed >= 2700) { setUserFace(result.user); setCpuFace(result.cpu); setDone(true); return; }
+      if (elapsed > 1900) delay += 40; // decelerate near the end
+      t = setTimeout(tick, delay);
+    }
+    t = setTimeout(tick, delay);
+    return () => { if (t) clearTimeout(t); };
+  }, []);
+
+  const reel = (label, face, color) => (
+    <div style={{ flex:1, textAlign:'center' }}>
+      <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.62rem', color:'var(--text2)', letterSpacing:'0.14em', marginBottom:8 }}>{label}</div>
+      <div className="card" style={{ height:120, display:'flex', alignItems:'center', justifyContent:'center', borderColor:color, boxShadow: done?`0 0 22px ${color}`:'none', overflow:'hidden' }}>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.05rem', fontWeight:700, color, opacity: done?1:0.6, filter: done?'none':'blur(0.6px)', transition:'opacity .2s' }}>{face}</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, textAlign:'center', background:'var(--bg)' }}>
+      <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.25rem', color:'var(--gold)', fontWeight:700, letterSpacing:'0.08em' }}>⚔ HOUSE WARS ⚔</div>
+      <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginTop:4, marginBottom:22 }}>The spinners choose your battlefield…</div>
+      <div style={{ display:'flex', gap:14, width:'100%', maxWidth:430, marginBottom:22 }}>
+        {reel('YOU', userFace, 'var(--p1,#3aa0ff)')}
+        {reel('CPU', cpuFace, 'var(--p2,#e05555)')}
+      </div>
+      {done ? (
+        <button className="btn btn-gold" style={{ padding:'12px 36px', letterSpacing:'0.1em' }} onClick={() => onDone(result.user, result.cpu)}>
+          Choose Your Lineup →
+        </button>
+      ) : (
+        <div style={{ fontSize:'0.8rem', color:'var(--gold)', fontFamily:'Cinzel,serif' }}>Spinning…</div>
+      )}
+      <button className="btn btn-ghost btn-sm" style={{ marginTop:16, fontSize:'0.6rem' }} onClick={onCancel}>← Back</button>
+    </div>
+  );
+}
+
+// ─── House Wars: choose your 10-card lineup ─────────────────────────────────
+function CollectorHouseWarsLineup({ save, userHouse, cpuHouse, onConfirm, onCancel }) {
+  const deck = React.useState(() => hwHouseDeck(save.owned, userHouse))[0]; // [{id, card}]
+  const [selected, setSelected] = React.useState([]); // indices into deck
+  const [detailCard, setDetailCard] = React.useState(null);
+  const T = window.COLLECTOR_TIERS || {};
+  function toggle(i) {
+    setSelected(sel => sel.indexOf(i) !== -1 ? sel.filter(x => x !== i) : (sel.length >= 10 ? sel : [...sel, i]));
+  }
+  const canConfirm = selected.length === 10;
+  const sorted = deck.map((e,i)=>({ e, i })).sort((a,b)=>(b.e.card.overall||0)-(a.e.card.overall||0));
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {detailCard && <CollDetailModal card={detailCard} onClose={() => setDetailCard(null)} />}
+      <div className="nav-bar">
+        <div className="nav-side"><button className="btn btn-ghost btn-sm" onClick={onCancel}>← Back</button></div>
+        <div style={{ flex:1, textAlign:'center' }}>
+          <div className="nav-title" style={{ fontSize:'0.8rem' }}>CHOOSE LINEUP</div>
+          <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>
+            <span style={{ color:'var(--p1,#3aa0ff)' }}>{userHouse}</span> vs <span style={{ color:'var(--p2,#e05555)' }}>{cpuHouse}</span>
+          </div>
+        </div>
+        <div className="nav-side" style={{ width:'auto' }}><span style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color: canConfirm?'var(--gold)':'var(--text2)' }}>{selected.length}/10</span></div>
+      </div>
+      <div style={{ fontSize:'0.62rem', color:'var(--text2)', padding:'6px 12px' }}>Pick 10 of your {userHouse} cards. Fate will field 5 of them across Ruler · Hand · Kingsguard · Ally · Bank.</div>
+      <div className="scroll" style={{ flex:1, padding:'4px 12px 10px' }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
+          {sorted.map(({ e, i }) => {
+            const sel = selected.indexOf(i) !== -1;
+            const ct = T[e.card.tier] || { color:'#888' };
+            return (
+              <div key={i} onClick={() => toggle(i)} className="card" style={{ cursor:'pointer', padding:'8px 9px', borderColor: sel?'var(--gold)':ct.color, boxShadow: sel?'0 0 12px rgba(212,168,48,0.6)':'none', position:'relative', opacity: (!sel && selected.length>=10)?0.5:1 }}>
+                {sel && <div style={{ position:'absolute', top:4, right:6, color:'var(--gold)', fontWeight:900 }}>✓</div>}
+                <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.72rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:14 }}>{e.card.name}</div>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:5 }}>
+                  <CollTierBadge tier={e.card.tier} />
+                  <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{e.card.overall}</span>
+                </div>
+                <button onClick={(ev)=>{ ev.stopPropagation(); setDetailCard(e.card); }} style={{ marginTop:5, width:'100%', background:'none', border:'1px solid var(--border)', color:'var(--text2)', borderRadius:4, fontSize:'0.55rem', cursor:'pointer', padding:'2px 0' }}>ⓘ stats</button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+        <button className="btn btn-gold" disabled={!canConfirm} style={{ width:'100%', padding:'13px', opacity: canConfirm?1:0.5, cursor: canConfirm?'pointer':'not-allowed' }}
+          onClick={() => canConfirm && onConfirm(selected.map(i => deck[i].card), selected.map(i => deck[i].id))}>
+          {canConfirm ? '⚔ Begin Battle' : `Select ${10 - selected.length} more`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── House Wars: the match (5 seats, 10-card fate deck, no rerolls) ──────────
+function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, onEnd }) {
+  const [playerBoard, setPlayerBoard] = React.useState({});
+  const [cpuBoard, setCpuBoard] = React.useState({});
+  const [drawnCard, setDrawnCard] = React.useState(null);
+  const [usedIds, setUsedIds] = React.useState(new Set());
+  const [round, setRound] = React.useState(0);            // 0..4
+  const [phase, setPhase] = React.useState('draw');        // draw | place | arrange | done
+  const [cpuDrafted, setCpuDrafted] = React.useState([]);
+  const [cpuUsed, setCpuUsed] = React.useState(new Set()); // indices into cpuCards
+  const [showCpu, setShowCpu] = React.useState(false);
+  const [selectedPos, setSelectedPos] = React.useState(null);
+  const [detailCard, setDetailCard] = React.useState(null);
+  const [confirmQuit, setConfirmQuit] = React.useState(false);
+  const T = window.COLLECTOR_TIERS || {};
+
+  const playerScore = hwScore(playerBoard);
+  const cpuScore = hwScore(cpuBoard);
+
+  function drawFate() {
+    if (phase !== 'draw') return;
+    const onBoard = new Set(Object.values(playerBoard).filter(Boolean).map(c => c.id));
+    const available = playerCards.filter(c => !usedIds.has(c.id) && !onBoard.has(c.id));
+    if (!available.length) { setPhase('done'); return; }
+    setDrawnCard(available[Math.floor(Math.random()*available.length)]);
+    setPhase('place');
+  }
+
+  function placeCard(posId) {
+    if (!drawnCard) return;
+    const occupant = playerBoard[posId];
+    if (occupant) { // swap: drawn takes the seat, occupant becomes the held card
+      setPlayerBoard({ ...playerBoard, [posId]: drawnCard });
+      setUsedIds(new Set([...usedIds, drawnCard.id]));
+      setDrawnCard(occupant);
+      return; // still 'place', now holding the displaced card
+    }
+    setPlayerBoard({ ...playerBoard, [posId]: drawnCard });
+    setUsedIds(new Set([...usedIds, drawnCard.id]));
+    setDrawnCard(null);
+    setPhase('arrange');
+  }
+
+  function handleReposition(posId) {
+    if (phase !== 'arrange') return;
+    if (selectedPos === null) { if (playerBoard[posId]) setSelectedPos(posId); return; }
+    if (selectedPos === posId) { setSelectedPos(null); return; }
+    const nb = { ...playerBoard }, moving = nb[selectedPos], target = nb[posId];
+    nb[posId] = moving; if (target) nb[selectedPos] = target; else delete nb[selectedPos];
+    setPlayerBoard(nb); setSelectedPos(null);
+  }
+
+  function cpuTurn() {
+    const avail = cpuCards.map((c,i)=>({c,i})).filter(x => !cpuUsed.has(x.i));
+    if (!avail.length) return;
+    const pick = avail[Math.floor(Math.random()*avail.length)];
+    const drafted = [...cpuDrafted, pick.c];
+    setCpuUsed(new Set([...cpuUsed, pick.i]));
+    setCpuDrafted(drafted);
+    setCpuBoard(hwOptimalAssign(drafted));
+  }
+
+  function confirmTurn() {
+    if (phase !== 'arrange') return;
+    cpuTurn();
+    if (round + 1 >= 5) { setPhase('done'); setTimeout(handleFinish, 0); return; }
+    setRound(r => r + 1); setDrawnCard(null); setSelectedPos(null); setPhase('draw');
+  }
+
+  function handleFinish() {
+    const pScore = hwScore(playerBoard), cScore = hwScore(cpuBoard);
+    onEnd({ isWin: pScore > cScore, playerScore: pScore, cpuScore: cScore, margin: pScore - cScore,
+            playerBoard, cpuBoard, cpuCards, userHouse, cpuHouse });
+  }
+
+  const board = showCpu ? cpuBoard : playerBoard;
+  const drawnHint = drawnCard ? HW_POS.reduce((m,p) => Math.max(m, (drawnCard.scores&&drawnCard.scores[p.id])||0), 0) : 0;
+
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {detailCard && <CollDetailModal card={detailCard} onClose={() => setDetailCard(null)} />}
+      {confirmQuit && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmQuit(false)}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
+            <div style={{ fontFamily:'Cinzel,serif', color:'#e05555', fontSize:'0.95rem', marginBottom:8 }}>Quit House Wars?</div>
+            <div style={{ fontSize:'0.72rem', color:'var(--text2)', marginBottom:14 }}>Quitting counts as a LOSS and you'll forfeit one random card from your 10-card lineup.</div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={()=>setConfirmQuit(false)}>Keep Playing</button>
+              <button className="btn btn-sm" style={{ flex:1, background:'#7a1010', color:'#fff', border:'1px solid #b01a1a' }} onClick={()=>onEnd({ quit:true })}>QUIT</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'center', padding:'8px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
+        <button onClick={()=>setConfirmQuit(true)} title="Quit" style={{ width:30, height:30, borderRadius:'50%', background:'#7a1010', border:'1px solid #b01a1a', color:'#fff', cursor:'pointer', fontWeight:900, flexShrink:0 }}>✕</button>
+        <div style={{ flex:1, textAlign:'center' }}>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)' }}>⚔ HOUSE WARS · Turn {Math.min(round+1,5)}/5</div>
+          <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}><span style={{color:'var(--p1,#3aa0ff)'}}>{userHouse}</span> vs <span style={{color:'var(--p2,#e05555)'}}>{cpuHouse}</span></div>
+        </div>
+        <div style={{ width:30, flexShrink:0 }} />
+      </div>
+      {/* Score / board toggle */}
+      <div style={{ display:'flex', borderBottom:'1px solid var(--border)' }}>
+        <button onClick={()=>setShowCpu(false)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: !showCpu?'rgba(58,160,255,0.15)':'var(--bg2)', color:!showCpu?'var(--p1,#3aa0ff)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>My Court ({Math.round(playerScore*10)/10})</button>
+        <button onClick={()=>setShowCpu(true)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: showCpu?'rgba(224,85,85,0.15)':'var(--bg2)', color:showCpu?'var(--p2,#e05555)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>CPU Court ({Math.round(cpuScore*10)/10})</button>
+      </div>
+      {/* Seats */}
+      <div className="scroll" style={{ flex:1, padding:'10px 12px' }}>
+        {HW_POS.map(p => {
+          const card = board[p.id];
+          const isSel = selectedPos === p.id;
+          const canPlaceHere = !showCpu && phase === 'place' && !!drawnCard;
+          const canRepos = !showCpu && phase === 'arrange';
+          const hintScore = (!showCpu && phase==='place' && drawnCard) ? ((drawnCard.scores&&drawnCard.scores[p.id])||0) : null;
+          const ct = card ? (T[card.tier]||{color:'#888'}) : null;
+          return (
+            <div key={p.id} onClick={() => { if (canPlaceHere) placeCard(p.id); else if (canRepos) handleReposition(p.id); }}
+              className="card" style={{ marginBottom:7, padding:'8px 10px', borderColor: isSel?'var(--gold)':(hintScore!==null && hintScore===drawnHint && drawnHint>0)?'var(--gold)':(card?ct.color:'var(--border)'),
+                cursor:(canPlaceHere||canRepos)?'pointer':'default', display:'flex', alignItems:'center', gap:10, opacity: card?1:0.85 }}>
+              <div style={{ width:78, flexShrink:0, fontFamily:'Cinzel,serif', fontSize:'0.62rem', color:'var(--text2)', letterSpacing:'0.04em' }}>{p.label}</div>
+              {card ? (
+                <>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{card.name}</div>
+                    <div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} /></div>
+                  </div>
+                  <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.95rem' }}>{Math.round(((card.scores&&card.scores[p.id])||0)*10)/10}</span>
+                  <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(card); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, flexShrink:0 }}>ⓘ</button>
+                </>
+              ) : (
+                <div style={{ flex:1, fontSize:'0.65rem', color:'var(--text2)', fontStyle:'italic' }}>
+                  {hintScore!==null ? `— tap to place (scores ${Math.round(hintScore*10)/10}) —` : '— empty —'}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {/* Action bar */}
+      <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+        {phase === 'draw' && (
+          <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.1em' }} onClick={drawFate}>🎴 DRAW FATE</button>
+        )}
+        {phase === 'place' && drawnCard && (() => { const ct = T[drawnCard.tier]||{color:'#888'}; return (
+          <div>
+            <div style={{ fontSize:'0.6rem', color:'var(--text2)', textAlign:'center', marginBottom:6 }}>Fate drew — tap a seat to place {showCpu?'(switch to My Court)':''}</div>
+            <div className="card" style={{ borderColor:ct.color, padding:'8px 10px', display:'flex', alignItems:'center', gap:10 }}>
+              <div style={{ flex:1 }}><div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:ct.color, fontWeight:700 }}>{drawnCard.name}</div><div style={{ marginTop:3 }}><CollTierBadge tier={drawnCard.tier} /></div></div>
+              <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{drawnCard.overall}</span>
+              <button onClick={()=>setDetailCard(drawnCard)} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer' }}>ⓘ</button>
+            </div>
+          </div>
+        ); })()}
+        {phase === 'arrange' && (
+          <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.1em' }} onClick={confirmTurn}>✓ END TURN</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── House Wars: scorecard → reward spawn (win) / card surrender (loss) ──────
+function CollectorHouseWarsResult({ result, reward, onClaim, onDiscard }) {
+  const { isWin, playerScore, cpuScore, playerBoard, cpuBoard, userHouse, cpuHouse } = result;
+  const [stage, setStage] = React.useState('score'); // score | reward | discard
+  const [discardSel, setDiscardSel] = React.useState(null);
+  const [detailCard, setDetailCard] = React.useState(null);
+  const T = window.COLLECTOR_TIERS || {};
+  const placed = HW_POS.map(p => ({ p, card: playerBoard[p.id] })).filter(x => x.card);
+
+  React.useEffect(() => { isWin ? AudioManager.playVictory() : AudioManager.playDefeat(); }, []);
+
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {detailCard && <CollDetailModal card={detailCard} onClose={() => setDetailCard(null)} />}
+
+      {stage === 'score' && (
+        <>
+          <div style={{ textAlign:'center', padding:'18px 12px 10px' }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.6rem', fontWeight:800, letterSpacing:'0.1em', color: isWin?'var(--gold2,#f0c84a)':'#e05555', textShadow:`0 0 18px ${isWin?'rgba(240,200,74,0.6)':'rgba(224,85,85,0.5)'}` }}>{isWin?'⚔ VICTORY':'☠ DEFEAT'}</div>
+            <div style={{ fontSize:'0.6rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginTop:4 }}><span style={{color:'var(--p1,#3aa0ff)'}}>{userHouse}</span> vs <span style={{color:'var(--p2,#e05555)'}}>{cpuHouse}</span></div>
+            <div style={{ display:'flex', justifyContent:'center', gap:18, marginTop:10 }}>
+              <div><div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>YOU</div><div style={{ fontFamily:'Cinzel,serif', fontSize:'1.5rem', fontWeight:700, color:'var(--p1,#3aa0ff)' }}>{Math.round(playerScore*10)/10}</div></div>
+              <div style={{ alignSelf:'center', color:'var(--text2)' }}>vs</div>
+              <div><div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>CPU</div><div style={{ fontFamily:'Cinzel,serif', fontSize:'1.5rem', fontWeight:700, color:'var(--p2,#e05555)' }}>{Math.round(cpuScore*10)/10}</div></div>
+            </div>
+          </div>
+          <div className="scroll" style={{ flex:1, padding:'4px 12px' }}>
+            {HW_POS.map(p => {
+              const pc = playerBoard[p.id], cc = cpuBoard[p.id];
+              const ps = (pc&&pc.scores&&pc.scores[p.id])||0, cs = (cc&&cc.scores&&cc.scores[p.id])||0;
+              const arrow = ps>cs?'◄':ps<cs?'►':'=';
+              return (
+                <div key={p.id} style={{ display:'flex', alignItems:'center', gap:6, padding:'5px 0', borderBottom:'1px solid var(--border)', fontSize:'0.62rem' }}>
+                  <div style={{ flex:1, textAlign:'right', color: pc?(T[pc.tier]||{}).color:'var(--text2)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{pc?pc.name:'—'}</div>
+                  <div style={{ width:26, textAlign:'right', fontWeight:700, color:'var(--p1,#3aa0ff)' }}>{Math.round(ps*10)/10}</div>
+                  <div style={{ width:34, textAlign:'center', fontWeight:800, color: arrow==='◄'?'#4caf50':arrow==='►'?'#e05555':'var(--text2)' }}>{arrow}</div>
+                  <div style={{ width:26, fontWeight:700, color:'var(--p2,#e05555)' }}>{Math.round(cs*10)/10}</div>
+                  <div style={{ flex:1, color: cc?(T[cc.tier]||{}).color:'var(--text2)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{cc?cc.name:'—'}</div>
+                </div>
+              );
+            })}
+            <div style={{ textAlign:'center', fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginTop:8, padding:'0 0 4px' }}>{p_arrow_legend()}</div>
+          </div>
+          <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+            <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.1em' }} onClick={() => setStage(isWin?'reward':'discard')}>
+              {isWin ? 'Continue →' : 'Continue →'}
+            </button>
+          </div>
+        </>
+      )}
+
+      {stage === 'reward' && (
+        <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center' }}>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'var(--gold)', fontWeight:700, marginBottom:4 }}>🏆 Spoils of War</div>
+          <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:18 }}>A {cpuHouse} card joins your collection!</div>
+          {reward && (() => { const ct = T[reward.tier]||{color:'var(--gold)'}; return (
+            <div className="fade-in" style={{ width:'100%', maxWidth:300 }}>
+              <div className="card" style={{ borderColor:ct.color, boxShadow:`0 0 26px ${ct.color}`, marginBottom:16 }}>
+                <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color:ct.color, fontWeight:700 }}>{reward.name}</div>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:8 }}>
+                  <CollTierBadge tier={reward.tier} />
+                  <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'1.05rem' }}>{reward.overall}</span>
+                </div>
+              </div>
+              <button className="btn btn-gold" style={{ width:'100%' }} onClick={onClaim}>Add to Deck ✓</button>
+            </div>
+          ); })()}
+          {!reward && <button className="btn btn-gold" onClick={onClaim}>Continue</button>}
+        </div>
+      )}
+
+      {stage === 'discard' && (
+        <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
+          <div style={{ textAlign:'center', padding:'16px 12px 8px' }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color:'#e05555', fontWeight:700 }}>Cost of Defeat</div>
+            <div style={{ fontSize:'0.66rem', color:'var(--text2)', marginTop:4 }}>Surrender ONE of the cards you fielded — it leaves your collection.</div>
+          </div>
+          <div className="scroll" style={{ flex:1, padding:'4px 12px' }}>
+            {placed.map(({ p, card }) => { const ct = T[card.tier]||{color:'#888'}; const sel = discardSel === card.id; return (
+              <div key={p.id} onClick={() => setDiscardSel(card.id)} className="card" style={{ marginBottom:7, padding:'8px 10px', cursor:'pointer', borderColor: sel?'#e05555':ct.color, boxShadow: sel?'0 0 12px rgba(224,85,85,0.6)':'none', display:'flex', alignItems:'center', gap:10 }}>
+                <div style={{ width:78, flexShrink:0, fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--text2)' }}>{p.label}</div>
+                <div style={{ flex:1, minWidth:0 }}><div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{card.name}</div><div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} /></div></div>
+                <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{card.overall}</span>
+                {sel && <span style={{ color:'#e05555', fontWeight:900 }}>✓</span>}
+              </div>
+            ); })}
+          </div>
+          <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+            <button className="btn btn-sm" disabled={!discardSel} style={{ width:'100%', padding:'13px', background: discardSel?'#7a1010':'var(--bg2)', color: discardSel?'#fff':'var(--text2)', border:'1px solid '+(discardSel?'#b01a1a':'var(--border)'), opacity: discardSel?1:0.6, cursor: discardSel?'pointer':'not-allowed' }}
+              onClick={() => discardSel && onDiscard(discardSel)}>
+              {discardSel ? 'Surrender Card' : 'Choose a card to surrender'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+function p_arrow_legend() { return '◄ you win the seat · ► CPU wins · = tie'; }
+
+function CollectorWheel({ onDone, streak, spinsLeft }) {
   const T = window.COLLECTOR_TIERS || {};
   const [wheel] = React.useState(genWheelCards);
   const n = wheel.length || 30;
@@ -9077,7 +9634,7 @@ function CollectorWheel({ onDone, streak }) {
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, textAlign:'center' }}>
       <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.25rem', color:'var(--gold)', fontWeight:700 }}>🎡 Spin the Wheel!</div>
-      <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginTop:4, marginBottom:18 }}>{streak||5}-win streak reward · 30 cards · 5 per tier</div>
+      <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginTop:4, marginBottom:18 }}>{streak||5}-win streak reward · 30 cards · 5 per tier{spinsLeft > 1 ? ` · ${spinsLeft} spins left` : ''}</div>
       <div style={{ position:'relative', width:280, height:280, marginBottom:18 }}>
         <div style={{ position:'absolute', top:-4, left:'50%', transform:'translateX(-50%)', width:0, height:0, borderLeft:'12px solid transparent', borderRight:'12px solid transparent', borderTop:'22px solid var(--gold2,#f0c84a)', zIndex:5, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.85))' }} />
         <div style={{ width:'100%', height:'100%', borderRadius:'50%', background:grad, border:'4px solid #2a2008', boxShadow:'0 0 30px rgba(0,0,0,0.7), inset 0 0 22px rgba(0,0,0,0.55)', transform:`rotate(${rotation}deg)`, transition: spinning ? 'transform 4.2s cubic-bezier(0.15,0.85,0.25,1)' : 'none' }} />
@@ -9154,6 +9711,16 @@ function CollectorHub({ onHome }) {
   const [gameResult, setGameResult] = React.useState(null);
   const [winPullCards, setWinPullCards] = React.useState([]);
   const [tourActive, setTourActive] = React.useState(false); // interactive guided tour overlay
+  const [showModeChoice, setShowModeChoice] = React.useState(false); // Traditional vs House Wars
+  const [wheelSpinsLeft, setWheelSpinsLeft] = React.useState(1);     // multi-spin wheel (HW grants 5)
+  // House Wars active-game state
+  const [hwUserHouse, setHwUserHouse] = React.useState(null);
+  const [hwCpuHouse, setHwCpuHouse] = React.useState(null);
+  const [hwLineup, setHwLineup] = React.useState(null);   // { cards, ids }
+  const [hwCpuCards, setHwCpuCards] = React.useState(null);
+  const [hwResult, setHwResult] = React.useState(null);
+  const [hwReward, setHwReward] = React.useState(null);
+  const [hwNotice, setHwNotice] = React.useState(null);   // abandon-penalty message
 
   // A cloud pull (cross-device sync) writes the latest deck/gold/stats to localStorage and
   // fires 'asoe-cloud-sync'. Reload from it so the hub doesn't keep stale in-memory state
@@ -9190,6 +9757,12 @@ function CollectorHub({ onHome }) {
     }
   }, []);
 
+  // If a House Wars game was left active (the app closed mid-match), penalise it on load.
+  React.useEffect(() => {
+    const active = save.hw && save.hw.active;
+    if (active && Array.isArray(active.lineupIds) && active.lineupIds.length) applyHwAbandon(active);
+  }, []);
+
   function handleStartingPullDone(cardIds) {
     const newSave = { ...save, tutorialSeen: true, owned: cardIds };
     saveCollSave(newSave);
@@ -9203,12 +9776,94 @@ function CollectorHub({ onHome }) {
       alert('You need at least 10 cards in your deck to play!');
       return;
     }
-    setScreen('wager');
+    setShowModeChoice(true);
+  }
+  function startTraditional() { setShowModeChoice(false); setScreen('wager'); }
+  function startHouseWars() {
+    if (hwEligibleHouses(save.owned).length === 0) return; // locked — no fieldable house
+    setShowModeChoice(false); setScreen('hwSpin');
   }
 
   function handleStartGame(wager) {
     setGameWager(wager);
     setScreen('game');
+  }
+
+  // ── House Wars flow ──────────────────────────────────────────────────────
+  function handleHwSpinDone(userHouse, cpuHouse) {
+    setHwUserHouse(userHouse); setHwCpuHouse(cpuHouse); setScreen('hwLineup');
+  }
+  function handleHwLineupConfirm(cards, ids) {
+    const cpuCards = genHouseLineup(hwCpuHouse, hwLineupTotal(cards)); // CPU lineup within ±2%
+    setHwLineup({ cards, ids });
+    setHwCpuCards(cpuCards);
+    // Mark the active game so an app-close mid-match is penalised on next load.
+    const newSave = { ...save, hw: { ...(save.hw||{}), active: { userHouse: hwUserHouse, cpuHouse: hwCpuHouse, lineupIds: ids } } };
+    saveCollSave(newSave); setSave(newSave);
+    setScreen('hwGame');
+  }
+  function handleHwEnd(result) {
+    if (!result || result.quit) { applyHwAbandon(save.hw && save.hw.active); return; }
+    const hw = save.hw || {};
+    const isWin = result.isWin;
+    const streak = isWin ? (hw.streak||0) + 1 : 0;
+    const house = hwUserHouse;
+    const byHouse = { ...(hw.byHouse||{}) };
+    const bh = byHouse[house] || { games:0, wins:0 };
+    byHouse[house] = { games: bh.games + 1, wins: bh.wins + (isWin?1:0) };
+    const recentRun = (hw.recentHouse === house) ? (hw.recentRun||0) + 1 : 1;
+    const wheelEarned = isWin && streak % 5 === 0;
+    // On a loss the card-surrender is still pending: keep an active marker (the 5 placed cards)
+    // so closing the app on the scorecard can't dodge it. The game is already counted here, so
+    // the marker is flagged 'lossPending' and won't be re-counted by the abandon handler.
+    const placedIds = isWin ? [] : HW_POS.map(p => result.playerBoard[p.id]).filter(Boolean).map(c => c.id);
+    const newHw = { ...hw, games:(hw.games||0)+1, wins:(hw.wins||0)+(isWin?1:0), streak,
+                    maxStreak: Math.max(hw.maxStreak||0, streak), byHouse, recentHouse: house, recentRun,
+                    active: isWin ? null : { userHouse: house, cpuHouse: hwCpuHouse, lineupIds: placedIds, phase:'lossPending' } };
+    const newSave = { ...save, hw: newHw };
+    saveCollSave(newSave); setSave(newSave);
+    setHwReward(isWin ? hwRollReward(hwCpuHouse) : null); // pre-rolled, spawns after the scorecard
+    setHwResult({ ...result, wheelEarned });
+    setScreen('hwResult');
+  }
+  function handleHwClaim() { // win: spawn the reward into the deck
+    let s = save;
+    if (hwReward) {
+      const res = collAcquire(s.owned||[], hwReward.id);
+      s = { ...s, owned: res.owned }; saveCollSave(s); setSave(s);
+      if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
+    }
+    const earned = hwResult && hwResult.wheelEarned;
+    setHwResult(null); setHwReward(null);
+    if (earned) { setWheelSpinsLeft(5); setScreen('wheel'); } else setScreen('hub');
+  }
+  function handleHwDiscard(cardId) { // loss: surrender the chosen card (clears the pending marker)
+    const owned = (save.owned||[]).slice();
+    const idx = owned.indexOf(cardId); if (idx !== -1) owned.splice(idx, 1);
+    const newSave = { ...save, owned, hw: { ...(save.hw||{}), active: null } }; saveCollSave(newSave); setSave(newSave);
+    setHwResult(null); setHwReward(null); setScreen('hub');
+  }
+  function applyHwAbandon(active) { // quit / app-close → loss + random card forfeit
+    const hw = save.hw || {};
+    let owned = (save.owned||[]).slice(); let lostName = null;
+    if (active && Array.isArray(active.lineupIds)) {
+      const present = active.lineupIds.filter(id => owned.indexOf(id) !== -1);
+      if (present.length) { const lostId = present[Math.floor(Math.random()*present.length)]; owned.splice(owned.indexOf(lostId), 1); lostName = (getCollCard(lostId)||{}).name || 'a card'; }
+    }
+    let newHw;
+    if (active && active.phase === 'lossPending') {
+      // The loss was already recorded at game end — just enforce the un-chosen card surrender.
+      newHw = { ...hw, active: null };
+    } else {
+      const house = (active && active.userHouse) || hw.recentHouse;
+      const recentRun = (hw.recentHouse === house) ? (hw.recentRun||0) + 1 : 1;
+      newHw = { ...hw, games:(hw.games||0)+1, streak:0, recentHouse: house || hw.recentHouse, recentRun, active: null };
+    }
+    const newSave = { ...save, owned, hw: newHw }; saveCollSave(newSave); setSave(newSave);
+    if (lostName) setHwNotice(active && active.phase === 'lossPending'
+      ? `You left before surrendering a card — ${lostName} was taken from your collection.`
+      : `You abandoned a House Wars battle — counted as a loss, and ${lostName} was lost from your collection.`);
+    setHwResult(null); setHwReward(null); setScreen('hub');
   }
 
   function handleGameEnd(result) {
@@ -9230,7 +9885,7 @@ function CollectorHub({ onHome }) {
     saveCollSave(newSave);
     setSave(newSave);
     if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
-    if (gameResult && gameResult.wheelEarned) { setScreen('wheel'); return; } // 5-win streak reward
+    if (gameResult && gameResult.wheelEarned) { setWheelSpinsLeft(1); setScreen('wheel'); return; } // 5-win streak reward
     setScreen('hub');
     setGameResult(null);
   }
@@ -9243,6 +9898,9 @@ function CollectorHub({ onHome }) {
       setSave(newSave);
       if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
     }
+    const left = wheelSpinsLeft - 1;
+    if (left > 0) { setWheelSpinsLeft(left); return; } // another spin (keyed remount re-spins)
+    setWheelSpinsLeft(1);
     setScreen('hub');
     setGameResult(null);
   }
@@ -9269,12 +9927,41 @@ function CollectorHub({ onHome }) {
   if (screen === 'game') return <CollectorGame save={save} wager={gameWager} onEnd={handleGameEnd} onUpdate={handleUpdate} />;
   if (screen === 'result' && gameResult) return <CollectorGameResult result={gameResult} save={save} onWinPull={handleWinPull} onHome={() => { setScreen('hub'); setGameResult(null); }} />;
   if (screen === 'winpull') return <CollectorWinPull winPullCards={winPullCards} onPick={handlePickWinPull} onSkip={() => setScreen('hub')} />;
-  if (screen === 'wheel') return <React.Fragment>{evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}<CollectorWheel onDone={handleWheelDone} streak={gameResult ? gameResult.winStreak : 5} /></React.Fragment>;
+  if (screen === 'hwSpin') return <CollectorHouseWarsSpin save={save} onDone={handleHwSpinDone} onCancel={() => setScreen('hub')} />;
+  if (screen === 'hwLineup') return <CollectorHouseWarsLineup save={save} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onConfirm={handleHwLineupConfirm} onCancel={() => setScreen('hwSpin')} />;
+  if (screen === 'hwGame' && hwLineup) return <CollectorHouseWarsGame playerCards={hwLineup.cards} cpuCards={hwCpuCards} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onEnd={handleHwEnd} />;
+  if (screen === 'hwResult' && hwResult) return <CollectorHouseWarsResult result={hwResult} reward={hwReward} onClaim={handleHwClaim} onDiscard={handleHwDiscard} />;
+  if (screen === 'wheel') return <React.Fragment>{evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}<CollectorWheel key={wheelSpinsLeft} spinsLeft={wheelSpinsLeft} onDone={handleWheelDone} streak={gameResult ? gameResult.winStreak : 5} /></React.Fragment>;
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
       {evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}
       {tourActive && <CollectorTour onClose={() => setTourActive(false)} onTab={setTab} />}
+      {hwNotice && (
+        <div onClick={()=>setHwNotice(null)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:400, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
+            <div style={{ fontFamily:'Cinzel,serif', color:'#e05555', fontSize:'0.9rem', marginBottom:8 }}>Battle Abandoned</div>
+            <div style={{ fontSize:'0.72rem', color:'var(--text2)', marginBottom:14, lineHeight:1.5 }}>{hwNotice}</div>
+            <button className="btn btn-gold btn-sm" style={{ width:'100%' }} onClick={()=>setHwNotice(null)}>OK</button>
+          </div>
+        </div>
+      )}
+      {showModeChoice && (() => { const hwElig = hwEligibleHouses(save.owned); const locked = hwElig.length === 0; return (
+        <div onClick={()=>setShowModeChoice(false)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:400, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:340, width:'100%', borderColor:'var(--gold)' }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:'var(--gold)', textAlign:'center', marginBottom:14 }}>Choose Your Game</div>
+            <button className="btn btn-gold" style={{ width:'100%', padding:'11px', marginBottom:10 }} onClick={startTraditional}>
+              ⚔ Traditional
+              <div style={{ fontSize:'0.55rem', color:'rgba(0,0,0,0.6)', fontWeight:400 }}>10 seats · optional Gold wager</div>
+            </button>
+            <button disabled={locked} onClick={startHouseWars} style={{ width:'100%', padding:'11px', background: locked?'var(--bg2)':'#7a1010', color: locked?'var(--text2)':'#fff', border:'1px solid '+(locked?'var(--border)':'#b01a1a'), borderRadius:8, cursor: locked?'not-allowed':'pointer', opacity: locked?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
+              {locked ? '🔒 House Wars' : '🏰 House Wars'}
+              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{locked ? 'Need 10 cards in one House to unlock' : `5 seats · ${hwElig.length} House${hwElig.length>1?'s':''} ready · card stakes`}</div>
+            </button>
+            <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:10, fontSize:'0.6rem' }} onClick={()=>setShowModeChoice(false)}>Cancel</button>
+          </div>
+        </div>
+      ); })()}
       {/* Nav bar */}
       <div className="nav-bar">
         <div className="nav-side">
