@@ -184,6 +184,14 @@ body{font-family:'Crimson Text',Georgia,serif;color:var(--text);overscroll-behav
 .evolve-pulse{animation:evolvePulse 0.7s ease-in-out infinite;}
 @keyframes tourGlow{0%,100%{box-shadow:0 0 0 9999px rgba(0,0,0,0.72), 0 0 9px 2px rgba(240,200,74,0.55)}50%{box-shadow:0 0 0 9999px rgba(0,0,0,0.72), 0 0 22px 6px rgba(240,200,74,0.95)}}
 .tour-spot{animation:tourGlow 1.5s ease-in-out infinite;}
+/* ── The Game of Thrones: card flip + reveal ─────────────────────────────── */
+.got-flip{perspective:1100px;}
+.got-flip-inner{position:relative;width:100%;height:100%;transition:transform 0.72s cubic-bezier(0.45,0.05,0.2,1);transform-style:preserve-3d;}
+.got-flip-inner.flipped{transform:rotateY(180deg);}
+.got-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;border-radius:14px;overflow:hidden;}
+.got-face-rev{transform:rotateY(180deg);}
+@keyframes gotPop{from{opacity:0;transform:translateY(8px) scale(0.96)}to{opacity:1;transform:none}}
+.got-pop{animation:gotPop 0.3s ease both;}
 h1{font-family:'Cinzel',serif;font-size:1.4rem;font-weight:900;color:var(--gold2);letter-spacing:0.08em;text-align:center;}
 h2{font-family:'Cinzel',serif;font-size:1rem;font-weight:700;color:var(--gold);}
 /* ── screen transitions ──────────────────────────────────────────────────── */
@@ -7045,6 +7053,7 @@ function genFeaturedHouse() {
 function collDefaultSave() {
   return { gold:100, rerolls:0, owned:[], lastDailyPull:null, lastDailyReward:null,
            storeRefresh:null, storeShowcase:[], featuredHouse:null, featuredHouseCards:{}, tutorialSeen:false,
+           storeClosedUntil:null, gotPending:null, // The Game of Thrones: store-closed timer + pending loss-choice marker
            stats:{ games:0, wins:0, totalScore:0, cardPlays:{}, cardScores:{} },
            // House Wars: separate stats/streak, the 3-in-a-row rotation tracker, pending wheel
            // spins, and an "active game" marker used to penalise quitting / closing mid-match.
@@ -7062,34 +7071,87 @@ function saveCollSave(s) {
 
 // All collector cards (generated)
 function getCollCards() { return window.COLLECTOR_CARDS || []; }
+// Synthetic-id suffixes layered onto a base card id:
+//   "<id>__god"      → God tier: ALL position scores x2 (only via Evolving a Mythic)
+//   "<id>__m<delta>" → stat mod: +delta to EVERY position score (Upgrade +3 / Degrade -3);
+//                      delta may be negative and scores may go below 0.
+// Both can combine, e.g. "<id>__god__m3". Overall is recomputed as the sum of scores.
+function collStripId(id) { return typeof id === 'string' ? id.replace(/__m-?\d+$/, '').replace(/__god$/, '') : id; }
 function getCollCard(id) {
-  // Synthetic "God tier" cards (only obtainable by Evolving a Mythic): id is
-  // "<mythicId>__god" and the card is that Mythic with ALL scores x2.
-  if (typeof id === 'string' && id.slice(-5) === '__god') {
-    const base = getCollCards().find(c => c.id === id.slice(0, -5));
-    if (!base) return undefined;
-    const scores = {};
-    Object.keys(base.scores || {}).forEach(k => { scores[k] = (base.scores[k] || 0) * 2; });
-    return { ...base, id, tier: 'god', scores, overall: Math.round((base.overall || 0) * 2 * 10) / 10, _god: true };
-  }
-  return getCollCards().find(c => c.id === id);
+  if (typeof id !== 'string') return undefined;
+  let modDelta = 0, isGod = false, baseId = id;
+  const mMatch = baseId.match(/__m(-?\d+)$/);
+  if (mMatch) { modDelta = parseInt(mMatch[1], 10) || 0; baseId = baseId.slice(0, mMatch.index); }
+  if (baseId.slice(-5) === '__god') { isGod = true; baseId = baseId.slice(0, -5); }
+  const base = getCollCards().find(c => c.id === baseId);
+  if (!base) return undefined;
+  if (!isGod && !modDelta) return base; // plain card — return the pool object unchanged
+  // `scores` carries the 10 court-position keys (plus an embedded 'overall'); only the
+  // positions get x2 (god) and +delta (mod). Overall is derived from base.overall.
+  const scores = { ...base.scores };
+  COLL_POS.forEach(p => { scores[p.id] = Math.round(((base.scores[p.id] || 0) * (isGod ? 2 : 1) + modDelta) * 10) / 10; });
+  const overall = Math.round(((base.overall || 0) * (isGod ? 2 : 1) + modDelta * COLL_POS.length) * 10) / 10;
+  scores.overall = overall;
+  return { ...base, id, tier: isGod ? 'god' : base.tier, scores, overall, _god: isGod, _mod: modDelta };
+}
+// Apply a +/- position-score mod to a card id, combining with any existing mod (keeps __god).
+function collApplyMod(id, delta) {
+  let g = '', baseId = id;
+  const mMatch = baseId.match(/__m(-?\d+)$/);
+  let cur = 0;
+  if (mMatch) { cur = parseInt(mMatch[1], 10) || 0; baseId = baseId.slice(0, mMatch.index); }
+  if (baseId.slice(-5) === '__god') { g = '__god'; baseId = baseId.slice(0, -5); }
+  const next = cur + delta;
+  return baseId + g + (next === 0 ? '' : '__m' + next);
 }
 
 // God ranks above every pool tier; used for sorting/labeling (NOT pool generation).
 function collTierRank(tier) { return tier === 'god' ? COLL_TIER_ORDER.length : COLL_TIER_ORDER.indexOf(tier); }
 
-// Where a duplicate of `card` evolves to: same character one tier up, or a
-// synthetic God card if it's already Mythic. null = no higher tier exists.
+// Where `card` evolves to: same character one tier UP, or a synthetic God card if it's
+// already Mythic. Any stat-mod (+3/-3 Upgrade/Degrade) is CARRIED OVER to the new tier so
+// effects stack across evolves. null = already top.
 function collEvolveTargetId(card, owned) {
   if (card.tier === 'god') return null;            // already the top tier
-  if (card.tier === 'mythic') return card.id + '__god';
-  const nextTier = COLL_TIER_ORDER[COLL_TIER_ORDER.indexOf(card.tier) + 1];
-  if (!nextTier) return null;
-  const pool = getCollCards().filter(c => c.charId === card.charId && c.tier === nextTier);
-  if (!pool.length) return null;
-  const notOwned = pool.filter(c => !(owned || []).includes(c.id));
-  const pick = notOwned.length ? notOwned : pool;
-  return pick[Math.floor(Math.random() * pick.length)].id;
+  const baseId = collStripId(card.id);
+  const base = getCollCards().find(c => c.id === baseId);
+  if (!base) return null;
+  const mMatch = String(card.id).match(/__m(-?\d+)$/);
+  const delta = mMatch ? (parseInt(mMatch[1], 10) || 0) : 0;
+  let target;
+  if (base.tier === 'mythic') {
+    target = baseId + '__god';
+  } else {
+    const nextTier = COLL_TIER_ORDER[COLL_TIER_ORDER.indexOf(base.tier) + 1];
+    if (!nextTier) return null;
+    const pool = getCollCards().filter(c => c.charId === base.charId && c.tier === nextTier);
+    if (!pool.length) return null;
+    const notOwned = pool.filter(c => !(owned || []).includes(c.id));
+    const pick = notOwned.length ? notOwned : pool;
+    target = pick[Math.floor(Math.random() * pick.length)].id;
+  }
+  return delta ? collApplyMod(target, delta) : target;
+}
+// Where `card` devolves to: same character one tier DOWN (God → its base Mythic). Any stat-mod
+// (+3/-3) is CARRIED OVER. Starters are unaffected (null). Every identity spans all tiers, so a target exists.
+function collDevolveTargetId(card) {
+  const baseId = collStripId(card.id);
+  const base = getCollCards().find(c => c.id === baseId);
+  if (!base) return null;
+  const mMatch = String(card.id).match(/__m(-?\d+)$/);
+  const delta = mMatch ? (parseInt(mMatch[1], 10) || 0) : 0;
+  let target;
+  if (card.tier === 'god') {
+    target = baseId;                               // God → the underlying Mythic
+  } else {
+    if (base.tier === 'starter') return null;      // Starters can't devolve
+    const prevTier = COLL_TIER_ORDER[COLL_TIER_ORDER.indexOf(base.tier) - 1];
+    if (!prevTier) return null;
+    const pool = getCollCards().filter(c => c.charId === base.charId && c.tier === prevTier);
+    if (!pool.length) return null;
+    target = pool[Math.floor(Math.random() * pool.length)].id;
+  }
+  return delta ? collApplyMod(target, delta) : target;
 }
 
 // Add a card to an owned[] list. Owning a card no longer blocks it from pools;
@@ -7110,6 +7172,74 @@ function collAcquire(owned, cardId) {
   newOwned.splice(newOwned.indexOf(cardId), 1); // consume the existing copy
   newOwned.push(targetId);                        // add the evolved card
   return { owned: newOwned, evolved: true, card: getCollCard(targetId), from: card };
+}
+
+// ─── The Game of Thrones: Win or Die ────────────────────────────────────────
+// Pick 1 of 10 face-down cards (5 Win + 5 Loss, drawn from these pools). The effect is
+// applied the instant a card is tapped (see CollectorGoT). `kind` drives the handler.
+const GOT_WIN_CARDS = [
+  { id:'win50',  name:'Win 50 Gold',  kind:'gold', amount:50,  icon:'🪙', desc:'+50 Gold to your balance.' },
+  { id:'win100', name:'Win 100 Gold', kind:'gold', amount:100, icon:'🪙', desc:'+100 Gold to your balance.' },
+  { id:'win250', name:'Win 250 Gold', kind:'gold', amount:250, icon:'💰', desc:'+250 Gold to your balance.' },
+  { id:'win500', name:'Win 500 Gold', kind:'gold', amount:500, icon:'💰', desc:'+500 Gold to your balance.' },
+  { id:'cardMythic',    name:'Mythic Card',    kind:'randomCard', tier:'mythic',    icon:'🃏', desc:'Receive a random Mythic card.' },
+  { id:'cardLegendary', name:'Legendary Card', kind:'randomCard', tier:'legendary', icon:'🃏', desc:'Receive a random Legendary card.' },
+  { id:'cardHero',      name:'Hero Card',      kind:'randomCard', tier:'hero',      icon:'🃏', desc:'Receive a random Hero card.' },
+  { id:'cardRare',      name:'Rare Card',      kind:'randomCard', tier:'rare',      icon:'🃏', desc:'Receive a random Rare card.' },
+  { id:'cardUncommon',  name:'Uncommon Card',  kind:'randomCard', tier:'uncommon',  icon:'🃏', desc:'Receive a random Uncommon card.' },
+  { id:'cardStarter',   name:'Starter Card',   kind:'randomCard', tier:'starter',   icon:'🃏', desc:'Receive a random Starter card.' },
+  { id:'evolve',     name:'Evolve Card',    kind:'evolveChoose',  icon:'✦', desc:'Evolve a card of your choosing one tier up.' },
+  { id:'massEvolve', name:'Mass Evolve',    kind:'massEvolve',    icon:'🌟', desc:'EVERY card in your deck levels up one tier.' },
+  { id:'identity',   name:'Identity Pull',  kind:'identityPull',  icon:'🔮', desc:'Search a character and claim a variant at your deck strength.' },
+  { id:'upgrade',    name:'Upgrade Card',   kind:'upgradeChoose', icon:'⚒️', desc:'+3 to every position score of a card you choose.' },
+  { id:'spin',       name:'Spin the Wheel', kind:'spinWheel',     icon:'🎡', desc:'Spin the wheel for a bonus card.' },
+];
+const GOT_LOSS_CARDS = [
+  { id:'lose50',  name:'Lose 50 Gold',  kind:'gold', amount:-50,  icon:'💸', desc:'−50 Gold from your balance.' },
+  { id:'lose100', name:'Lose 100 Gold', kind:'gold', amount:-100, icon:'💸', desc:'−100 Gold from your balance.' },
+  { id:'lose250', name:'Lose 250 Gold', kind:'gold', amount:-250, icon:'💸', desc:'−250 Gold from your balance.' },
+  { id:'lose500', name:'Lose 500 Gold', kind:'gold', amount:-500, icon:'💸', desc:'−500 Gold from your balance.' },
+  { id:'loseBest',     name:'Lose Best Card',    kind:'loseBest',     icon:'💔', desc:'Lose the highest-Overall card in your deck.' },
+  { id:'loseChoose',   name:'Lose Card',         kind:'loseChoose',   icon:'🗡️', desc:'Surrender a card of your choosing.' },
+  { id:'bestDevolve',  name:'Best Card Devolve', kind:'bestDevolve',  icon:'🔻', desc:'Your highest-Overall card drops a tier.' },
+  { id:'devolveChoose',name:'Devolve Card',      kind:'devolveChoose',icon:'⬇️', desc:'Drop a card of your choosing one tier.' },
+  { id:'massDevolve',  name:'Mass Devolve',      kind:'massDevolve',  icon:'⏬', desc:'EVERY card drops one tier (Starters safe).' },
+  { id:'degradeBest',  name:'Degrade Best Card', kind:'degradeBest',  icon:'📉', desc:'−3 to all position scores of your best card.' },
+  { id:'massDegrade',  name:'Mass Degrade',      kind:'massDegrade',  icon:'🩸', desc:'−3 to all position scores of every card.' },
+  { id:'degradeChoose',name:'Degrade Card',      kind:'degradeChoose',icon:'➖', desc:'−3 to all position scores of a chosen card.' },
+  { id:'storeClosed',  name:'Store Closed',      kind:'storeClosed',  icon:'🔒', desc:'The store closes for 23h 59m.' },
+  { id:'dailyWait',    name:'Daily Wait',        kind:'dailyWait',    icon:'⏳', desc:'Your Daily Pull timer resets to 23h 59m.' },
+  { id:'genocide',     name:'Genocide',          kind:'genocide',     icon:'💀', desc:'Every card of one random House is wiped from your deck.' },
+];
+const GOT_CHOICE_KINDS = new Set(['evolveChoose','upgradeChoose','loseChoose','devolveChoose','degradeChoose','identityPull','spinWheel']);
+const GOT_LOSS_CHOICE_KINDS = new Set(['loseChoose','devolveChoose','degradeChoose']); // anti-dodge: persist a pending marker
+const GOT_CLOSE_MS = (23*60 + 59) * 60 * 1000;
+
+function genGotBoard() {
+  const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
+  const wins = shuffle(GOT_WIN_CARDS.slice()).slice(0,5).map(c => ({ ...c, win:true }));
+  const losses = shuffle(GOT_LOSS_CARDS.slice()).slice(0,5).map(c => ({ ...c, win:false }));
+  return shuffle(wins.concat(losses));
+}
+function gotRandomTierCard(tier) { const pool = getCollCards().filter(c => c.tier === tier); return pool.length ? pool[Math.floor(Math.random()*pool.length)] : null; }
+function gotMassEvolve(owned) { return (owned||[]).map(id => { const c=getCollCard(id); const t=c&&collEvolveTargetId(c,owned); return t||id; }); }
+function gotMassDevolve(owned) { return (owned||[]).map(id => { const c=getCollCard(id); const t=c&&collDevolveTargetId(c); return t||id; }); }
+function gotMassDegrade(owned) { return (owned||[]).map(id => collApplyMod(id, -3)); }
+function gotHighestIndex(owned) { let bi=-1, bo=-Infinity; (owned||[]).forEach((id,i) => { const c=getCollCard(id); const o=c?(c.overall||0):-Infinity; if (o>bo){ bo=o; bi=i; } }); return bi; }
+function gotEligibleHouses(owned) { const set=new Set(); (owned||[]).forEach(id => { const c=getCollCard(id); ((c&&c.houses)||[]).forEach(h => set.add(h)); }); return [...set]; }
+// Wipe one random House from the deck; if that would drop below 20 cards, remove only the
+// highest-Overall of that House until exactly 20 remain.
+function gotGenocide(owned) {
+  owned = (owned||[]).slice();
+  const houses = gotEligibleHouses(owned);
+  if (!houses.length) return { owned, house:null, removed:0 };
+  const house = houses[Math.floor(Math.random()*houses.length)];
+  const inHouse = owned.map((id,i) => ({ i, card:getCollCard(id) })).filter(x => x.card && (x.card.houses||[]).includes(house));
+  const maxRemovable = Math.max(0, owned.length - 20);
+  const toRemove = inHouse.length <= maxRemovable ? inHouse
+    : inHouse.slice().sort((a,b) => (b.card.overall||0) - (a.card.overall||0)).slice(0, maxRemovable);
+  const rm = new Set(toRemove.map(x => x.i));
+  return { owned: owned.filter((_,i) => !rm.has(i)), house, removed: toRemove.length };
 }
 
 // Player's average deck overall → tier label
@@ -9762,6 +9892,327 @@ function CollectorHouseWarsResult({ result, reward, onClaim, onDiscard }) {
 }
 function p_arrow_legend() { return '◄ you win the seat · ► CPU wins · = tie'; }
 
+// ─── The Game of Thrones: Win or Die — pick 1 of 10, instant Win/Loss ───────
+function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
+  const T = window.COLLECTOR_TIERS || {};
+  const [board] = React.useState(genGotBoard);
+  const [picked, setPicked] = React.useState(null);
+  const [stage, setStage] = React.useState('intro'); // intro | pick | reveal | done | <choiceKind>
+  const [postReveal, setPostReveal] = React.useState('done'); // where the flip reveal advances to
+  const [flipped, setFlipped] = React.useState(false);
+  const [revealed, setRevealed] = React.useState(false);
+  const [summary, setSummary] = React.useState('');
+  const [reward, setReward] = React.useState(null);
+  const [rewardEvolved, setRewardEvolved] = React.useState(false);
+  const [idQuery, setIdQuery] = React.useState('');
+  const [idChar, setIdChar] = React.useState(null);
+  const [detailCard, setDetailCard] = React.useState(null);
+  const cardObj = picked != null ? board[picked] : null;
+
+  function commit(ns) { saveCollSave(ns); onUpdate(ns); }
+  function finishChoice(ns, summaryText, rewardCard) {
+    commit({ ...ns, gotPending: null });
+    if (summaryText) setSummary(summaryText);
+    if (rewardCard !== undefined) setReward(rewardCard);
+    setStage('done');
+  }
+
+  // Drive the card-flip + staged reveal whenever we enter the reveal stage.
+  React.useEffect(() => {
+    if (stage !== 'reveal') return;
+    setFlipped(false); setRevealed(false);
+    const t1 = setTimeout(() => setFlipped(true), 60);
+    const t2 = setTimeout(() => setRevealed(true), 820);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [stage, picked]);
+
+  function pick(i) {
+    if (picked != null) return;
+    setPicked(i);
+    const c = board[i], k = c.kind;
+    // Apply the effect SYNCHRONOUSLY the instant the card is touched (anti-dodge); the flip
+    // reveal that follows is purely cosmetic. `next` = the stage the reveal advances into.
+    let next = 'done';
+    if (k === 'gold') { commit({ ...save, gold: (save.gold||0) + c.amount }); setSummary(`${c.amount>=0?'+':''}${c.amount} Gold`); }
+    else if (k === 'randomCard') { const got = gotRandomTierCard(c.tier); if (got) { const res = collAcquire(save.owned||[], got.id); commit({ ...save, owned: res.owned }); setReward(res.evolved?res.card:got); setRewardEvolved(res.evolved); } }
+    else if (k === 'massEvolve') { commit({ ...save, owned: gotMassEvolve(save.owned) }); setSummary('Every card in your deck leveled up a tier!'); }
+    else if (k === 'massDevolve') { commit({ ...save, owned: gotMassDevolve(save.owned) }); setSummary('Every card dropped a tier (Starters spared).'); }
+    else if (k === 'massDegrade') { commit({ ...save, owned: gotMassDegrade(save.owned) }); setSummary('−3 to every position score, on every card.'); }
+    else if (k === 'loseBest') { const bi=gotHighestIndex(save.owned); const o=[...(save.owned||[])]; const lost=bi>=0?getCollCard(o[bi]):null; if(bi>=0)o.splice(bi,1); commit({ ...save, owned:o }); setSummary(lost?`Lost ${lost.name}.`:'—'); }
+    else if (k === 'bestDevolve') { const bi=gotHighestIndex(save.owned); const o=[...(save.owned||[])]; const cc=bi>=0?getCollCard(o[bi]):null; const t=cc&&collDevolveTargetId(cc); if(t)o[bi]=t; commit({ ...save, owned:o }); setSummary(cc?(t?`${cc.name} devolved a tier.`:`${cc.name} is a Starter — spared.`):'—'); }
+    else if (k === 'degradeBest') { const bi=gotHighestIndex(save.owned); const o=[...(save.owned||[])]; const cc=bi>=0?getCollCard(o[bi]):null; if(bi>=0)o[bi]=collApplyMod(o[bi],-3); commit({ ...save, owned:o }); setSummary(cc?`−3 to every position of ${cc.name}.`:'—'); }
+    else if (k === 'storeClosed') { commit({ ...save, storeClosedUntil: Date.now()+GOT_CLOSE_MS }); setSummary('The store is barred for 23h 59m.'); }
+    else if (k === 'dailyWait') { commit({ ...save, lastDailyPull: Date.now() }); setSummary('Your Daily Pull timer is reset to 23h 59m.'); }
+    else if (k === 'genocide') { const r=gotGenocide(save.owned); commit({ ...save, owned:r.owned }); setSummary(r.house?`House ${r.house} purged — ${r.removed} card${r.removed!==1?'s':''} surrendered.`:'No House to purge.'); }
+    else if (k === 'spinWheel') { commit({ ...save }); next = 'spin'; }
+    else { if (GOT_LOSS_CHOICE_KINDS.has(k)) commit({ ...save, gotPending: { kind:k } }); next = k; } // choice kinds (loss choices locked for anti-dodge)
+    setPostReveal(next);
+    setStage('reveal');
+  }
+
+  function doEvolve(i) { const o=[...(save.owned||[])]; const cc=getCollCard(o[i]); const t=collEvolveTargetId(cc, save.owned); if(t){ o[i]=t; setRewardEvolved(true); finishChoice({ ...save, owned:o }, null, getCollCard(t)); } else finishChoice({ ...save }, 'That card is already at the top tier.'); }
+  function doUpgrade(i) { const o=[...(save.owned||[])]; const cc=getCollCard(o[i]); o[i]=collApplyMod(o[i], 3); finishChoice({ ...save, owned:o }, `+3 to every position of ${cc?cc.name:'your card'}!`, getCollCard(o[i])); }
+  function doLose(i) { const o=[...(save.owned||[])]; const cc=getCollCard(o[i]); o.splice(i,1); finishChoice({ ...save, owned:o }, `Surrendered ${cc?cc.name:'a card'}.`); }
+  function doDevolve(i) { const o=[...(save.owned||[])]; const cc=getCollCard(o[i]); const t=collDevolveTargetId(cc); if(!t)return; o[i]=t; finishChoice({ ...save, owned:o }, `${cc?cc.name:'Card'} devolved a tier.`); }
+  function doDegrade(i) { const o=[...(save.owned||[])]; const cc=getCollCard(o[i]); o[i]=collApplyMod(o[i],-3); finishChoice({ ...save, owned:o }, `−3 to every position of ${cc?cc.name:'your card'}.`); }
+  function doIdentityClaim(id) { const res=collAcquire(save.owned||[], id); setRewardEvolved(res.evolved); finishChoice({ ...save, owned:res.owned }, null, res.evolved?res.card:getCollCard(id)); }
+
+  // ── card-picker for the choice effects ──
+  const isLossChoice = GOT_LOSS_CHOICE_KINDS.has(stage);
+  function ownedGrid(onPickCard, disableFn) {
+    const entries = (save.owned||[]).map((id,i)=>({ id, i, card:getCollCard(id) })).filter(e=>e.card)
+      .sort((a,b)=>(b.card.overall||0)-(a.card.overall||0));
+    return (
+      <div className="scroll" style={{ flex:1, overflowY:'auto', marginTop:8 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:6 }}>
+          {entries.map(e => { const c=e.card; const ct=T[c.tier]||{color:'#888',bg:'#111'}; const disabled=disableFn&&disableFn(c); return (
+            <div key={e.i} onClick={()=>{ if(!disabled) onPickCard(e.i); }} style={{ border:`2px solid ${ct.color}`, borderRadius:6, padding:'7px 9px', background:ct.bg, cursor:disabled?'not-allowed':'pointer', opacity:disabled?0.4:1 }}>
+              <div style={{ fontSize:'0.66rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
+                <CollTierBadge tier={c.tier} />
+                <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.72rem' }}>{c.overall}</span>
+              </div>
+            </div>
+          ); })}
+        </div>
+      </div>
+    );
+  }
+
+  const cardBack = (i) => i % 2 === 0 ? '👑' : '⚔️';
+  const wrap = (children) => (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {detailCard && <CollDetailModal card={detailCard} onClose={()=>setDetailCard(null)} />}
+      <div className="nav-bar"><div style={{ flex:1, textAlign:'center' }}>
+        <div className="nav-title" style={{ fontSize:'0.85rem' }}>👑 THE GAME OF THRONES ⚔️</div>
+        <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>Win or Die</div>
+      </div></div>
+      {children}
+    </div>
+  );
+
+  // ── card faces ──
+  const coverFace = (i) => (
+    <div style={{ width:'100%', height:'100%', borderRadius:14, border:'2px solid var(--gold)', background:'linear-gradient(160deg,#1a1206,#0b0905)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'3rem', boxShadow:'inset 0 0 26px rgba(0,0,0,0.6)' }}>
+      <span style={{ filter:'drop-shadow(0 0 10px rgba(212,168,48,0.85))' }}>{cardBack(i)}</span>
+    </div>
+  );
+  const effectFace = (c) => {
+    const win = c && c.win;
+    const accent = win ? 'var(--gold2,#f0c84a)' : '#e05555';
+    const bg = win ? 'linear-gradient(165deg,#241a06,#0c0a05)' : 'linear-gradient(165deg,#2a0d0d,#0c0605)';
+    return (
+      <div style={{ width:'100%', height:'100%', background:bg, border:`2px solid ${accent}`, borderRadius:14, padding:'16px 14px', display:'flex', flexDirection:'column', alignItems:'center', textAlign:'center', boxShadow:`inset 0 0 40px ${win?'rgba(240,200,74,0.14)':'rgba(224,85,85,0.16)'}` }}>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.62rem', letterSpacing:'0.2em', color:accent, fontWeight:700 }}>{win?'A WIN':'A LOSS'}</div>
+        <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'3.6rem', filter:`drop-shadow(0 0 16px ${win?'rgba(240,200,74,0.6)':'rgba(224,85,85,0.6)'})` }}>{c&&c.icon}</div>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', fontWeight:800, color:accent }}>{c&&c.name}</div>
+        <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginTop:7, lineHeight:1.45 }}>{c&&c.desc}</div>
+      </div>
+    );
+  };
+  // Full character-card display (mirrors CollDetailModal — same as tapping a card in My Deck).
+  const characterFace = (card, evolved) => {
+    if (!card) return null;
+    const ct = T[card.tier] || { color:'#888', bg:'#111' };
+    return (
+      <div style={{ width:'100%', height:'100%', background:`linear-gradient(165deg, ${ct.bg||'#120d06'}, #0a0805)`, border:`2px solid ${ct.color}`, borderRadius:14, padding:'12px 13px', display:'flex', flexDirection:'column', boxShadow:`inset 0 0 34px ${ct.color}22` }}>
+        {evolved && <div style={{ textAlign:'center', fontSize:'0.6rem', color:'var(--gold)', fontWeight:800, letterSpacing:'0.1em', marginBottom:3 }}>✦ IT EVOLVED!</div>}
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.92rem', color:ct.color, fontWeight:800, lineHeight:1.15, textAlign:'center' }}>{card.name}</div>
+        <div style={{ fontSize:'0.52rem', color:'var(--text2)', textAlign:'center', marginTop:2 }}>{card.identity||card.name} · {card.gender==='F'?'♀ Female':'♂ Male'} · Age {card.age}</div>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:9, marginTop:6 }}>
+          <CollTierBadge tier={card.tier} />
+          <span style={{ fontFamily:'Cinzel,serif', fontWeight:800, color:ct.color, fontSize:'1.05rem' }}>{card.overall}</span>
+        </div>
+        {!!(card.houses||[]).length && <div style={{ fontSize:'0.46rem', color:'var(--text2)', textAlign:'center', marginTop:3 }}>{(card.houses||[]).join(' · ')}</div>}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'1px 10px', marginTop:7, paddingTop:6, borderTop:`1px solid ${ct.color}33`, flex:1, alignContent:'start' }}>
+          {COLL_POS.map(p => { const sc=(card.scores&&card.scores[p.id])||0; return (
+            <div key={p.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'0.5rem' }}>
+              <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
+              <span style={{ color: sc>=9?'#ffd700':sc>=7?ct.color:'var(--text)', fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+            </div>
+          ); })}
+        </div>
+      </div>
+    );
+  };
+
+  // ── INTRO / PREVIEW SCREEN ──
+  if (stage === 'intro') {
+    const introRow = (c, win) => { const accent = win ? 'var(--gold2,#f0c84a)' : '#e05555'; return (
+      <div key={c.id} style={{ display:'flex', gap:8, alignItems:'flex-start', padding:'5px 8px', borderLeft:`2px solid ${accent}`, background:'rgba(255,255,255,0.02)', borderRadius:'0 6px 6px 0', marginBottom:5 }}>
+        <div style={{ fontSize:'1.05rem', lineHeight:1.1, width:18, textAlign:'center', flexShrink:0 }}>{c.icon}</div>
+        <div style={{ minWidth:0 }}>
+          <div style={{ fontSize:'0.62rem', color:accent, fontWeight:700, fontFamily:'Cinzel,serif' }}>{c.name}</div>
+          <div style={{ fontSize:'0.54rem', color:'var(--text2)', lineHeight:1.35 }}>{c.desc}</div>
+        </div>
+      </div>
+    ); };
+    return wrap(
+      <div className="scroll" style={{ flex:1, overflowY:'auto', padding:'10px 16px 4px' }}>
+        <div style={{ textAlign:'center', fontSize:'0.66rem', color:'var(--text2)', lineHeight:1.5, maxWidth:540, margin:'0 auto 12px' }}>
+          Ten cards will be laid face-down — <b style={{ color:'var(--gold2,#f0c84a)' }}>5 Win</b> and <b style={{ color:'#e05555' }}>5 Loss</b>, drawn from the pools below and shuffled. You pick <b>one</b>; its fate is sealed the instant you touch it. Here is everything that could befall you:
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, maxWidth:600, margin:'0 auto' }}>
+          <div>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.78rem', color:'var(--gold2,#f0c84a)', textAlign:'center', fontWeight:700, marginBottom:7, letterSpacing:'0.05em' }}>👑 WIN CARDS</div>
+            {GOT_WIN_CARDS.map(c => introRow(c, true))}
+          </div>
+          <div>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.78rem', color:'#e05555', textAlign:'center', fontWeight:700, marginBottom:7, letterSpacing:'0.05em' }}>⚔️ LOSS CARDS</div>
+            {GOT_LOSS_CARDS.map(c => introRow(c, false))}
+          </div>
+        </div>
+        <div style={{ maxWidth:300, margin:'16px auto 8px' }}>
+          <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.08em' }} onClick={()=>setStage('pick')}>Enter the Game →</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── PICK SCREEN ──
+  if (stage === 'pick') {
+    return wrap(
+      <div className="scroll" style={{ flex:1, display:'flex', flexDirection:'column', padding:'14px 16px' }}>
+        <div style={{ textAlign:'center', fontSize:'0.7rem', color:'var(--text2)', marginBottom:4 }}>5 Win cards · 5 Loss cards, hidden &amp; shuffled.</div>
+        <div style={{ textAlign:'center', fontSize:'0.6rem', color:'#e0a84a', marginBottom:14 }}>Choose one. Its fate is sealed the instant you touch it — no take-backs.</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:8, maxWidth:560, margin:'0 auto', width:'100%' }}>
+          {board.map((c,i) => (
+            <div key={i} onClick={()=>pick(i)} style={{ aspectRatio:'2/3', borderRadius:10, border:'2px solid var(--gold)', background:'linear-gradient(160deg,#1a1206,#0b0905)', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', boxShadow:'0 3px 12px rgba(0,0,0,0.6)', transition:'transform .12s', fontSize:'1.7rem' }}
+              onMouseDown={e=>e.currentTarget.style.transform='scale(0.95)'} onMouseUp={e=>e.currentTarget.style.transform='scale(1)'} onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}>
+              <span style={{ filter:'drop-shadow(0 0 6px rgba(212,168,48,0.7))' }}>{cardBack(i)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── FLIP REVEAL SCREEN ──
+  if (stage === 'reveal') {
+    const isChar = cardObj && cardObj.kind === 'randomCard';
+    const win = cardObj && cardObj.win;
+    const accent = win ? 'var(--gold2,#f0c84a)' : '#e05555';
+    return wrap(
+      <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'10px 16px' }}>
+        <div className="got-flip" style={{ width:236, height:354, flexShrink:0 }}>
+          <div className={'got-flip-inner' + (flipped ? ' flipped' : '')}>
+            <div className="got-face">{coverFace(picked == null ? 0 : picked)}</div>
+            <div className="got-face got-face-rev">{isChar ? (reward ? characterFace(reward, rewardEvolved) : effectFace(cardObj)) : effectFace(cardObj)}</div>
+          </div>
+        </div>
+        {revealed && !isChar && summary && postReveal === 'done' && (
+          <div className="got-pop" style={{ fontSize:'0.72rem', color:accent, fontFamily:'Cinzel,serif', marginTop:14, textAlign:'center', maxWidth:300 }}>{summary}</div>
+        )}
+        {revealed && (
+          <div className="got-pop" style={{ marginTop:16, width:'100%', maxWidth:300 }}>
+            {postReveal === 'done' && <button className="btn btn-gold" style={{ width:'100%', padding:'12px' }} onClick={onDone}>Continue</button>}
+            {postReveal === 'spin' && <button className="btn btn-gold" style={{ width:'100%', padding:'12px' }} onClick={()=>onSpin && onSpin()}>Spin the Wheel →</button>}
+            {postReveal !== 'done' && postReveal !== 'spin' && (
+              <button className="btn btn-gold" style={{ width:'100%', padding:'12px' }} onClick={()=>setStage(postReveal)}>Choose your card →</button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── RESULT + CHOICE SCREENS ──
+  const isWin = cardObj && cardObj.win;
+  const accent = isWin ? 'var(--gold2,#f0c84a)' : '#e05555';
+  const header = (
+    <div style={{ textAlign:'center', padding:'14px 16px 6px' }}>
+      <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.4rem', fontWeight:800, color:accent, textShadow:`0 0 16px ${isWin?'rgba(240,200,74,0.5)':'rgba(224,85,85,0.5)'}` }}>{isWin?'👑 A WIN!':'⚔️ A LOSS'}</div>
+      <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:accent, marginTop:4 }}>{cardObj?cardObj.name:''}</div>
+      <div style={{ fontSize:'0.66rem', color:'var(--text2)', marginTop:4, lineHeight:1.5 }}>{cardObj?cardObj.desc:''}</div>
+    </div>
+  );
+
+  if (stage === 'done') {
+    return wrap(
+      <div style={{ flex:1, display:'flex', flexDirection:'column' }}>
+        {header}
+        <div className="scroll" style={{ flex:1, padding:'6px 16px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
+          {reward ? (
+            <div className="got-pop" style={{ width:228, height:340, flexShrink:0 }}>{characterFace(reward, rewardEvolved)}</div>
+          ) : (
+            <div style={{ fontSize:'0.85rem', color:isWin?'var(--gold)':'#e05555', fontFamily:'Cinzel,serif', marginTop:10, textAlign:'center' }}>{summary}</div>
+          )}
+        </div>
+        <div style={{ padding:'10px 16px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+          <button className="btn btn-gold" style={{ width:'100%', padding:'13px' }} onClick={onDone}>Continue</button>
+        </div>
+      </div>
+    );
+  }
+
+  // choice picker stages
+  let pickFn = null, disableFn = null, instruction = '';
+  if (stage === 'evolveChoose') { pickFn = doEvolve; disableFn = c => c.tier==='god'; instruction = 'Choose a card to EVOLVE one tier up:'; }
+  else if (stage === 'upgradeChoose') { pickFn = doUpgrade; instruction = 'Choose a card to UPGRADE (+3 to every position):'; }
+  else if (stage === 'loseChoose') { pickFn = doLose; instruction = 'You must SURRENDER one card — choose:'; }
+  else if (stage === 'devolveChoose') { pickFn = doDevolve; disableFn = c => c.tier==='starter'; instruction = 'You must DEVOLVE one card a tier — choose:'; }
+  else if (stage === 'degradeChoose') { pickFn = doDegrade; instruction = 'You must DEGRADE one card (−3 to every position) — choose:'; }
+
+  if (pickFn) {
+    return wrap(
+      <div style={{ flex:1, display:'flex', flexDirection:'column' }}>
+        {header}
+        <div style={{ fontSize:'0.66rem', color:isLossChoice?'#e05555':'var(--gold)', textAlign:'center', padding:'2px 16px' }}>{instruction}{isLossChoice && ' (required)'}</div>
+        <div style={{ flex:1, minHeight:0, padding:'0 16px', display:'flex', flexDirection:'column' }}>{ownedGrid(pickFn, disableFn)}</div>
+      </div>
+    );
+  }
+
+  // identity pull
+  if (stage === 'identityPull') {
+    const deckRank = collTierRank(deckTierLabel(save.owned));
+    if (!idChar) {
+      const q = idQuery.trim().toLowerCase();
+      const seen = new Set(); const ids = [];
+      getCollCards().forEach(c => { if (seen.has(c.charId)) return; const label = c.identity || c.name; if (!q || label.toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q)) { seen.add(c.charId); ids.push({ charId:c.charId, label }); } });
+      return wrap(
+        <div style={{ flex:1, display:'flex', flexDirection:'column' }}>
+          {header}
+          <div style={{ padding:'4px 16px' }}>
+            <input autoFocus value={idQuery} onChange={e=>setIdQuery(e.target.value)} placeholder="Search a character…" style={{ width:'100%', fontSize:'0.72rem', padding:'7px 10px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:6 }} />
+          </div>
+          <div className="scroll" style={{ flex:1, padding:'4px 16px' }}>
+            {ids.slice(0,40).map(x => (
+              <div key={x.charId} onClick={()=>setIdChar(x.charId)} style={{ padding:'8px 10px', borderBottom:'1px solid var(--border)', cursor:'pointer', fontSize:'0.72rem', color:'var(--text)' }}>{x.label}</div>
+            ))}
+            {ids.length===0 && <div style={{ fontSize:'0.65rem', color:'var(--text2)', padding:8 }}>No characters match.</div>}
+          </div>
+        </div>
+      );
+    }
+    const variants = getCollCards().filter(c => c.charId === idChar && collTierRank(c.tier) <= deckRank);
+    const ownedSet = new Set(save.owned||[]);
+    return wrap(
+      <div style={{ flex:1, display:'flex', flexDirection:'column' }}>
+        {header}
+        <div style={{ fontSize:'0.64rem', color:'var(--gold)', textAlign:'center', padding:'2px 16px' }}>Claim a variant at your deck strength (≤ {deckTierLabel(save.owned)}). Owned ones will <b>Evolve</b>.</div>
+        <button className="btn btn-ghost btn-sm" style={{ alignSelf:'flex-start', margin:'4px 16px', fontSize:'0.58rem' }} onClick={()=>setIdChar(null)}>← Search again</button>
+        <div className="scroll" style={{ flex:1, padding:'0 16px' }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:6 }}>
+            {variants.sort((a,b)=>collTierRank(b.tier)-collTierRank(a.tier)||b.overall-a.overall).map(c => { const ct=T[c.tier]||{color:'#888',bg:'#111'}; const own=ownedSet.has(c.id); return (
+              <div key={c.id} onClick={()=>doIdentityClaim(c.id)} style={{ border:`2px solid ${ct.color}`, borderRadius:6, padding:'7px 9px', background:ct.bg, cursor:'pointer', position:'relative' }}>
+                {own && <div style={{ position:'absolute', top:3, right:5, fontSize:'0.5rem', color:'var(--gold)' }}>OWNED ✦</div>}
+                <div style={{ fontSize:'0.66rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:own?28:0 }}>{c.name}</div>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
+                  <CollTierBadge tier={c.tier} /><span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.72rem' }}>{c.overall}</span>
+                </div>
+              </div>
+            ); })}
+            {variants.length===0 && <div style={{ fontSize:'0.65rem', color:'var(--text2)', padding:8 }}>No variants at or below your deck tier.</div>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return wrap(<div style={{ flex:1 }}>{header}</div>);
+}
+
 function CollectorWheel({ onDone, streak, spinsLeft }) {
   const T = window.COLLECTOR_TIERS || {};
   const [wheel] = React.useState(genWheelCards);
@@ -9918,6 +10369,20 @@ function CollectorHub({ onHome }) {
     if (active) applyHwAbandon(active);
   }, []);
 
+  // If The Game of Thrones was closed mid-choice on a LOSS card, apply it to a random card on load.
+  React.useEffect(() => {
+    const p = save.gotPending;
+    if (!p) return;
+    const owned = (save.owned||[]).slice();
+    if (!owned.length) { const ns={ ...save, gotPending:null }; saveCollSave(ns); setSave(ns); return; }
+    let name = null;
+    if (p.kind === 'loseChoose') { const i=Math.floor(Math.random()*owned.length); name=(getCollCard(owned[i])||{}).name; owned.splice(i,1); }
+    else if (p.kind === 'devolveChoose') { const cand=owned.map((id,i)=>({id,i,card:getCollCard(id)})).filter(e=>e.card&&collDevolveTargetId(e.card)); if(cand.length){ const pk=cand[Math.floor(Math.random()*cand.length)]; owned[pk.i]=collDevolveTargetId(pk.card); name=(pk.card||{}).name; } }
+    else if (p.kind === 'degradeChoose') { const i=Math.floor(Math.random()*owned.length); name=(getCollCard(owned[i])||{}).name; owned[i]=collApplyMod(owned[i],-3); }
+    const ns = { ...save, owned, gotPending:null }; saveCollSave(ns); setSave(ns);
+    setHwNotice(`You left The Game of Thrones before resolving a Loss card — it struck ${name||'a random card'}.`);
+  }, []);
+
   function handleStartingPullDone(cardIds) {
     const newSave = { ...save, tutorialSeen: true, owned: cardIds };
     saveCollSave(newSave);
@@ -9936,9 +10401,16 @@ function CollectorHub({ onHome }) {
   function startTraditional() { setGameMode('traditional'); setShowModeChoice(false); setScreen('wager'); }
   function startTourney() { setGameMode('tourney'); setShowModeChoice(false); setScreen('wager'); }
   function startHouseWars() {
-    if (hwEligibleHouses(save.owned).length === 0) return; // locked — no fieldable house
+    // HW & GoT can lose cards, so they require ≥21 (never drop below the 20-card minimum).
+    if ((save.owned||[]).length < 21 || hwEligibleHouses(save.owned).length === 0) return;
     setShowModeChoice(false); setScreen('hwSpin');
   }
+  function startGameOfThrones() {
+    if ((save.owned||[]).length < 21) return;
+    setShowModeChoice(false); setScreen('got');
+  }
+  function handleGotDone() { setScreen('hub'); }
+  function handleGotSpin() { setWheelSpinsLeft(1); setScreen('wheel'); } // GoT "Spin the Wheel" card
 
   function handleStartGame(wager) {
     setGameWager(wager);
@@ -10105,6 +10577,7 @@ function CollectorHub({ onHome }) {
   if (screen === 'hwLineup') return <CollectorHouseWarsLineup save={save} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onConfirm={handleHwLineupConfirm} onBackout={handleHwBackout} />;
   if (screen === 'hwGame' && hwLineup) return <CollectorHouseWarsGame playerCards={hwLineup.cards} cpuCards={hwCpuCards} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onEnd={handleHwEnd} />;
   if (screen === 'hwResult' && hwResult) return <CollectorHouseWarsResult result={hwResult} reward={hwReward} onClaim={handleHwClaim} onDiscard={handleHwDiscard} />;
+  if (screen === 'got') return <CollectorGoT save={save} onUpdate={handleUpdate} onDone={handleGotDone} onSpin={handleGotSpin} />;
   if (screen === 'wheel') return <React.Fragment>{evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}<CollectorWheel key={wheelSpinsLeft} spinsLeft={wheelSpinsLeft} onDone={handleWheelDone} streak={gameResult ? gameResult.winStreak : 5} /></React.Fragment>;
 
   return (
@@ -10120,7 +10593,11 @@ function CollectorHub({ onHome }) {
           </div>
         </div>
       )}
-      {showModeChoice && (() => { const hwElig = hwEligibleHouses(save.owned); const locked = hwElig.length === 0; return (
+      {showModeChoice && (() => {
+        const enough = (save.owned||[]).length >= 21; // HW & GoT can lose cards → need >20
+        const hwElig = hwEligibleHouses(save.owned);
+        const hwLocked = !enough || hwElig.length === 0;
+        return (
         <div onClick={()=>setShowModeChoice(false)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:400, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
           <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:340, width:'100%', borderColor:'var(--gold)' }}>
             <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:'var(--gold)', textAlign:'center', marginBottom:14 }}>Choose Your Game</div>
@@ -10132,14 +10609,19 @@ function CollectorHub({ onHome }) {
               🏆 Tourney
               <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>10 seats · 3 CPUs · winner takes the 4× pot</div>
             </button>
-            <button disabled={locked} onClick={startHouseWars} style={{ width:'100%', padding:'11px', background: locked?'var(--bg2)':'#7a1010', color: locked?'var(--text2)':'#fff', border:'1px solid '+(locked?'var(--border)':'#b01a1a'), borderRadius:8, cursor: locked?'not-allowed':'pointer', opacity: locked?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
-              {locked ? '🔒 House Wars' : '🏰 House Wars'}
-              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{locked ? 'Need 10 cards in one House to unlock' : `5 seats · ${hwElig.length} House${hwElig.length>1?'s':''} ready · card stakes`}</div>
+            <button disabled={hwLocked} onClick={startHouseWars} style={{ width:'100%', padding:'11px', marginBottom:10, background: hwLocked?'var(--bg2)':'#7a1010', color: hwLocked?'var(--text2)':'#fff', border:'1px solid '+(hwLocked?'var(--border)':'#b01a1a'), borderRadius:8, cursor: hwLocked?'not-allowed':'pointer', opacity: hwLocked?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
+              {hwLocked ? '🔒 House Wars' : '🏰 House Wars'}
+              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{!enough ? 'Need 21+ cards (cards are at stake)' : hwElig.length===0 ? 'Need 10 cards in one House to unlock' : `5 seats · ${hwElig.length} House${hwElig.length>1?'s':''} ready · card stakes`}</div>
+            </button>
+            <button disabled={!enough} onClick={startGameOfThrones} style={{ width:'100%', padding:'11px', background: !enough?'var(--bg2)':'#4a1d5f', color: !enough?'var(--text2)':'#fff', border:'1px solid '+(!enough?'var(--border)':'#a04ad0'), borderRadius:8, cursor: !enough?'not-allowed':'pointer', opacity: !enough?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
+              {!enough ? '🔒 The Game of Thrones' : '👑 The Game of Thrones'}
+              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{!enough ? 'Need 21+ cards to play' : 'Pick 1 of 10 · instant Win or Die'}</div>
             </button>
             <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:10, fontSize:'0.6rem' }} onClick={()=>setShowModeChoice(false)}>Cancel</button>
           </div>
         </div>
-      ); })()}
+        );
+      })()}
       {/* Nav bar */}
       <div className="nav-bar">
         <div className="nav-side">
@@ -10194,7 +10676,13 @@ function CollectorHub({ onHome }) {
         {tab === 'deck'  && <CollectorMyDeck save={save} onUpdate={handleUpdate} />}
         {tab === 'index' && <CollectorCardIndex save={save} />}
         {tab === 'stats' && <CollectorCardStats save={save} />}
-        {tab === 'store' && <CollectorStore save={save} onUpdate={handleUpdate} />}
+        {tab === 'store' && ((save.storeClosedUntil||0) > Date.now() ? (
+          <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', textAlign:'center', padding:24 }}>
+            <div style={{ fontSize:'2.4rem', marginBottom:10 }}>🔒</div>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color:'#e05555', fontWeight:700, marginBottom:6 }}>The Store Is Closed</div>
+            <div style={{ fontSize:'0.7rem', color:'var(--text2)', lineHeight:1.5 }}>A Game of Thrones misfortune barred the doors.<br/>Reopens in <span style={{ color:'var(--gold)', fontFamily:'Cinzel,serif' }}>{formatCountdown(save.storeClosedUntil - Date.now())}</span></div>
+          </div>
+        ) : <CollectorStore save={save} onUpdate={handleUpdate} />)}
         {tab === 'daily' && <CollectorDailySection save={save} onUpdate={handleUpdate} />}
       </div>
 
