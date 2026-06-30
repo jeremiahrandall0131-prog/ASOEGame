@@ -7003,29 +7003,51 @@ function canPlaceDrawnLegally(board, card) {
 // tier, duplicates allowed, the same card the player owns is fair game) whose cumulative
 // Overall lands within ±2% of the player's cumulative deck Overall, with at least 20 cards.
 // Completely random and different every game; never revealed during play.
-function genCpuDeck(targetOverall) {
+// Build a CPU deck that has the SAME number of cards as the player and a cumulative
+// Overall within ±2% of the player's — using all DIFFERENT cards. No two cards may
+// share the same character AND tier (different tiers of one identity are allowed;
+// exact-duplicate cards are not). Tier makeup is free, only the count + total matter.
+function genCpuDeck(targetOverall, deckSize) {
   const pool = (typeof getCollCards === 'function' ? getCollCards() : (window.COLLECTOR_CARDS||[]));
   if (!pool.length) return [];
-  const MIN = 20;
-  if (!(targetOverall > 0)) { const d=[]; for (let i=0;i<MIN;i++) d.push(pool[Math.floor(Math.random()*pool.length)]); return d; }
-  const lo = targetOverall*0.98, hi = targetOverall*1.02;
-  const minCard = Math.min(...pool.map(c=>c.overall||0)) || 1;
-  for (let attempt=0; attempt<60; attempt++) {
-    const deck=[]; let sum=0, guard=0;
-    while (guard++ < 3000) {
-      const stillNeed = Math.max(0, MIN - deck.length);
-      const reserve = stillNeed>0 ? (stillNeed-1)*minCard : 0; // keep room to still reach 20 cards
-      let cands = pool.filter(c => sum + (c.overall||0) + reserve <= hi);
-      if (!cands.length) cands = pool.filter(c => (c.overall||0) <= minCard + 0.5);
-      if (!cands.length) cands = pool;
-      const c = cands[Math.floor(Math.random()*cands.length)];
-      deck.push(c); sum += (c.overall||0);
-      if (deck.length>=MIN && sum>=lo && sum<=hi) return deck;
-      if (deck.length>=80) break;
+  const N = Math.max(1, deckSize || 20);
+  const keyOf = c => (c.charId || c.id) + '|' + c.tier; // uniqueness key
+
+  // Draft N distinct cards. When a target is set, each pick aims at the per-card
+  // average still needed (target - sum)/remaining, so the running total self-corrects
+  // toward the target; the last picks lock onto the closest card to land in-band.
+  function build(useTarget) {
+    const deck = [], usedKeys = new Set();
+    let sum = 0;
+    for (let i = 0; i < N; i++) {
+      const cands = pool.filter(c => !usedKeys.has(keyOf(c)));
+      if (!cands.length) break; // distinct pool exhausted (N > available unique cards)
+      let c;
+      if (!(useTarget > 0)) {
+        c = cands[Math.floor(Math.random() * cands.length)];
+      } else {
+        const remaining = N - i;
+        const ideal = (useTarget - sum) / remaining;
+        cands.sort((a, b) => Math.abs((a.overall||0) - ideal) - Math.abs((b.overall||0) - ideal));
+        const K = remaining <= 2 ? 1 : Math.min(cands.length, 10); // lock final picks; vary early ones
+        c = cands[Math.floor(Math.random() * K)];
+      }
+      deck.push(c); usedKeys.add(keyOf(c)); sum += (c.overall||0);
     }
+    return { deck, sum };
   }
-  const d=[]; let s=0; while ((d.length<MIN || s<lo) && d.length<80) { const c=pool[Math.floor(Math.random()*pool.length)]; d.push(c); s+=(c.overall||0); }
-  return d;
+
+  if (!(targetOverall > 0)) return build(0).deck;
+
+  const lo = targetOverall * 0.98, hi = targetOverall * 1.02;
+  let best = null;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const { deck, sum } = build(targetOverall);
+    if (deck.length === N && sum >= lo && sum <= hi) return deck;
+    const err = Math.abs(sum - targetOverall);
+    if (!best || err < best.err) best = { deck, err };
+  }
+  return best ? best.deck : build(targetOverall).deck;
 }
 
 // ─── Trial of Seven ─────────────────────────────────────────────────────────
@@ -7037,22 +7059,40 @@ const TRIAL_SEAT_COUNT = 7;
 function trialKG(c) { return (c && c.scores && c.scores.kingsguard) || 0; }
 function trialBoardScore(board) { return Object.values(board || {}).reduce((s, c) => s + trialKG(c), 0); }
 function trialDeckKG(cards) { return (cards || []).reduce((s, c) => s + trialKG(c), 0); }
+// 15 DISTINCT cards (no repeated character+tier) whose total Kingsguard lands within
+// ±2% of the target. Each pick aims at the per-card Kingsguard still needed so the
+// running total self-corrects; the last picks lock onto the closest card.
 function genTrialCpuDeck(target) {
   const pool = getCollCards();
   if (!pool.length) return [];
-  if (!(target > 0)) { const d=[]; for (let i=0;i<15;i++) d.push(pool[Math.floor(Math.random()*pool.length)]); return d; }
-  const avg = target / 15;
-  const near = pool.slice().sort((a,b) => Math.abs(trialKG(a)-avg) - Math.abs(trialKG(b)-avg));
-  const cand = near.slice(0, Math.min(near.length, 26));
-  let best = null, bestDelta = Infinity;
-  for (let attempt=0; attempt<800; attempt++) {
-    const pick=[]; for (let i=0;i<15;i++) pick.push(cand[Math.floor(Math.random()*cand.length)]);
-    const tot = trialDeckKG(pick);
-    if (tot >= target*0.98 && tot <= target*1.02) return pick;
-    const delta = Math.abs(tot - target);
-    if (delta < bestDelta) { bestDelta = delta; best = pick; }
+  const N = 15;
+  const keyOf = c => (c.charId || c.id) + '|' + c.tier;
+  function build(useTarget) {
+    const deck = [], used = new Set(); let sum = 0;
+    for (let i = 0; i < N; i++) {
+      const cands = pool.filter(c => !used.has(keyOf(c)));
+      if (!cands.length) break;
+      let c;
+      if (!(useTarget > 0)) { c = cands[Math.floor(Math.random()*cands.length)]; }
+      else {
+        const remaining = N - i, ideal = (useTarget - sum) / remaining;
+        cands.sort((a, b) => Math.abs(trialKG(a)-ideal) - Math.abs(trialKG(b)-ideal));
+        const K = remaining <= 2 ? 1 : Math.min(cands.length, 10);
+        c = cands[Math.floor(Math.random()*K)];
+      }
+      deck.push(c); used.add(keyOf(c)); sum += trialKG(c);
+    }
+    return { deck, sum };
   }
-  return best || cand.slice(0, 15);
+  if (!(target > 0)) return build(0).deck;
+  const lo = target*0.98, hi = target*1.02; let best = null;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const { deck, sum } = build(target);
+    if (deck.length === N && sum >= lo && sum <= hi) return deck;
+    const err = Math.abs(sum - target);
+    if (!best || err < best.err) best = { deck, err };
+  }
+  return best ? best.deck : build(target).deck;
 }
 const COLL_TIER_ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
 const COLL_AUCTION_GOLD  = { starter:15, uncommon:25, rare:40, hero:75, legendary:150, mythic:300 };
@@ -7095,23 +7135,40 @@ function hwHouseDeck(owned, house) {
 // Total Overall of a set of card objects.
 function hwLineupTotal(cards) { return (cards||[]).reduce((s,c) => s + ((c&&c.overall)||0), 0); }
 
-// Generate the CPU's hidden 10-card lineup from a House, total Overall within ±2% of `target`.
-// Samples from the cards nearest the per-seat average so the sum reliably lands in the window.
+// Generate the CPU's hidden 10-card House lineup, total Overall within ±2% of `target`,
+// using 10 DISTINCT cards from the House (no repeated character+tier). Each pick aims at
+// the per-card Overall still needed so the running total self-corrects into the window.
 function genHouseLineup(house, target) {
   const pool = getCollCards().filter(c => cardInHouse(c, house));
   if (!pool.length) return [];
-  const avg = target / 10;
-  const near = pool.slice().sort((a,b) => Math.abs((a.overall||0)-avg) - Math.abs((b.overall||0)-avg));
-  const cand = near.slice(0, Math.min(near.length, 16));
-  let best = null, bestDelta = Infinity;
-  for (let attempt = 0; attempt < 600; attempt++) {
-    const pick = []; for (let i=0;i<10;i++) pick.push(cand[Math.floor(Math.random()*cand.length)]);
-    const tot = hwLineupTotal(pick);
-    if (tot >= target*0.98 && tot <= target*1.02) return pick;
-    const delta = Math.abs(tot - target);
-    if (delta < bestDelta) { bestDelta = delta; best = pick; }
+  const N = 10;
+  const keyOf = c => (c.charId || c.id) + '|' + c.tier;
+  function build(useTarget) {
+    const deck = [], used = new Set(); let sum = 0;
+    for (let i = 0; i < N; i++) {
+      const cands = pool.filter(c => !used.has(keyOf(c)));
+      if (!cands.length) break;
+      let c;
+      if (!(useTarget > 0)) { c = cands[Math.floor(Math.random()*cands.length)]; }
+      else {
+        const remaining = N - i, ideal = (useTarget - sum) / remaining;
+        cands.sort((a, b) => Math.abs((a.overall||0)-ideal) - Math.abs((b.overall||0)-ideal));
+        const K = remaining <= 2 ? 1 : Math.min(cands.length, 10);
+        c = cands[Math.floor(Math.random()*K)];
+      }
+      deck.push(c); used.add(keyOf(c)); sum += (c.overall||0);
+    }
+    return { deck, sum };
   }
-  return best || cand.slice(0,10);
+  if (!(target > 0)) return build(0).deck;
+  const lo = target*0.98, hi = target*1.02; let best = null;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const { deck, sum } = build(target);
+    if (deck.length === N && sum >= lo && sum <= hi) return deck;
+    const err = Math.abs(sum - target);
+    if (!best || err < best.err) best = { deck, err };
+  }
+  return best ? best.deck : build(target).deck;
 }
 
 // Roll a win-reward card from the CPU's House by the tier odds.
@@ -9634,7 +9691,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
   const NCPU = numCpus || 1;
   const [cpuDecks] = React.useState(() => {
     const cum = (save.owned||[]).reduce((s,id)=>s+((getCollCard(id)||{}).overall||0),0);
-    return Array.from({ length: NCPU }, () => genCpuDeck(cum));
+    return Array.from({ length: NCPU }, () => genCpuDeck(cum, (save.owned||[]).length));
   });
   const [cpus, setCpus] = React.useState(() => Array.from({ length: NCPU }, () => ({ board:{}, drafted:[], drawn:new Set(), rerolls:GAME_REROLL_LIMIT, last:null })));
   const [phase, setPhase] = React.useState('draw'); // draw | place | done
