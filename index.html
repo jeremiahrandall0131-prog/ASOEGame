@@ -9286,7 +9286,7 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
   // briefly revealed first so the player sees what they drew.
   React.useEffect(() => {
     if (phase === 'place' && drawnCard && !anyEligible) {
-      const t = setTimeout(() => discard(), 1400);
+      const t = setTimeout(() => discard(), 4400); // ~3s longer reveal before it's discarded
       return () => clearTimeout(t);
     }
   }, [phase, drawnCard, anyEligible]);
@@ -11134,7 +11134,9 @@ function CollectorHub({ onHome }) {
   const [gameResult, setGameResult] = React.useState(null);
   const [winPullCards, setWinPullCards] = React.useState([]);
   const [tourActive, setTourActive] = React.useState(false); // interactive guided tour overlay
-  const [showModeChoice, setShowModeChoice] = React.useState(false); // Traditional / Tourney / House Wars
+  const [showModeChoice, setShowModeChoice] = React.useState(false); // (legacy flag, harmless)
+  const [selectedMode, setSelectedMode] = React.useState(null); // highlighted mode on the Game Modes screen
+  const [helpMode, setHelpMode] = React.useState(null);          // mode whose "?" how-to-play is open
   const [gameMode, setGameMode] = React.useState('traditional'); // 'traditional' (1 CPU) | 'tourney' (3 CPUs)
   const [wheelSpinsLeft, setWheelSpinsLeft] = React.useState(1);     // multi-spin wheel (HW grants 5)
   // House Wars active-game state
@@ -11223,7 +11225,7 @@ function CollectorHub({ onHome }) {
       alert('You need at least 10 cards in your deck to play!');
       return;
     }
-    setShowModeChoice(true);
+    setSelectedMode(null); setScreen('modeChoice');
   }
   function startTraditional() { setGameMode('traditional'); setShowModeChoice(false); setScreen('wager'); }
   function startTourney() { setGameMode('tourney'); setShowModeChoice(false); setScreen('wager'); }
@@ -11453,6 +11455,65 @@ function CollectorHub({ onHome }) {
 
   // (The old static tutorial screen is gone — the interactive CollectorTour now runs over the Hub.)
   if (screen === 'startingPull') return <CollectorStartingPull onDone={handleStartingPullDone} />;
+  if (screen === 'modeChoice') {
+    const enough = (save.owned||[]).length >= 21;       // HW & GoT can lose cards → need >20
+    const trialEnough = (save.owned||[]).length >= 15;  // Trial fields a 15-card lineup
+    const sevenEnough = (save.owned||[]).length >= 25;  // Seven Kingdoms places a card per square
+    const hwElig = hwEligibleHouses(save.owned);
+    const hwLocked = !enough || hwElig.length === 0;
+    const MODES = [
+      { id:'traditional', label:'Traditional', icon:'⚔', col:'#d4a830', start:startTraditional, locked:false, how:'Draft a 10-seat court against 1 CPU. Each turn you draw fate and place a card into one of the ten positions (Ruler, Hand, Kingsguard, and more), with an optional Gold wager. Outscore the CPU to win a card from their court.' },
+      { id:'tourney', label:'Tourney', icon:'🏆', col:'#3aa0ff', start:startTourney, locked:false, how:'Just like Traditional, but you face 3 CPUs at once. Each rival matches your wager for a 4× pot — place 1st to take it all, and pull a card from every court you outplaced.' },
+      { id:'houseWars', label:'House Wars', icon:'🏰', col:'#e05555', start:startHouseWars, locked:hwLocked, lockMsg:(!enough?'Need 21+ cards':'Need 10 in one House'), how:'A House is spun for you and the CPU. Field 10 cards of your House across a 5-seat court (no rerolls). Win and you pull a card from their House; lose and you surrender one of yours. Needs 10+ cards in a single House.' },
+      { id:'got', label:'The Game of Thrones', icon:'👑', col:'#a04ad0', start:startGameOfThrones, locked:!enough, lockMsg:'Need 21+ cards', how:'Pick 1 of 10 face-down cards — 5 Win and 5 Loss. The effect (gold, evolve, devolve, genocide, store-closed…) is applied INSTANTLY and can\'t be undone. Win or die. Needs 21+ cards.' },
+      { id:'trial', label:'Trial of Seven', icon:'⚔', col:'#2bb3b3', start:startTrial, locked:!trialEnough, lockMsg:'Need 15+ cards', how:'Only the Kingsguard score matters. Pick 15 cards; the CPU matches your total within 2%. Alternate drawing fate into seven Kingsguard seats — highest total wins, and a win pulls a card from the CPU\'s seven.' },
+      { id:'sevenK', label:'Seven Kingdoms', icon:'🏰', col:'#3ec97a', start:startSevenKingdoms, locked:!sevenEnough, lockMsg:'Need 25+ cards', how:'A 5×5 bingo board where every square is a random card requirement. Over 25 draws, place each card where it fits (a card that fits nowhere is discarded). Each completed line = 20 Gold, a full blackout = 2,000, and filling 20+ squares earns a wheel spin.' },
+    ];
+    const sel = MODES.find(m => m.id === selectedMode);
+    const renderBtn = (m) => (
+      <div key={m.id} onClick={() => { if (!m.locked) setSelectedMode(m.id); }} style={{ position:'relative', flex:1, minHeight:88, borderRadius:10,
+        border:`2px solid ${ selectedMode===m.id ? 'var(--gold2,#f0c84a)' : m.locked ? 'var(--border)' : m.col }`,
+        background: selectedMode===m.id ? `${m.col}26` : 'var(--bg2)', boxShadow: selectedMode===m.id ? `0 0 14px ${m.col}` : 'none',
+        cursor: m.locked ? 'not-allowed' : 'pointer', opacity: m.locked ? 0.6 : 1,
+        display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:5, padding:'10px 6px', textAlign:'center' }}>
+        <button onClick={(e)=>{ e.stopPropagation(); setHelpMode(m.id); }} title="How to play" style={{ position:'absolute', top:4, right:6, width:19, height:19, borderRadius:'50%', background:'rgba(0,0,0,0.55)', border:`1px solid ${m.col}`, color:m.col, fontSize:'0.62rem', fontWeight:700, cursor:'pointer', lineHeight:1, padding:0, display:'flex', alignItems:'center', justifyContent:'center' }}>?</button>
+        <div style={{ fontSize:'1.6rem', lineHeight:1 }}>{m.locked ? '🔒' : m.icon}</div>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', fontWeight:700, color: m.locked ? 'var(--text2)' : m.col, lineHeight:1.15 }}>{m.label}</div>
+        {m.locked && <div style={{ fontSize:'0.5rem', color:'var(--text2)' }}>{m.lockMsg}</div>}
+      </div>
+    );
+    return (
+      <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+        {helpMode && (() => { const m = MODES.find(x => x.id === helpMode); return (
+          <div onClick={()=>setHelpMode(null)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.82)', zIndex:380, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+            <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:330, width:'100%', borderColor:m.col, textAlign:'center' }}>
+              <div style={{ fontFamily:'Cinzel,serif', color:m.col, fontSize:'0.92rem', fontWeight:700, marginBottom:8 }}>{m.icon} {m.label}</div>
+              <div style={{ fontSize:'0.72rem', color:'var(--text2)', lineHeight:1.55, marginBottom:12, textAlign:'left' }}>{m.how}</div>
+              <button className="btn btn-gold btn-sm" style={{ width:'100%' }} onClick={()=>setHelpMode(null)}>Got it</button>
+            </div>
+          </div>
+        ); })()}
+        <div className="nav-bar">
+          <div className="nav-side"><button className="btn btn-ghost btn-sm" onClick={()=>setScreen('hub')}>← Back</button></div>
+          <div className="nav-title" style={{ flex:1, textAlign:'center', fontSize:'0.85rem' }}>Collector Game Modes</div>
+          <div className="nav-side" />
+        </div>
+        <div className="scroll" style={{ flex:1, padding:'14px' }}>
+          <div style={{ fontSize:'0.62rem', color:'var(--text2)', textAlign:'center', marginBottom:12 }}>Pick a mode (tap <b>?</b> for how it plays), then hit Play.</div>
+          <div style={{ display:'flex', gap:10, alignItems:'stretch' }}>
+            <div style={{ flex:1, display:'flex', flexDirection:'column', gap:10 }}>{MODES.slice(0,3).map(renderBtn)}</div>
+            <div style={{ flex:1, display:'flex', flexDirection:'column', gap:10 }}>{MODES.slice(3).map(renderBtn)}</div>
+          </div>
+        </div>
+        <div style={{ padding:'12px 14px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+          <button className="btn btn-gold" disabled={!sel || sel.locked} style={{ width:'100%', padding:'14px', fontSize:'0.95rem', letterSpacing:'0.1em', opacity:(!sel||sel.locked)?0.5:1, cursor:(!sel||sel.locked)?'not-allowed':'pointer' }}
+            onClick={() => { if (sel && !sel.locked) sel.start(); }}>
+            {sel && !sel.locked ? `⚔ Play ${sel.label} ⚔` : '⚔ PLAY ⚔'}
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (screen === 'wager') return <CollectorWager save={save} onStart={handleStartGame} onCancel={() => setScreen('hub')} numCpus={gameMode==='tourney'?3:1} />;
   if (screen === 'game') return <CollectorGame save={save} wager={gameWager} onEnd={handleGameEnd} onUpdate={handleUpdate} numCpus={gameMode==='tourney'?3:1} />;
   if (screen === 'result' && gameResult) return <CollectorGameResult result={gameResult} save={save} onWinPull={handleWinPull} onHome={() => { autoResolveWinPull(save); setScreen('hub'); setGameResult(null); }} />;
@@ -11482,45 +11543,6 @@ function CollectorHub({ onHome }) {
           </div>
         </div>
       )}
-      {showModeChoice && (() => {
-        const enough = (save.owned||[]).length >= 21; // HW & GoT can lose cards → need >20
-        const trialEnough = (save.owned||[]).length >= 15; // Trial of Seven fields a 15-card lineup
-        const sevenEnough = (save.owned||[]).length >= 25; // Seven Kingdoms places a card per square
-        const hwElig = hwEligibleHouses(save.owned);
-        const hwLocked = !enough || hwElig.length === 0;
-        return (
-        <div onClick={()=>setShowModeChoice(false)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:400, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
-          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:340, width:'100%', borderColor:'var(--gold)' }}>
-            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:'var(--gold)', textAlign:'center', marginBottom:14 }}>Choose Your Game</div>
-            <button className="btn btn-gold" style={{ width:'100%', padding:'11px', marginBottom:10 }} onClick={startTraditional}>
-              ⚔ Traditional
-              <div style={{ fontSize:'0.55rem', color:'rgba(0,0,0,0.6)', fontWeight:400 }}>10 seats · 1 CPU · optional Gold wager</div>
-            </button>
-            <button onClick={startTourney} style={{ width:'100%', padding:'11px', marginBottom:10, background:'#1d3a5f', color:'#fff', border:'1px solid #3aa0ff', borderRadius:8, cursor:'pointer', fontFamily:'Cinzel,serif', fontWeight:700 }}>
-              🏆 Tourney
-              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>10 seats · 3 CPUs · winner takes the 4× pot</div>
-            </button>
-            <button disabled={hwLocked} onClick={startHouseWars} style={{ width:'100%', padding:'11px', marginBottom:10, background: hwLocked?'var(--bg2)':'#7a1010', color: hwLocked?'var(--text2)':'#fff', border:'1px solid '+(hwLocked?'var(--border)':'#b01a1a'), borderRadius:8, cursor: hwLocked?'not-allowed':'pointer', opacity: hwLocked?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
-              {hwLocked ? '🔒 House Wars' : '🏰 House Wars'}
-              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{!enough ? 'Need 21+ cards (cards are at stake)' : hwElig.length===0 ? 'Need 10 cards in one House to unlock' : `5 seats · ${hwElig.length} House${hwElig.length>1?'s':''} ready · card stakes`}</div>
-            </button>
-            <button disabled={!enough} onClick={startGameOfThrones} style={{ width:'100%', padding:'11px', background: !enough?'var(--bg2)':'#4a1d5f', color: !enough?'var(--text2)':'#fff', border:'1px solid '+(!enough?'var(--border)':'#a04ad0'), borderRadius:8, cursor: !enough?'not-allowed':'pointer', opacity: !enough?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
-              {!enough ? '🔒 The Game of Thrones' : '👑 The Game of Thrones'}
-              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{!enough ? 'Need 21+ cards to play' : 'Pick 1 of 10 · instant Win or Die'}</div>
-            </button>
-            <button disabled={!trialEnough} onClick={startTrial} style={{ width:'100%', padding:'11px', marginTop:10, background: !trialEnough?'var(--bg2)':'#0d4a4a', color: !trialEnough?'var(--text2)':'#fff', border:'1px solid '+(!trialEnough?'var(--border)':'#2bb3b3'), borderRadius:8, cursor: !trialEnough?'not-allowed':'pointer', opacity: !trialEnough?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
-              {!trialEnough ? '🔒 Trial of Seven' : '⚔ Trial of Seven'}
-              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{!trialEnough ? 'Need 15+ cards to field a lineup' : '7 seats · Kingsguard only · wager + Win Pull'}</div>
-            </button>
-            <button disabled={!sevenEnough} onClick={startSevenKingdoms} style={{ width:'100%', padding:'11px', marginTop:10, background: !sevenEnough?'var(--bg2)':'#1f5132', color: !sevenEnough?'var(--text2)':'#fff', border:'1px solid '+(!sevenEnough?'var(--border)':'#3ec97a'), borderRadius:8, cursor: !sevenEnough?'not-allowed':'pointer', opacity: !sevenEnough?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
-              {!sevenEnough ? '🔒 Seven Kingdoms' : '🏰 Seven Kingdoms'}
-              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{!sevenEnough ? 'Need 25+ cards to play' : '5×5 bingo · fill squares · Bingos = Gold'}</div>
-            </button>
-            <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:10, fontSize:'0.6rem' }} onClick={()=>setShowModeChoice(false)}>Cancel</button>
-          </div>
-        </div>
-        );
-      })()}
       {/* Nav bar */}
       <div className="nav-bar">
         <div className="nav-side">
