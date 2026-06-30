@@ -6980,6 +6980,33 @@ function genCpuDeck(targetOverall) {
   const d=[]; let s=0; while ((d.length<MIN || s<lo) && d.length<80) { const c=pool[Math.floor(Math.random()*pool.length)]; d.push(c); s+=(c.overall||0); }
   return d;
 }
+
+// ─── Trial of Seven ─────────────────────────────────────────────────────────
+// A Collector sub-mode where ONLY the Kingsguard score matters. Pick 15 cards; the CPU gets a
+// 15-card deck whose total Kingsguard is within ±2% of yours. Both then draw fate and field 7
+// into seven Kingsguard seats — highest total Kingsguard wins. No rerolls. Win Pull (Traditional
+// rules) from the opponent's deck.
+const TRIAL_SEAT_COUNT = 7;
+function trialKG(c) { return (c && c.scores && c.scores.kingsguard) || 0; }
+function trialBoardScore(board) { return Object.values(board || {}).reduce((s, c) => s + trialKG(c), 0); }
+function trialDeckKG(cards) { return (cards || []).reduce((s, c) => s + trialKG(c), 0); }
+function genTrialCpuDeck(target) {
+  const pool = getCollCards();
+  if (!pool.length) return [];
+  if (!(target > 0)) { const d=[]; for (let i=0;i<15;i++) d.push(pool[Math.floor(Math.random()*pool.length)]); return d; }
+  const avg = target / 15;
+  const near = pool.slice().sort((a,b) => Math.abs(trialKG(a)-avg) - Math.abs(trialKG(b)-avg));
+  const cand = near.slice(0, Math.min(near.length, 26));
+  let best = null, bestDelta = Infinity;
+  for (let attempt=0; attempt<800; attempt++) {
+    const pick=[]; for (let i=0;i<15;i++) pick.push(cand[Math.floor(Math.random()*cand.length)]);
+    const tot = trialDeckKG(pick);
+    if (tot >= target*0.98 && tot <= target*1.02) return pick;
+    const delta = Math.abs(tot - target);
+    if (delta < bestDelta) { bestDelta = delta; best = pick; }
+  }
+  return best || cand.slice(0, 15);
+}
 const COLL_TIER_ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
 const COLL_AUCTION_GOLD  = { starter:15, uncommon:25, rare:40, hero:75, legendary:150, mythic:300 };
 // Blacksmith: cost to repair a card's negative (Devolve/Degrade) effects, by its CURRENT tier.
@@ -7280,7 +7307,7 @@ function collAcquire(owned, cardId) {
 
 // Record each card PLACED on the player's board this game into the per-card stats (keyed by base
 // variant, so mods/evolves don't fragment a card's history). Tracks placements, wins, total points.
-function collRecordCardStats(prev, playerBoard, won) {
+function collRecordCardStats(prev, playerBoard, won, scoreKey) {
   const cs = { ...(prev || {}) };
   Object.entries(playerBoard || {}).forEach(([posId, card]) => {
     if (!card) return;
@@ -7288,7 +7315,8 @@ function collRecordCardStats(prev, playerBoard, won) {
     const e = cs[key] ? { ...cs[key] } : { placements: 0, wins: 0, points: 0 };
     e.placements += 1;
     if (won) e.wins += 1;
-    e.points = Math.round((e.points + ((card.scores && card.scores[posId]) || 0)) * 10) / 10;
+    // scoreKey override = Trial of Seven (every seat scores Kingsguard, not the seat id).
+    e.points = Math.round((e.points + ((card.scores && card.scores[scoreKey || posId]) || 0)) * 10) / 10;
     cs[key] = e;
   });
   return cs;
@@ -8938,15 +8966,191 @@ function CollectorWager({ save, onStart, onCancel, numCpus = 1 }) {
 
 // ─── Win Pull Screen ─────────────────────────────────────────────────────────
 
-function CollectorWinPull({ winPullCards, onPick, onSkip }) {
+// ─── Trial of Seven: choose your 15-card lineup ─────────────────────────────
+function CollectorTrialLineup({ save, onConfirm, onCancel }) {
+  const deck = React.useState(() => (save.owned||[]).map(id => ({ id, card: getCollCard(id) })).filter(e => e.card))[0];
+  const [selected, setSelected] = React.useState([]); // indices into deck
+  const [detailCard, setDetailCard] = React.useState(null);
+  const T = window.COLLECTOR_TIERS || {};
+  function toggle(i){ setSelected(sel => sel.indexOf(i)!==-1 ? sel.filter(x=>x!==i) : (sel.length>=15 ? sel : [...sel, i])); }
+  const canConfirm = selected.length === 15;
+  const sorted = deck.map((e,i)=>({ e, i })).sort((a,b)=> trialKG(b.e.card) - trialKG(a.e.card));
+  const selKG = selected.reduce((s,i)=> s + trialKG(deck[i].card), 0);
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {detailCard && <CollDetailModal card={detailCard} onClose={()=>setDetailCard(null)} />}
+      <div className="nav-bar">
+        <div className="nav-side"><button className="btn btn-ghost btn-sm" onClick={onCancel}>← Back</button></div>
+        <div style={{ flex:1, textAlign:'center' }}>
+          <div className="nav-title" style={{ fontSize:'0.8rem' }}>⚔ TRIAL OF SEVEN</div>
+          <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>Only Kingsguard counts</div>
+        </div>
+        <div className="nav-side" style={{ width:'auto' }}><span style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color: canConfirm?'var(--gold)':'var(--text2)' }}>{selected.length}/15</span></div>
+      </div>
+      <div style={{ fontSize:'0.62rem', color:'var(--text2)', padding:'6px 12px' }}>Pick <b>15</b> cards — fate fields <b>7</b> into seven Kingsguard seats. Only the <b style={{color:'var(--gold)'}}>⚔ Kingsguard</b> score matters. Lineup total: <b style={{color:'var(--gold)'}}>⚔ {Math.round(selKG*10)/10}</b></div>
+      <div className="scroll" style={{ flex:1, padding:'4px 12px 10px' }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
+          {sorted.map(({ e, i }) => { const sel = selected.indexOf(i)!==-1; const ct=T[e.card.tier]||{color:'#888'}; return (
+            <div key={i} onClick={()=>toggle(i)} className="card" style={{ cursor:'pointer', padding:'8px 9px', borderColor: sel?'var(--gold)':ct.color, boxShadow: sel?'0 0 12px rgba(212,168,48,0.6)':'none', position:'relative', opacity:(!sel && selected.length>=15)?0.5:1 }}>
+              {sel && <div style={{ position:'absolute', top:4, right:6, color:'var(--gold)', fontWeight:900 }}>✓</div>}
+              <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.72rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:14 }}>{e.card.name}</div>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:5 }}>
+                <CollTierBadge tier={e.card.tier} />
+                <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold)' }}>⚔ {trialKG(e.card)}</span>
+              </div>
+              <button onClick={(ev)=>{ ev.stopPropagation(); setDetailCard(e.card); }} style={{ marginTop:5, width:'100%', background:'none', border:'1px solid var(--border)', color:'var(--text2)', borderRadius:4, fontSize:'0.55rem', cursor:'pointer', padding:'2px 0' }}>ⓘ stats</button>
+            </div>
+          ); })}
+        </div>
+      </div>
+      <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+        <button className="btn btn-gold" disabled={!canConfirm} style={{ width:'100%', padding:'13px', opacity:canConfirm?1:0.5, cursor:canConfirm?'pointer':'not-allowed' }}
+          onClick={()=> canConfirm && onConfirm(selected.map(i=>deck[i].card))}>
+          {canConfirm ? '⚔ Begin the Trial' : `Select ${15 - selected.length} more`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Trial of Seven: the match (7 Kingsguard seats, draw fate, no rerolls) ──
+function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
+  const [playerBoard, setPlayerBoard] = React.useState({});
+  const [cpuBoard, setCpuBoard] = React.useState({});
+  const [drawnCard, setDrawnCard] = React.useState(null);
+  const [usedIds, setUsedIds] = React.useState(new Set());
+  const [cpuUsed, setCpuUsed] = React.useState(new Set());
+  const [round, setRound] = React.useState(0); // 0..6
+  const [phase, setPhase] = React.useState('draw'); // draw | place | done
+  const [showCpu, setShowCpu] = React.useState(false);
+  const [detailCard, setDetailCard] = React.useState(null);
+  const [confirmQuit, setConfirmQuit] = React.useState(false);
+  const T = window.COLLECTOR_TIERS || {};
+  const seats = []; for (let i=0;i<TRIAL_SEAT_COUNT;i++) seats.push('kg'+i);
+  const playerScore = trialBoardScore(playerBoard);
+  const cpuScore = trialBoardScore(cpuBoard);
+
+  function drawFate() {
+    if (phase !== 'draw') return;
+    const onBoard = new Set(Object.values(playerBoard).filter(Boolean).map(c=>c.id));
+    const avail = playerCards.filter(c => !usedIds.has(c.id) && !onBoard.has(c.id));
+    if (!avail.length) { setPhase('done'); return; }
+    setDrawnCard(avail[Math.floor(Math.random()*avail.length)]);
+    setPhase('place');
+  }
+  function placeCard(seatId) {
+    if (!drawnCard || playerBoard[seatId]) return;
+    const npb = { ...playerBoard, [seatId]: drawnCard };
+    const used = new Set([...usedIds, drawnCard.id]);
+    // CPU draws fate and fills its next open seat (every seat is Kingsguard — no positioning).
+    let ncb = cpuBoard, ncu = cpuUsed;
+    const cavail = cpuCards.map((c,i)=>({c,i})).filter(x => !cpuUsed.has(x.i));
+    if (cavail.length) { const pk = cavail[Math.floor(Math.random()*cavail.length)]; const open = seats.find(s => !cpuBoard[s]); ncb = { ...cpuBoard, [open]: pk.c }; ncu = new Set([...cpuUsed, pk.i]); }
+    setPlayerBoard(npb); setUsedIds(used); setCpuBoard(ncb); setCpuUsed(ncu); setDrawnCard(null);
+    if (round + 1 >= TRIAL_SEAT_COUNT) {
+      setPhase('done');
+      const ps = trialBoardScore(npb), cs = trialBoardScore(ncb);
+      setTimeout(() => onEnd({ isWin: ps > cs, playerScore: ps, cpuScore: cs, playerBoard: npb, cpuBoard: ncb, cpuCards }), 0);
+    } else { setRound(r=>r+1); setPhase('draw'); }
+  }
+  const board = showCpu ? cpuBoard : playerBoard;
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {detailCard && <CollDetailModal card={detailCard} onClose={()=>setDetailCard(null)} />}
+      {confirmQuit && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmQuit(false)}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
+            <div style={{ fontFamily:'Cinzel,serif', color:'#e05555', fontSize:'0.95rem', marginBottom:8 }}>Quit the Trial?</div>
+            <div style={{ fontSize:'0.72rem', color:'var(--text2)', marginBottom:14 }}>You'll forfeit the match (no card is lost).</div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={()=>setConfirmQuit(false)}>Keep Playing</button>
+              <button className="btn btn-sm" style={{ flex:1, background:'#7a1010', color:'#fff', border:'1px solid #b01a1a' }} onClick={()=>onEnd({ quit:true })}>QUIT</button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div style={{ display:'flex', alignItems:'center', padding:'8px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
+        <button onClick={()=>setConfirmQuit(true)} title="Quit" style={{ width:30, height:30, borderRadius:'50%', background:'#7a1010', border:'1px solid #b01a1a', color:'#fff', cursor:'pointer', fontWeight:900, flexShrink:0 }}>✕</button>
+        <div style={{ flex:1, textAlign:'center' }}>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)' }}>⚔ TRIAL OF SEVEN · {Math.min(round+1,7)}/7</div>
+          <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>Only Kingsguard counts</div>
+        </div>
+        <div style={{ width:30, flexShrink:0 }} />
+      </div>
+      <div style={{ display:'flex', borderBottom:'1px solid var(--border)' }}>
+        <button onClick={()=>setShowCpu(false)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: !showCpu?'rgba(212,168,48,0.15)':'var(--bg2)', color:!showCpu?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>My Seven ({Math.round(playerScore*10)/10})</button>
+        <button onClick={()=>setShowCpu(true)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: showCpu?'rgba(224,85,85,0.15)':'var(--bg2)', color:showCpu?'#e05555':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>CPU Seven ({Math.round(cpuScore*10)/10})</button>
+      </div>
+      <div className="scroll" style={{ flex:1, padding:'10px 12px' }}>
+        {seats.map((sid,idx) => { const card=board[sid]; const placeable = !showCpu && phase==='place' && drawnCard && !card; const ct=card?(T[card.tier]||{color:'#888'}):{}; return (
+          <div key={sid} onClick={()=> placeable && placeCard(sid)} className="card" style={{ marginBottom:7, padding:'8px 10px', borderColor: placeable?'var(--gold)':(card?ct.color:'var(--border)'), cursor: placeable?'pointer':'default', display:'flex', alignItems:'center', gap:10, opacity:card?1:0.85 }}>
+            <div style={{ width:40, flexShrink:0, fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--text2)' }}>⚔ Seat {idx+1}</div>
+            {card ? (<>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{card.name}</div>
+                <div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} /></div>
+              </div>
+              <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold)', fontSize:'0.95rem' }}>⚔ {trialKG(card)}</span>
+              <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(card); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer' }}>ⓘ</button>
+            </>) : (
+              <div style={{ flex:1, fontSize:'0.65rem', color:'var(--text2)', fontStyle:'italic' }}>{placeable ? `— tap to place (⚔ ${trialKG(drawnCard)}) —` : '— empty —'}</div>
+            )}
+          </div>
+        ); })}
+      </div>
+      <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+        {phase==='draw' && <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.1em' }} onClick={drawFate}>🎴 DRAW FATE</button>}
+        {phase==='place' && drawnCard && <div style={{ textAlign:'center' }}><div style={{ fontSize:'0.72rem', color:'var(--gold)', fontFamily:'Cinzel,serif', marginBottom:3 }}>Fate drew <b>{drawnCard.name}</b> · ⚔ {trialKG(drawnCard)}</div><div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>Tap an open seat to place it.</div></div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Trial of Seven: result scorecard ───────────────────────────────────────
+function CollectorTrialResult({ result, onWinPull, onHome }) {
+  const T = window.COLLECTOR_TIERS || {};
+  const { isWin, playerScore, cpuScore, playerBoard, cpuBoard, wager, wagerDelta } = result || {};
+  const [tab, setTab] = React.useState('mine');
+  const board = tab==='mine' ? (playerBoard||{}) : (cpuBoard||{});
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      <div style={{ textAlign:'center', padding:'16px 16px 8px' }}>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.4rem', fontWeight:800, color: isWin?'#4caf50':'#e05555' }}>{isWin?'⚔ VICTORY':'☠ DEFEAT'}</div>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.82rem', marginTop:6 }}>
+          <span style={{ color:'var(--gold)' }}>You ⚔ {Math.round((playerScore||0)*10)/10}</span> <span style={{ color:'var(--text2)' }}>·</span> <span style={{ color:'#e05555' }}>CPU ⚔ {Math.round((cpuScore||0)*10)/10}</span>
+        </div>
+        {wager > 0 && <div style={{ fontSize:'0.7rem', marginTop:4, color: wagerDelta>=0?'#4caf50':'#e05555', fontFamily:'Cinzel,serif' }}>🎲 Wager: {wagerDelta>=0?'+':''}{wagerDelta} Gold</div>}
+      </div>
+      <div style={{ display:'flex', borderBottom:'1px solid var(--border)' }}>
+        <button onClick={()=>setTab('mine')} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background:tab==='mine'?'rgba(212,168,48,0.15)':'var(--bg2)', color:tab==='mine'?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.68rem', fontWeight:700 }}>Your Seven</button>
+        <button onClick={()=>setTab('cpu')} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background:tab==='cpu'?'rgba(224,85,85,0.15)':'var(--bg2)', color:tab==='cpu'?'#e05555':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.68rem', fontWeight:700 }}>CPU Seven</button>
+      </div>
+      <div className="scroll" style={{ flex:1, padding:'8px 14px' }}>
+        {Object.keys(board).map(sid => { const c=board[sid]; if(!c) return null; const ct=T[c.tier]||{color:'#888'}; return (
+          <div key={sid} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:'1px solid var(--border)' }}>
+            <div style={{ flex:1, minWidth:0 }}><div style={{ fontSize:'0.7rem', color:ct.color, fontWeight:700 }}>{c.name}</div><div style={{ marginTop:1 }}><CollTierBadge tier={c.tier} /></div></div>
+            <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold)' }}>⚔ {trialKG(c)}</span>
+          </div>
+        ); })}
+      </div>
+      <div style={{ padding:'10px 14px', background:'var(--bg2)', borderTop:'1px solid var(--border)', display:'flex', gap:8 }}>
+        {isWin && <button className="btn btn-gold" style={{ flex:2 }} onClick={onWinPull}>⭐ Win Pull</button>}
+        <button className="btn btn-ghost" style={{ flex:1 }} onClick={onHome}>Back to Hub</button>
+      </div>
+    </div>
+  );
+}
+
+function CollectorWinPull({ winPullCards, onPick, onSkip, kingsguard }) {
   const [selected, setSelected] = React.useState(null);
   const T = window.COLLECTOR_TIERS || {};
+  const scoreOf = c => kingsguard ? `⚔ ${(c.scores && c.scores.kingsguard) || 0}` : c.overall;
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.95)', zIndex:300, display:'flex', flexDirection:'column', padding:16 }}>
       <div style={{ fontFamily:'Cinzel,serif', textAlign:'center', marginBottom:4 }}>
         <div style={{ fontSize:'1rem', color:'var(--gold)' }}>⚔ WIN PULL ⚔</div>
-        <div style={{ fontSize:'0.65rem', color:'var(--text2)' }}>Choose ONE card from the defeated court{winPullCards.length>10?'s':''} to add to your deck</div>
+        <div style={{ fontSize:'0.65rem', color:'var(--text2)' }}>Choose ONE card from the defeated {kingsguard ? 'Seven' : 'court'}{(!kingsguard && winPullCards.length>10)?'s':''} to add to your deck</div>
       </div>
       <div className="scroll" style={{ flex:1, marginTop:10 }}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
@@ -8961,7 +9165,7 @@ function CollectorWinPull({ winPullCards, onPick, onSkip }) {
                 <div style={{ fontSize:'0.6rem', fontFamily:'Cinzel,serif', color:ct.color, fontWeight:700, marginBottom:2 }}>{card.name}</div>
                 <div style={{ fontSize:'0.55rem', color:'var(--text2)', marginBottom:4 }}>{card.houses?.[0]}</div>
                 <CollTierBadge tier={card.tier} />
-                <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, textAlign:'right', fontSize:'1rem', marginTop:4 }}>{card.overall}</div>
+                <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, textAlign:'right', fontSize:'1rem', marginTop:4 }}>{scoreOf(card)}</div>
               </div>
             );
           })}
@@ -8969,7 +9173,7 @@ function CollectorWinPull({ winPullCards, onPick, onSkip }) {
       </div>
       {selected && (
         <div className="card" style={{ marginTop:10, borderColor:'var(--gold)' }}>
-          <div style={{ fontSize:'0.7rem', color:'var(--gold)', marginBottom:4 }}>Selected: <strong>{selected.name}</strong></div>
+          <div style={{ fontSize:'0.7rem', color:'var(--gold)', marginBottom:4 }}>Selected: <strong>{selected.name}</strong>{kingsguard?` · ⚔ ${(selected.scores&&selected.scores.kingsguard)||0} Kingsguard`:''}</div>
           <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:8 }}>{selected.desc}</div>
           <button className="btn btn-gold" style={{ width:'100%' }} onClick={() => onPick(selected)}>Add to Deck</button>
         </div>
@@ -10685,6 +10889,12 @@ function CollectorHub({ onHome }) {
   const [hwResult, setHwResult] = React.useState(null);
   const [hwReward, setHwReward] = React.useState(null);
   const [hwNotice, setHwNotice] = React.useState(null);   // abandon-penalty message
+  // Trial of Seven active-game state
+  const [trialLineup, setTrialLineup] = React.useState(null); // player's 15 cards
+  const [trialCpu, setTrialCpu] = React.useState(null);       // CPU's 15 cards
+  const [trialResult, setTrialResult] = React.useState(null);
+  const [trialWager, setTrialWager] = React.useState(0);      // optional wager (same rules as Traditional)
+  const [winPullKG, setWinPullKG] = React.useState(false);    // win-pull screen shows Kingsguard (Trial)
 
   // A cloud pull (cross-device sync) writes the latest deck/gold/stats to localStorage and
   // fires 'asoe-cloud-sync'. Reload from it so the hub doesn't keep stale in-memory state
@@ -10769,6 +10979,35 @@ function CollectorHub({ onHome }) {
   function startGameOfThrones() {
     if ((save.owned||[]).length < 21) return;
     setShowModeChoice(false); setScreen('got');
+  }
+  function startTrial() {
+    if ((save.owned||[]).length < 15) return; // you field a 15-card lineup
+    setTrialWager(0);
+    setShowModeChoice(false); setScreen('trialLineup');
+  }
+  function handleTrialLineupConfirm(cards) {
+    setTrialLineup(cards);
+    setTrialCpu(genTrialCpuDeck(trialDeckKG(cards))); // CPU 15-card deck within ±2% of your Kingsguard
+    setScreen('trialWager'); // optional wager (same rules as Traditional) before the match
+  }
+  function handleTrialWagerStart(wager) { setTrialWager(wager); setScreen('trialGame'); }
+  function handleTrialEnd(result) {
+    const wager = trialWager || 0;
+    if (!result || result.quit) { // quitting forfeits the wager, like Traditional
+      if (wager > 0) { const ns = { ...save, gold: Math.max(0, (save.gold||0) - wager) }; saveCollSave(ns); setSave(ns); }
+      setTrialWager(0); setTrialResult(null); setScreen('hub'); return;
+    }
+    const wagerDelta = wager > 0 ? (result.isWin ? wager : -wager) : 0; // win returns it doubled (+wager net); loss loses it
+    const placedIds = Object.values(result.cpuBoard || {}).filter(Boolean).map(c => c.id); // the CPU's 7 fielded cards
+    const ns = { ...save, gold: Math.max(0, (save.gold||0) + wagerDelta), cardStats: collRecordCardStats(save.cardStats, result.playerBoard, result.isWin, 'kingsguard') };
+    if (result.isWin) ns.pendingWinPull = { cards: placedIds }; // auto-award (from the 7 placed) if they bail (#6)
+    saveCollSave(ns); setSave(ns);
+    setTrialResult({ ...result, wager, wagerDelta }); setScreen('trialResult');
+  }
+  function handleTrialWinPull() {
+    const placed = Object.values((trialResult && trialResult.cpuBoard) || {}).filter(Boolean);
+    setWinPullCards(placed); // Win Pull from the CPU's 7 PLACED Kingsguard cards
+    setWinPullKG(true); setScreen('winpull');
   }
   function handleGotDone() { setScreen('hub'); }
   function handleGotSpin() { setWheelSpinsLeft(1); setScreen('wheel'); } // GoT "Spin the Wheel" card
@@ -10890,6 +11129,7 @@ function CollectorHub({ onHome }) {
     const cpuBoardCards = pool.reduce((acc, b) => acc.concat(Object.values(b||{}).filter(Boolean)), []);
     const pullCards = genWinPullCards(cpuBoardCards, save);
     setWinPullCards(pullCards);
+    setWinPullKG(false); // Traditional/Tourney show Overall (Trial flips this on)
     setScreen('winpull');
   }
 
@@ -10899,6 +11139,7 @@ function CollectorHub({ onHome }) {
     saveCollSave(newSave);
     setSave(newSave);
     if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
+    setWinPullKG(false); setTrialResult(null);
     if (gameResult && gameResult.wheelEarned) { setWheelSpinsLeft(1); setScreen('wheel'); return; } // 5-win streak reward
     setScreen('hub');
     setGameResult(null);
@@ -10954,12 +11195,16 @@ function CollectorHub({ onHome }) {
   if (screen === 'wager') return <CollectorWager save={save} onStart={handleStartGame} onCancel={() => setScreen('hub')} numCpus={gameMode==='tourney'?3:1} />;
   if (screen === 'game') return <CollectorGame save={save} wager={gameWager} onEnd={handleGameEnd} onUpdate={handleUpdate} numCpus={gameMode==='tourney'?3:1} />;
   if (screen === 'result' && gameResult) return <CollectorGameResult result={gameResult} save={save} onWinPull={handleWinPull} onHome={() => { autoResolveWinPull(save); setScreen('hub'); setGameResult(null); }} />;
-  if (screen === 'winpull') return <CollectorWinPull winPullCards={winPullCards} onPick={handlePickWinPull} onSkip={() => setScreen('hub')} />;
+  if (screen === 'winpull') return <CollectorWinPull winPullCards={winPullCards} kingsguard={winPullKG} onPick={handlePickWinPull} onSkip={() => { setScreen('hub'); setTrialResult(null); }} />;
   if (screen === 'hwSpin') return <CollectorHouseWarsSpin save={save} onDone={handleHwSpinDone} onCancel={() => setScreen('hub')} onRolled={handleHwRolled} onBackout={handleHwBackout} />;
   if (screen === 'hwLineup') return <CollectorHouseWarsLineup save={save} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onConfirm={handleHwLineupConfirm} onBackout={handleHwBackout} />;
   if (screen === 'hwGame' && hwLineup) return <CollectorHouseWarsGame playerCards={hwLineup.cards} cpuCards={hwCpuCards} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onEnd={handleHwEnd} />;
   if (screen === 'hwResult' && hwResult) return <CollectorHouseWarsResult result={hwResult} reward={hwReward} onClaim={handleHwClaim} onDiscard={handleHwDiscard} />;
   if (screen === 'got') return <CollectorGoT save={save} onUpdate={handleUpdate} onDone={handleGotDone} onSpin={handleGotSpin} />;
+  if (screen === 'trialLineup') return <CollectorTrialLineup save={save} onConfirm={handleTrialLineupConfirm} onCancel={() => setScreen('hub')} />;
+  if (screen === 'trialWager') return <CollectorWager save={save} onStart={handleTrialWagerStart} onCancel={() => setScreen('hub')} numCpus={1} />;
+  if (screen === 'trialGame' && trialLineup) return <CollectorTrialGame playerCards={trialLineup} cpuCards={trialCpu||[]} onEnd={handleTrialEnd} />;
+  if (screen === 'trialResult' && trialResult) return <CollectorTrialResult result={trialResult} onWinPull={handleTrialWinPull} onHome={() => { if (save.pendingWinPull) autoResolveWinPull(save); setScreen('hub'); setTrialResult(null); }} />;
   if (screen === 'wheel') return <React.Fragment>{evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}<CollectorWheel key={wheelSpinsLeft} spinsLeft={wheelSpinsLeft} onDone={handleWheelDone} streak={gameResult ? gameResult.winStreak : 5} /></React.Fragment>;
 
   return (
@@ -10977,6 +11222,7 @@ function CollectorHub({ onHome }) {
       )}
       {showModeChoice && (() => {
         const enough = (save.owned||[]).length >= 21; // HW & GoT can lose cards → need >20
+        const trialEnough = (save.owned||[]).length >= 15; // Trial of Seven fields a 15-card lineup
         const hwElig = hwEligibleHouses(save.owned);
         const hwLocked = !enough || hwElig.length === 0;
         return (
@@ -10998,6 +11244,10 @@ function CollectorHub({ onHome }) {
             <button disabled={!enough} onClick={startGameOfThrones} style={{ width:'100%', padding:'11px', background: !enough?'var(--bg2)':'#4a1d5f', color: !enough?'var(--text2)':'#fff', border:'1px solid '+(!enough?'var(--border)':'#a04ad0'), borderRadius:8, cursor: !enough?'not-allowed':'pointer', opacity: !enough?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
               {!enough ? '🔒 The Game of Thrones' : '👑 The Game of Thrones'}
               <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{!enough ? 'Need 21+ cards to play' : 'Pick 1 of 10 · instant Win or Die'}</div>
+            </button>
+            <button disabled={!trialEnough} onClick={startTrial} style={{ width:'100%', padding:'11px', marginTop:10, background: !trialEnough?'var(--bg2)':'#0d4a4a', color: !trialEnough?'var(--text2)':'#fff', border:'1px solid '+(!trialEnough?'var(--border)':'#2bb3b3'), borderRadius:8, cursor: !trialEnough?'not-allowed':'pointer', opacity: !trialEnough?0.7:1, fontFamily:'Cinzel,serif', fontWeight:700 }}>
+              {!trialEnough ? '🔒 Trial of Seven' : '⚔ Trial of Seven'}
+              <div style={{ fontSize:'0.55rem', opacity:0.85, fontWeight:400 }}>{!trialEnough ? 'Need 15+ cards to field a lineup' : '7 seats · Kingsguard only · wager + Win Pull'}</div>
             </button>
             <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:10, fontSize:'0.6rem' }} onClick={()=>setShowModeChoice(false)}>Cancel</button>
           </div>
