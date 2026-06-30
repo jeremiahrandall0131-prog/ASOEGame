@@ -1732,9 +1732,18 @@ function getSaveMeta() { return JSON.parse(localStorage.getItem('asoe-saves') ||
 function setSaveMeta(arr) { localStorage.setItem('asoe-saves', JSON.stringify(arr)); }
 function getActiveSaveId() { const v = parseInt(localStorage.getItem('asoe-active-save') || '0'); return isNaN(v) || v < 1 ? null : v; }
 function setActiveSaveId(id) { localStorage.setItem('asoe-active-save', String(id)); }
+// Is the player currently signed into their Google (cloud) account?
+function isSignedInNow() { try { return !!(FirebaseSync && FirebaseSync.getUser && FirebaseSync.getUser()); } catch (e) { return false; } }
+// A save is "Online" if it was created while signed in (it belongs to the cloud account) — Online
+// saves are greyed out and can't be loaded while signed out. Legacy saves (no flag) read as Offline.
+function isSaveOnline(s) { return !!(s && s.online); }
+function setSaveOnlineFlag(slotId, online) {
+  const meta = getSaveMeta(); const idx = meta.findIndex(s => s.id === slotId);
+  if (idx >= 0) { meta[idx].online = !!online; setSaveMeta(meta); if (online) { try { FirebaseSync.pushSave(slotId); } catch (e) {} } }
+}
 function createSaveSlot(slotId) {
   const meta = getSaveMeta().filter(s => s.id !== slotId);
-  meta.push({ id: slotId, created: Date.now(), lastPlayed: Date.now() });
+  meta.push({ id: slotId, created: Date.now(), lastPlayed: Date.now(), online: isSignedInNow() }); // tag Online if signed in at creation (#9)
   setSaveMeta(meta); setActiveSaveId(slotId);
   // Register the new save in the cloud immediately so it syncs to other devices.
   try { FirebaseSync.pushSave(slotId); } catch (e) {}
@@ -1909,6 +1918,8 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
   const [editingSlot, setEditingSlot] = useState(null);  // slot ID being renamed in load-save
   const [editName, setEditName] = useState('');
   const [saveRev, setSaveRev] = useState(0); // bump to re-render the save list after a delete
+  const [signedIn, setSignedIn] = useState(() => isSignedInNow()); // gates loading Online saves (#9)
+  useEffect(() => { try { FirebaseSync.onAuthChange(u => setSignedIn(!!u)); } catch (e) {} }, []);
   const [modePage, setModePage] = useState(0);
   const [classicSubPage, setClassicSubPage] = useState(0);
   const [empireSubPage, setEmpireSubPage] = useState(0);
@@ -1992,7 +2003,6 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
           {(() => {
             const saves = getSaveMeta();
             const hasSaves = saves.length > 0;
-            const lastSave = saves.sort((a,b) => b.lastPlayed - a.lastPlayed)[0];
             if (!hasSaves) {
               return (
                 <button className="btn btn-gold"
@@ -2006,16 +2016,23 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
                 </button>
               );
             }
+            // CONTINUE resumes the most-recent LOADABLE save — Online saves are locked while signed out (#9).
+            const loadable = saves.filter(s => !isSaveOnline(s) || signedIn).sort((a,b) => b.lastPlayed - a.lastPlayed);
+            const lastSave = loadable[0];
             return (<>
+              {lastSave ? (
               <button className="btn btn-gold"
                 style={{ width: '100%', maxWidth: 340, padding: '16px', fontSize: '1.1rem', letterSpacing: '0.14em', fontFamily: 'Cinzel,serif', marginBottom: 10 }}
                 onClick={() => {
-                  if (lastSave) { touchSave(lastSave.id); if (onSaveChange) onSaveChange(lastSave.id); }
+                  touchSave(lastSave.id); if (onSaveChange) onSaveChange(lastSave.id);
                   AudioManager.startMenuMusic();
                   setView('modes');
                 }}>
-                ▶ CONTINUE{lastSave?.name ? ` — ${lastSave.name}` : ''}
+                ▶ CONTINUE{lastSave.name ? ` — ${lastSave.name}` : ''}
               </button>
+              ) : (
+                <div style={{ width: '100%', maxWidth: 340, marginBottom: 10, padding: '12px', textAlign: 'center', fontSize: '0.72rem', color: '#e0a84a', fontFamily: 'Cinzel,serif', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(240,200,74,0.35)', borderRadius: 8, lineHeight: 1.5 }}>🔒 Sign in to load your Online saves.</div>
+              )}
               <button
                 style={{ width: '100%', maxWidth: 340, padding: '12px', fontSize: '0.85rem', letterSpacing: '0.1em', fontFamily: 'Cinzel,serif', background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(240,200,74,0.5)', borderRadius: 8, color: '#f0c84a', cursor: 'pointer' }}
                 onClick={() => setView('load-save')}>
@@ -2107,11 +2124,13 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
             const isActive = saveId === id;
             const isEditing = editingSlot === id;
             const displayName = save?.name || `Save ${id}`;
+            const online = save && isSaveOnline(save);
+            const locked = online && !signedIn; // Online save while signed out → can't load (#9)
             return (
               <div key={id} style={{
                 background: save ? (isActive ? 'rgba(240,200,74,0.1)' : 'var(--bg2)') : 'rgba(255,255,255,0.04)',
                 border: `1px solid ${isActive ? 'var(--gold)' : save ? 'var(--border)' : 'rgba(255,255,255,0.1)'}`,
-                borderRadius: 10, padding: '12px 14px', marginBottom: 12,
+                borderRadius: 10, padding: '12px 14px', marginBottom: 12, opacity: locked ? 0.55 : 1,
               }}>
                 {/* Name row — editable */}
                 {isEditing ? (
@@ -2143,6 +2162,9 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
                       {save ? displayName : `Save ${id}`}{isActive ? ' ✓' : ''}
                     </div>
                     {save && (
+                      <span style={{ fontSize: '0.5rem', fontFamily: 'Cinzel,serif', letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 10, border: `1px solid ${online ? 'rgba(66,165,245,0.6)' : 'rgba(255,255,255,0.25)'}`, color: online ? '#67b8ff' : 'var(--text2)', background: online ? 'rgba(66,165,245,0.12)' : 'rgba(255,255,255,0.04)', whiteSpace: 'nowrap' }}>{online ? '🌐 ONLINE' : '📴 OFFLINE'}</span>
+                    )}
+                    {save && (
                       <button onClick={() => { setEditingSlot(id); setEditName(displayName); }}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text2)', padding: '2px 4px', lineHeight: 1 }}
                         title="Rename">✏</button>
@@ -2155,15 +2177,17 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
                     {save ? (<>
                       <div style={{ fontSize: '0.6rem', color: 'var(--text2)' }}>Created: {new Date(save.created).toLocaleDateString()}</div>
                       <div style={{ fontSize: '0.6rem', color: 'var(--text2)' }}>Last played: {new Date(save.lastPlayed).toLocaleDateString()}</div>
+                      {locked && <div style={{ fontSize: '0.58rem', color: '#e0a84a', marginTop: 2 }}>🔒 Sign in to load this Online save</div>}
                     </>) : (
                       <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.3)', fontStyle: 'italic' }}>Empty slot</div>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     {save ? (<>
-                      <button className="btn btn-sm btn-gold" style={{ fontSize: '0.7rem', padding: '6px 12px' }}
-                        onClick={() => { if (onSaveChange) onSaveChange(id, 'modes'); AudioManager.startMenuMusic(); setView('modes'); }}>
-                        Load
+                      <button className={`btn btn-sm ${locked ? '' : 'btn-gold'}`} disabled={locked}
+                        style={{ fontSize: '0.7rem', padding: '6px 12px', ...(locked ? { opacity: 0.6, cursor: 'not-allowed', background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text2)' } : {}) }}
+                        onClick={() => { if (locked) return; if (onSaveChange) onSaveChange(id, 'modes'); AudioManager.startMenuMusic(); setView('modes'); }}>
+                        {locked ? '🔒 Locked' : 'Load'}
                       </button>
                       <button className="btn btn-sm"
                         style={{ fontSize: '0.7rem', padding: '6px 10px', background: 'rgba(180,40,40,0.2)', border: '1px solid #c04040', color: '#e08080' }}
@@ -11181,6 +11205,7 @@ function AccountScreen({ onBack, startup, onContinue }) {
   const [user, setUser] = useState(() => FirebaseSync.getUser());
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(null);
+  const [convertSlot, setConvertSlot] = useState(null); // active Offline save offered for Online conversion (#9)
 
   useEffect(() => {
     FirebaseSync.onAuthChange(u => setUser(u));
@@ -11188,7 +11213,14 @@ function AccountScreen({ onBack, startup, onContinue }) {
 
   async function handleSignIn() {
     setLoading(true); setStatus(null);
-    try { await FirebaseSync.signIn(); setStatus('Signed in! Your progress is now syncing.'); }
+    try {
+      await FirebaseSync.signIn();
+      setStatus('Signed in! Your progress is now syncing.');
+      // If the player is currently in an Offline save, offer to convert it to Online (#9).
+      const aid = getActiveSaveId();
+      const meta = aid ? getSaveMeta().find(s => s.id === aid) : null;
+      if (meta && !isSaveOnline(meta)) setConvertSlot(meta);
+    }
     catch(e) { setStatus(`Error: ${e.code || e.message || 'unknown'}`); }
     finally { setLoading(false); }
   }
@@ -11201,6 +11233,21 @@ function AccountScreen({ onBack, startup, onContinue }) {
 
   return (
     <div className="app screen-enter">
+      {convertSlot && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }} onClick={() => setConvertSlot(null)}>
+          <div onClick={e => e.stopPropagation()} className="card" style={{ maxWidth: 340, width: '100%', borderColor: 'var(--gold)', textAlign: 'center' }}>
+            <div style={{ fontFamily: 'Cinzel,serif', color: 'var(--gold)', fontSize: '0.95rem', marginBottom: 8 }}>☁ Convert to Online?</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text2)', marginBottom: 14, lineHeight: 1.55 }}>
+              Your save <b style={{ color: 'var(--gold2)' }}>{convertSlot.name || `Save ${convertSlot.id}`}</b> is currently <b>Offline</b>. Convert it to an <b style={{ color: '#67b8ff' }}>Online</b> save so it syncs to this account?
+              <br /><span style={{ fontSize: '0.62rem' }}>(Online saves can't be loaded while signed out.)</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={() => setConvertSlot(null)}>Keep Offline</button>
+              <button className="btn btn-gold btn-sm" style={{ flex: 1 }} onClick={() => { setSaveOnlineFlag(convertSlot.id, true); setConvertSlot(null); setStatus('Save converted to Online — it now syncs to your account.'); }}>Convert to Online</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="nav-bar">
         <div className="nav-side">{!startup && <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>}</div>
         <div className="nav-title" style={{ flex: 1, textAlign: 'center' }}>{startup ? 'WELCOME' : 'ACCOUNT'}</div>
