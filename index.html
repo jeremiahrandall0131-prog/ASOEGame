@@ -7762,6 +7762,7 @@ function CollectorStartingPull({ onDone }) {
 function CollectorMyDeck({ save, onUpdate }) {
   const [sort, setSort] = React.useState('overall');
   const [filterTier, setFilterTier] = React.useState('all');
+  const [posId, setPosId] = React.useState(COLL_POS[0].id); // selected position for "Sort: Position"
   const [selected, setSelected] = React.useState(null);
   const [showAuction, setShowAuction] = React.useState(false);
   const [identityView, setIdentityView] = React.useState(null); // selected charId in "Sort: Identity" mode
@@ -7773,6 +7774,7 @@ function CollectorMyDeck({ save, onUpdate }) {
   else if (sort === 'tier') cards.sort((a,b) => collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall);
   else if (sort === 'name') cards.sort((a,b) => a.name.localeCompare(b.name));
   else if (sort === 'house') cards.sort((a,b) => (a.houses?.[0]||'').localeCompare(b.houses?.[0]||'') || b.overall - a.overall);
+  else if (sort === 'position') cards.sort((a,b) => (((b.scores&&b.scores[posId])||0) - ((a.scores&&a.scores[posId])||0)) || b.overall - a.overall);
 
   // "Sort: Identity" — group the player's cards by character so they can drill into one
   // character and see every variant of that identity they own.
@@ -7827,8 +7829,14 @@ function CollectorMyDeck({ save, onUpdate }) {
             <option value="tier">Sort: Tier</option>
             <option value="name">Sort: A-Z</option>
             <option value="house">Sort: House</option>
+            <option value="position">Sort: Position</option>
             <option value="identity">Sort: Identity</option>
           </select>
+          {sort === 'position' && (
+            <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:4 }} value={posId} onChange={e=>setPosId(e.target.value)}>
+              {COLL_POS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+          )}
           <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={filterTier} onChange={e=>setFilterTier(e.target.value)}>
             <option value="all">All Tiers</option>
             {COLL_TIER_ORDER.map(t => <option key={t} value={t}>{(T[t]||{}).label||t}</option>)}
@@ -7940,6 +7948,8 @@ function CollectorCardIndex({ save }) {
   const [page, setPage] = React.useState(0);
   const [filterTier, setFilterTier] = React.useState('all');
   const [search, setSearch] = React.useState('');
+  const [sort, setSort] = React.useState('tier'); // tier | overall | name | house | position
+  const [posId, setPosId] = React.useState(COLL_POS[0].id);
   const [selected, setSelected] = React.useState(null);
   const PER_PAGE = 20;
   const T = window.COLLECTOR_TIERS || {};
@@ -7949,23 +7959,39 @@ function CollectorCardIndex({ save }) {
   if (filterTier !== 'all') cards = cards.filter(c => c.tier === filterTier);
   if (search.trim()) {
     const q = search.trim().toLowerCase();
-    cards = cards.filter(c => c.name.toLowerCase().includes(q) || c.charId.toLowerCase().includes(q) || (c.houses||[]).some(h=>h.toLowerCase().includes(q)));
+    cards = cards.filter(c => c.name.toLowerCase().includes(q) || (c.identity||'').toLowerCase().includes(q) || c.charId.toLowerCase().includes(q) || (c.houses||[]).some(h=>h.toLowerCase().includes(q)));
   }
-  cards = [...cards].sort((a,b) => collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall);
+  if (sort === 'position') cards = [...cards].sort((a,b) => (((b.scores&&b.scores[posId])||0) - ((a.scores&&a.scores[posId])||0)) || b.overall - a.overall);
+  else if (sort === 'house') cards = [...cards].sort((a,b) => ((a.houses||[])[0]||'').localeCompare((b.houses||[])[0]||'') || collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall);
+  else if (sort === 'name') cards = [...cards].sort((a,b) => a.name.localeCompare(b.name));
+  else if (sort === 'overall') cards = [...cards].sort((a,b) => b.overall - a.overall);
+  else cards = [...cards].sort((a,b) => collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall); // tier (default)
   const totalPages = Math.max(1, Math.ceil(cards.length / PER_PAGE));
   const pageCards = cards.slice(page * PER_PAGE, (page+1) * PER_PAGE);
 
-  React.useEffect(() => { setPage(0); }, [filterTier, search]);
+  React.useEffect(() => { setPage(0); }, [filterTier, search, sort, posId]);
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
       <div style={{ display:'flex', gap:6, marginBottom:10, flexWrap:'wrap' }}>
         <input style={{ flex:1, minWidth:120, fontSize:'0.65rem', padding:'4px 8px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }}
-          placeholder="Search name, house..." value={search} onChange={e=>setSearch(e.target.value)} />
+          placeholder="Search name, identity, house..." value={search} onChange={e=>setSearch(e.target.value)} />
         <select style={{ fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={filterTier} onChange={e=>setFilterTier(e.target.value)}>
           <option value="all">All Tiers</option>
           {COLL_TIER_ORDER.map(t => <option key={t} value={t}>{(T[t]||{}).label||t}</option>)}
         </select>
+        <select style={{ fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={sort} onChange={e=>setSort(e.target.value)}>
+          <option value="tier">Sort: Tier</option>
+          <option value="overall">Sort: Overall</option>
+          <option value="name">Sort: A-Z</option>
+          <option value="house">Sort: House</option>
+          <option value="position">Sort: Position</option>
+        </select>
+        {sort === 'position' && (
+          <select style={{ fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:4 }} value={posId} onChange={e=>setPosId(e.target.value)}>
+            {COLL_POS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+        )}
       </div>
       <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:6 }}>{cards.length} cards · Page {page+1}/{totalPages}</div>
       <div className="scroll" style={{ flex:1 }}>
@@ -8322,6 +8348,8 @@ function CollectorStore({ save, onUpdate }) {
   const [tab, setTab] = React.useState('showcase');
   const [buyFilter, setBuyFilter] = React.useState('starter');
   const [buySearch, setBuySearch] = React.useState('');
+  const [buyMode, setBuyMode] = React.useState('name'); // search field: name | identity | house | position
+  const [buyPos, setBuyPos] = React.useState(COLL_POS[0].id); // selected position for "Position" mode
   const [buyPage, setBuyPage] = React.useState(0);
   const [lotteryType, setLotteryType] = React.useState('hero');
   const [lotteryResult, setLotteryResult] = React.useState(null);
@@ -8599,14 +8627,30 @@ function CollectorStore({ save, onUpdate }) {
                 </button>
               ))}
             </div>
-            <input style={{ width:'100%', fontSize:'0.65rem', padding:'4px 8px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4, marginBottom:8 }}
-              placeholder="Search by name, identity, or house…" value={buySearch} onChange={e=>{setBuySearch(e.target.value);setBuyPage(0);}} />
+            <div style={{ display:'flex', gap:6, marginBottom:8 }}>
+              <select style={{ fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={buyMode} onChange={e=>{ setBuyMode(e.target.value); setBuyPage(0); }}>
+                <option value="name">By Name</option>
+                <option value="identity">By Identity</option>
+                <option value="house">By House</option>
+                <option value="position">By Position</option>
+              </select>
+              {buyMode === 'position'
+                ? <select style={{ flex:1, fontSize:'0.62rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:4 }} value={buyPos} onChange={e=>{ setBuyPos(e.target.value); setBuyPage(0); }}>
+                    {COLL_POS.map(p => <option key={p.id} value={p.id}>{p.label} — high → low</option>)}
+                  </select>
+                : <input style={{ flex:1, fontSize:'0.65rem', padding:'4px 8px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }}
+                    placeholder={`Search by ${buyMode}…`} value={buySearch} onChange={e=>{setBuySearch(e.target.value);setBuyPage(0);}} />}
+            </div>
             {(() => {
               const price = COLL_BUY_GOLD[buyFilter];
               let pool = getCollCards().filter(c => c.tier === buyFilter); // owned may re-appear (Evolve)
-              // Search matches card name, identity (many cards aren't named after their identity), or house.
-              if (buySearch) { const q=buySearch.toLowerCase(); pool=pool.filter(c=>c.name.toLowerCase().includes(q)||(c.identity||'').toLowerCase().includes(q)||(c.houses||[]).some(h=>h.toLowerCase().includes(q))); }
-              pool.sort((a,b)=>b.overall-a.overall);
+              // The dropdown picks the search field; Position instead sorts the tier high→low by that seat.
+              if (buyMode === 'position') {
+                pool = pool.slice().sort((a,b) => (((b.scores&&b.scores[buyPos])||0) - ((a.scores&&a.scores[buyPos])||0)) || b.overall - a.overall);
+              } else {
+                if (buySearch) { const q=buySearch.toLowerCase(); pool=pool.filter(c => buyMode==='identity' ? (c.identity||'').toLowerCase().includes(q) : buyMode==='house' ? (c.houses||[]).some(h=>h.toLowerCase().includes(q)) : c.name.toLowerCase().includes(q)); }
+                pool.sort((a,b)=>b.overall-a.overall);
+              }
               const pp = 20;
               const totalPg = Math.max(1,Math.ceil(pool.length/pp));
               const pg = pool.slice(buyPage*pp,(buyPage+1)*pp);
