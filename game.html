@@ -8859,6 +8859,64 @@ function VolumeBar() {
   );
 }
 
+// In-game deck scout (Traditional/Tourney = whole deck, House Wars = the 10-card lineup). Lets
+// the player hunt their roster by Overall (default), A-Z, identity search, or best-per-position.
+function CollectorDeckViewer({ cards, title, positions, onClose }) {
+  const T = window.COLLECTOR_TIERS || {};
+  const POS = positions || COLL_POS; // House Wars passes its 5 seats; other modes use all 10
+  const [mode, setMode] = React.useState('overall'); // overall | name | identity | position
+  const [query, setQuery] = React.useState('');
+  const [posId, setPosId] = React.useState(POS[0].id);
+  const [detail, setDetail] = React.useState(null);
+  let list = (cards || []).slice();
+  if (mode === 'identity' && query) { const q = query.toLowerCase(); list = list.filter(c => (c.identity||'').toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q) || (c.houses||[]).some(h=>h.toLowerCase().includes(q))); }
+  if (mode === 'name') list.sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  else if (mode === 'position') list.sort((a,b) => (((b.scores&&b.scores[posId])||0) - ((a.scores&&a.scores[posId])||0)) || (b.overall-a.overall));
+  else list.sort((a,b) => b.overall - a.overall); // overall (also the order for identity search)
+  const posLabel = (POS.find(p => p.id === posId) || {}).label;
+  return (
+    <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.9)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
+      {detail && <CollDetailModal card={detail} onClose={()=>setDetail(null)} />}
+      <div onClick={e=>e.stopPropagation()} style={{ width:'100%', maxWidth:460, maxHeight:'88%', display:'flex', flexDirection:'column', background:'var(--bg)', border:'1px solid var(--gold)', borderRadius:10, padding:14 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+          <div style={{ fontFamily:'Cinzel,serif', color:'var(--gold)', fontSize:'0.85rem', fontWeight:700 }}>{title||'Your Deck'} <span style={{ color:'var(--text2)', fontSize:'0.6rem' }}>· {(cards||[]).length} cards</span></div>
+          <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'1.1rem', cursor:'pointer', lineHeight:1 }}>✕</button>
+        </div>
+        <div style={{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' }}>
+          {[['overall','Overall'],['name','A-Z'],['identity','Identity'],['position','Position']].map(([m,lbl]) => (
+            <button key={m} className={`btn btn-${mode===m?'gold':'ghost'} btn-sm`} style={{ fontSize:'0.58rem', flex:1 }} onClick={()=>setMode(m)}>{lbl}</button>
+          ))}
+        </div>
+        {mode==='identity' && <input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search a character or identity…" style={{ width:'100%', fontSize:'0.66rem', padding:'5px 8px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:5, marginBottom:8 }} />}
+        {mode==='position' && (
+          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
+            <span style={{ fontSize:'0.6rem', color:'var(--text2)' }}>Best at:</span>
+            <select value={posId} onChange={e=>setPosId(e.target.value)} style={{ flex:1, fontSize:'0.64rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:5 }}>
+              {POS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+          </div>
+        )}
+        <div className="scroll" style={{ flex:1, overflowY:'auto' }}>
+          {list.length===0 ? <div style={{ fontSize:'0.65rem', color:'var(--text2)', textAlign:'center', padding:16 }}>No cards.</div> :
+            list.map((c,i) => { const ct=T[c.tier]||{color:'#888'}; const ps=(c.scores&&c.scores[posId])||0; return (
+              <div key={c.id+'_'+i} onClick={()=>setDetail(c)} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 8px', borderBottom:'1px solid var(--border)', cursor:'pointer' }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:'0.66rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
+                  <div style={{ fontSize:'0.52rem', color:'var(--text2)' }}>{c.identity||''}{c.houses&&c.houses[0]?(' · '+c.houses[0]):''}</div>
+                </div>
+                <CollTierBadge tier={c.tier} />
+                {mode==='position'
+                  ? <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: ps>=9?'#ffd700':ct.color, fontSize:'0.82rem', width:42, textAlign:'right' }}>{Math.round(ps*10)/10}</span>
+                  : <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.82rem', width:42, textAlign:'right' }}>{c.overall}</span>}
+              </div>
+            ); })}
+        </div>
+        {mode==='position' && <div style={{ fontSize:'0.54rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>Ranked by {posLabel} score, highest first.</div>}
+      </div>
+    </div>
+  );
+}
+
 function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
   // Player deck: shuffle owned cards
   const [playerDeck] = React.useState(() => {
@@ -8890,6 +8948,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
   const [heldDisplaced, setHeldDisplaced] = React.useState(false); // holding a card swapped out of a slot
   const [detailCard, setDetailCard] = React.useState(null); // card whose stats popup is open
   const [showSettings, setShowSettings] = React.useState(false);
+  const [showDeckView, setShowDeckView] = React.useState(false);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
 
   // Each CPU draws fate from its OWN hidden deck each round (like the player), spending up to
@@ -9196,10 +9255,12 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
             {filledPositions}/{COLL_POS.length} PLACED · {rerollsLeft} REROLL{rerollsLeft!==1?'S':''} LEFT
           </div>
         </div>
-        <div className="nav-side" style={{ justifyContent:'flex-end' }}>
+        <div className="nav-side" style={{ justifyContent:'flex-end', display:'flex', gap:6, width:'auto', alignItems:'center' }}>
+          <button onClick={() => setShowDeckView(true)} title="View your deck" style={{ width:30, height:30, borderRadius:'50%', background:'var(--bg3)', border:'1px solid var(--border2)', color:'var(--gold)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1rem', padding:0, lineHeight:1 }}>🃏</button>
           <button onClick={() => setShowSettings(true)} title="Settings" style={{ width:30, height:30, borderRadius:'50%', background:'var(--bg3)', border:'1px solid var(--border2)', color:'var(--gold)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1.05rem', padding:0, lineHeight:1 }}>⚙</button>
         </div>
       </div>
+      {showDeckView && <CollectorDeckViewer cards={playerDeck} title="Your Deck" onClose={() => setShowDeckView(false)} />}
 
       {/* Score display */}
       {NCPU === 1 ? (
@@ -9801,6 +9862,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
   const [selectedPos, setSelectedPos] = React.useState(null);
   const [detailCard, setDetailCard] = React.useState(null);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
+  const [showDeckView, setShowDeckView] = React.useState(false);
   const T = window.COLLECTOR_TIERS || {};
 
   const playerScore = hwScore(playerBoard);
@@ -9887,8 +9949,9 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
           <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)' }}>⚔ HOUSE WARS · Turn {Math.min(round+1,5)}/5</div>
           <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}><span style={{color:'var(--p1,#3aa0ff)'}}>{userHouse}</span> vs <span style={{color:'var(--p2,#e05555)'}}>{cpuHouse}</span></div>
         </div>
-        <div style={{ width:30, flexShrink:0 }} />
+        <button onClick={()=>setShowDeckView(true)} title="View your lineup" style={{ width:30, height:30, borderRadius:'50%', background:'var(--bg3)', border:'1px solid var(--border2)', color:'var(--gold)', cursor:'pointer', fontSize:'1rem', flexShrink:0, lineHeight:1 }}>🃏</button>
       </div>
+      {showDeckView && <CollectorDeckViewer cards={playerCards} title="Your Lineup" positions={HW_POS} onClose={()=>setShowDeckView(false)} />}
       {/* Score / board toggle */}
       <div style={{ display:'flex', borderBottom:'1px solid var(--border)' }}>
         <button onClick={()=>setShowCpu(false)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: !showCpu?'rgba(58,160,255,0.15)':'var(--bg2)', color:!showCpu?'var(--p1,#3aa0ff)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>My Court ({Math.round(playerScore*10)/10})</button>
