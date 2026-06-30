@@ -9025,6 +9025,7 @@ function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
   const [showCpu, setShowCpu] = React.useState(false);
   const [detailCard, setDetailCard] = React.useState(null);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
+  const [showDeckView, setShowDeckView] = React.useState(false);
   const T = window.COLLECTOR_TIERS || {};
   const seats = []; for (let i=0;i<TRIAL_SEAT_COUNT;i++) seats.push('kg'+i);
   const playerScore = trialBoardScore(playerBoard);
@@ -9057,6 +9058,7 @@ function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
       {detailCard && <CollDetailModal card={detailCard} onClose={()=>setDetailCard(null)} />}
+      {showDeckView && <CollectorDeckViewer cards={playerCards} title="Your Lineup" positions={[{ id:'kingsguard', label:'Kingsguard' }]} defaultMode="position" onClose={()=>setShowDeckView(false)} />}
       {confirmQuit && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmQuit(false)}>
           <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
@@ -9075,7 +9077,7 @@ function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
           <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)' }}>⚔ TRIAL OF SEVEN · {Math.min(round+1,7)}/7</div>
           <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>Only Kingsguard counts</div>
         </div>
-        <div style={{ width:30, flexShrink:0 }} />
+        <button onClick={()=>setShowDeckView(true)} title="View your lineup" style={{ width:30, height:30, borderRadius:'50%', background:'var(--bg3)', border:'1px solid var(--border2)', color:'var(--gold)', cursor:'pointer', fontSize:'1rem', flexShrink:0, lineHeight:1 }}>🃏</button>
       </div>
       <div style={{ display:'flex', borderBottom:'1px solid var(--border)' }}>
         <button onClick={()=>setShowCpu(false)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: !showCpu?'rgba(212,168,48,0.15)':'var(--bg2)', color:!showCpu?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>My Seven ({Math.round(playerScore*10)/10})</button>
@@ -9100,7 +9102,23 @@ function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
       </div>
       <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
         {phase==='draw' && <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.1em' }} onClick={drawFate}>🎴 DRAW FATE</button>}
-        {phase==='place' && drawnCard && <div style={{ textAlign:'center' }}><div style={{ fontSize:'0.72rem', color:'var(--gold)', fontFamily:'Cinzel,serif', marginBottom:3 }}>Fate drew <b>{drawnCard.name}</b> · ⚔ {trialKG(drawnCard)}</div><div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>Tap an open seat to place it.</div></div>}
+        {phase==='place' && drawnCard && (() => { const ct=T[drawnCard.tier]||{color:'#888',bg:'#111'}; return (
+          <div className="got-pop">
+            <div style={{ fontSize:'0.56rem', color:'var(--text2)', textAlign:'center', marginBottom:5, fontFamily:'Cinzel,serif', letterSpacing:'0.1em' }}>🎴 FATE DREW</div>
+            <div className="card" style={{ borderColor:ct.color, boxShadow:`0 0 16px ${ct.color}`, padding:'10px 12px', display:'flex', alignItems:'center', gap:10 }} onClick={()=>setDetailCard(drawnCard)}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.84rem', color:ct.color, fontWeight:800, lineHeight:1.15 }}>{drawnCard.name}</div>
+                <div style={{ fontSize:'0.56rem', color:'var(--text2)', marginTop:2 }}>{drawnCard.identity||drawnCard.name} · {drawnCard.gender==='F'?'♀':'♂'} · Age {drawnCard.age}</div>
+                <div style={{ marginTop:4 }}><CollTierBadge tier={drawnCard.tier} /></div>
+              </div>
+              <div style={{ textAlign:'center', flexShrink:0 }}>
+                <div style={{ fontFamily:'Cinzel,serif', fontWeight:800, color:'var(--gold)', fontSize:'1.5rem', lineHeight:1 }}>⚔ {trialKG(drawnCard)}</div>
+                <div style={{ fontSize:'0.48rem', color:'var(--text2)', letterSpacing:'0.06em' }}>KINGSGUARD</div>
+              </div>
+            </div>
+            <div style={{ fontSize:'0.6rem', color:'var(--gold)', textAlign:'center', marginTop:6 }}>Tap an open seat to place it.</div>
+          </div>
+        ); })()}
       </div>
     </div>
   );
@@ -9202,10 +9220,10 @@ function VolumeBar() {
 
 // In-game deck scout (Traditional/Tourney = whole deck, House Wars = the 10-card lineup). Lets
 // the player hunt their roster by Overall (default), A-Z, identity search, or best-per-position.
-function CollectorDeckViewer({ cards, title, positions, onClose }) {
+function CollectorDeckViewer({ cards, title, positions, defaultMode, onClose }) {
   const T = window.COLLECTOR_TIERS || {};
   const POS = positions || COLL_POS; // House Wars passes its 5 seats; other modes use all 10
-  const [mode, setMode] = React.useState('overall'); // overall | name | identity | position
+  const [mode, setMode] = React.useState(defaultMode || 'overall'); // overall | name | identity | position
   const [query, setQuery] = React.useState('');
   const [posId, setPosId] = React.useState(POS[0].id);
   const [detail, setDetail] = React.useState(null);
