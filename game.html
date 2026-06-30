@@ -7110,13 +7110,35 @@ function collDefaultSave() {
            storeClosedUntil:null, gotPending:null, // The Game of Thrones: store-closed timer + pending loss-choice marker
            cardStats:{}, // per-card record (keyed by base variant id): { placements, wins, points } for cards ever PLACED on a board
            stats:{ games:0, wins:0, totalScore:0, cardPlays:{}, cardScores:{} },
+           modeStats:{}, // per-mode record: traditional/tourney/trial {games,wins,totalScore,streak,maxStreak}; got {games,wins,losses}; sevenK {games,bingos,blackouts,bestFilled}. (House Wars lives in .hw)
            // House Wars: separate stats/streak, the 3-in-a-row rotation tracker, pending wheel
            // spins, and an "active game" marker used to penalise quitting / closing mid-match.
            hw:{ games:0, wins:0, streak:0, maxStreak:0, byHouse:{}, recentHouse:null, recentRun:0, wheelSpins:0, active:null } };
 }
 function loadCollSave() {
-  try { return { ...collDefaultSave(), ...JSON.parse(localStorage.getItem(collKey())||'{}') }; }
+  let s;
+  try { s = { ...collDefaultSave(), ...JSON.parse(localStorage.getItem(collKey())||'{}') }; }
   catch { return collDefaultSave(); }
+  // Migrate: seed per-mode Traditional from the legacy combined record so existing history carries over.
+  if (!s.modeStats) s.modeStats = {};
+  if (!s.modeStats.traditional && s.stats && (s.stats.games||0) > 0) {
+    s.modeStats.traditional = { games:s.stats.games||0, wins:s.stats.wins||0, totalScore:s.stats.totalScore||0, streak:s.stats.winStreak||0, maxStreak:s.stats.maxWinStreak||0 };
+  }
+  return s;
+}
+// Fold one game result into a mode's record. Mode-aware: got = win/loss cards, sevenK = bingo tally, others = win/score/streak.
+function collRecordMode(prev, mode, data) {
+  const ms = { ...(prev||{}) };
+  const m = ms[mode] || {};
+  if (mode === 'got') {
+    ms.got = { games:(m.games||0)+1, wins:(m.wins||0)+(data.win?1:0), losses:(m.losses||0)+(data.win?0:1) };
+  } else if (mode === 'sevenK') {
+    ms.sevenK = { games:(m.games||0)+1, bingos:(m.bingos||0)+(data.bingos||0), blackouts:(m.blackouts||0)+(data.blackout?1:0), bestFilled:Math.max(m.bestFilled||0, data.filled||0) };
+  } else { // traditional / tourney / trial — win/loss + score + streak
+    const streak = data.win ? (m.streak||0)+1 : 0;
+    ms[mode] = { games:(m.games||0)+1, wins:(m.wins||0)+(data.win?1:0), totalScore:(m.totalScore||0)+(data.score||0), streak, maxStreak:Math.max(m.maxStreak||0, streak) };
+  }
+  return ms;
 }
 function saveCollSave(s) {
   const stamped = { ...s, updatedAt: Date.now() };
@@ -8071,22 +8093,33 @@ function CollectorCardStats({ save }) {
 
   const T = window.COLLECTOR_TIERS || {};
 
-  // ── Combat record ──
-  const games = stats.games||0, wins = stats.wins||0, losses = Math.max(0, games-wins);
-  const winRate = games ? Math.round(wins/games*100) : 0;
-  const scoreAvg = games ? Math.floor((stats.totalScore||0)/games*10)/10 : 0;
-  const curStreak = stats.winStreak||0, bestStreak = stats.maxWinStreak||0;
-  // ── House Wars record (optionally filtered by House) ──
+  // ── Per-mode combat record (every game mode) ──
+  const MS = save.modeStats || {};
   const hw = save.hw || {};
   const eligibleH = hwEligibleHouses(save.owned);
-  const hwSel = houseFilter === 'all' ? { games: hw.games||0, wins: hw.wins||0 } : ((hw.byHouse||{})[houseFilter] || { games:0, wins:0 });
-  const hwGames = hwSel.games||0, hwWins = hwSel.wins||0, hwLosses = Math.max(0, hwGames-hwWins);
-  const hwWinRate = hwGames ? Math.round(hwWins/hwGames*100) : 0;
-  const isHw = statMode === 'hw';
-  const recRows = isHw
-    ? [['Games',hwGames,'var(--gold)'],['Wins',hwWins,'#4caf50'],['Losses',hwLosses,'#e05555'],['Win Rate',hwWinRate+'%','var(--gold)'],['Streak',hw.streak||0,'#4caf50'],['Best',hw.maxStreak||0,'#ffd700']]
-    : [['Games',games,'var(--gold)'],['Wins',wins,'#4caf50'],['Losses',losses,'#e05555'],['Win Rate',winRate+'%','var(--gold)'],['Streak',curStreak,'#4caf50'],['Best',bestStreak,'#ffd700']];
-  const recWinRate = isHw ? hwWinRate : winRate;
+  const GOLD='var(--gold)', GRN='#4caf50', RED='#e05555', YEL='#ffd700';
+  const STAT_MODES = [['traditional','⚔ Traditional'],['tourney','🏆 Tourney'],['houseWars','🏰 House Wars'],['got','👑 Game of Thrones'],['trial','⚔ Trial of Seven'],['sevenK','🏰 Seven Kingdoms']];
+  let recRows = [], recWinRate = 0, recTitle = 'COMBAT RECORD', showWinBar = true, modeNote = null;
+  if (statMode === 'houseWars') {
+    const sel = houseFilter === 'all' ? { games: hw.games||0, wins: hw.wins||0 } : ((hw.byHouse||{})[houseFilter] || { games:0, wins:0 });
+    const g=sel.games||0, w=sel.wins||0, l=Math.max(0,g-w), wr=g?Math.round(w/g*100):0;
+    recRows=[['Games',g,GOLD],['Wins',w,GRN],['Losses',l,RED],['Win Rate',wr+'%',GOLD],['Streak',hw.streak||0,GRN],['Best',hw.maxStreak||0,YEL]];
+    recWinRate=wr; recTitle='HOUSE WARS';
+    if (houseFilter!=='all') modeNote='Streak & Best are tracked across all Houses.';
+  } else if (statMode === 'got') {
+    const m=MS.got||{}; const g=m.games||0, w=m.wins||0, l=m.losses||0, wr=g?Math.round(w/g*100):0;
+    recRows=[['Plays',g,GOLD],['Win Cards',w,GRN],['Loss Cards',l,RED],['Win Rate',wr+'%',GOLD]];
+    recWinRate=wr; recTitle='THE GAME OF THRONES'; modeNote='Each pick is a Win card or a Loss card.';
+  } else if (statMode === 'sevenK') {
+    const m=MS.sevenK||{};
+    recRows=[['Games',m.games||0,GOLD],['Total Bingos',m.bingos||0,GRN],['Blackouts',m.blackouts||0,YEL],['Best Fill',(m.bestFilled||0)+'/25',GOLD]];
+    showWinBar=false; recTitle='SEVEN KINGDOMS'; modeNote='Solo bingo — no win/loss; chase Bingos & blackouts.';
+  } else { // traditional / tourney / trial
+    const m=MS[statMode]||{}; const g=m.games||0, w=m.wins||0, l=Math.max(0,g-w), wr=g?Math.round(w/g*100):0;
+    const avg=g?Math.floor((m.totalScore||0)/g*10)/10:0;
+    recRows=[['Games',g,GOLD],['Wins',w,GRN],['Losses',l,RED],['Win Rate',wr+'%',GOLD],[statMode==='trial'?'Avg KG':'Avg Score',avg,GOLD],['Best',m.maxStreak||0,YEL]];
+    recWinRate=wr; recTitle = statMode==='tourney'?'TOURNEY':(statMode==='trial'?'TRIAL OF SEVEN':'COMBAT RECORD');
+  }
   // ── Collection progress ──
   const allCards = getCollCards();
   const totalCards = allCards.length;
@@ -8148,22 +8181,23 @@ function CollectorCardStats({ save }) {
       )}
 
       {view === 'overview' && (<>
-      {/* Combat record (Traditional / House Wars toggle) */}
+      {/* Per-mode combat record — pick any game mode */}
       <div className="card" style={{ marginBottom:12 }}>
-        <div style={{ display:'flex', gap:6, marginBottom:10 }}>
-          <button onClick={()=>setStatMode('traditional')} className={`btn btn-${!isHw?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.6rem' }}>Traditional</button>
-          <button onClick={()=>setStatMode('hw')} className={`btn btn-${isHw?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.6rem' }}>House Wars</button>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:5, marginBottom:10 }}>
+          {STAT_MODES.map(([id,label])=>(
+            <button key={id} onClick={()=>setStatMode(id)} className={`btn btn-${statMode===id?'gold':'ghost'} btn-sm`} style={{ fontSize:'0.52rem', padding:'5px 2px' }}>{label}</button>
+          ))}
         </div>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
-          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)' }}>⚔ {isHw?'HOUSE WARS':'COMBAT'} RECORD</div>
-          {isHw && (
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', color:'var(--gold)' }}>⚔ {recTitle}</div>
+          {statMode==='houseWars' && (
             <select value={houseFilter} onChange={e=>setHouseFilter(e.target.value)} style={{ fontSize:'0.55rem', padding:'2px 5px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }}>
               <option value="all">All Houses</option>
               {eligibleH.map(h=><option key={h} value={h}>{h}</option>)}
             </select>
           )}
         </div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:10 }}>
+        <div style={{ display:'grid', gridTemplateColumns:`repeat(${recRows.length>=6?3:recRows.length},1fr)`, gap:8, marginBottom:showWinBar?10:2 }}>
           {recRows.map(([l,v,c])=>(
             <div key={l} style={{ textAlign:'center' }}>
               <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:c }}>{v}</div>
@@ -8171,13 +8205,14 @@ function CollectorCardStats({ save }) {
             </div>
           ))}
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
-          <span style={{ fontSize:'0.55rem', color:'var(--text2)', width:60 }}>Win Rate</span>
-          <div style={{ flex:1 }}><CollBar pct={recWinRate} color="#4caf50" /></div>
-          <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--text2)', width:34, textAlign:'right' }}>{recWinRate}%</span>
-        </div>
-        {!isHw && <div style={{ fontSize:'0.55rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>Avg score per game: <span style={{ color:'var(--gold)', fontFamily:'Cinzel,serif' }}>{scoreAvg}</span></div>}
-        {isHw && houseFilter!=='all' && <div style={{ fontSize:'0.5rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>Streak &amp; Best are tracked across all Houses.</div>}
+        {showWinBar && (
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+            <span style={{ fontSize:'0.55rem', color:'var(--text2)', width:60 }}>Win Rate</span>
+            <div style={{ flex:1 }}><CollBar pct={recWinRate} color="#4caf50" /></div>
+            <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--text2)', width:34, textAlign:'right' }}>{recWinRate}%</span>
+          </div>
+        )}
+        {modeNote && <div style={{ fontSize:'0.5rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>{modeNote}</div>}
       </div>
 
       {/* Collection progress */}
@@ -9276,7 +9311,7 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
     const bingos = skCountBingos(np);
     const blackout = fc >= 25;
     const gold = bingos*20 + (blackout ? 2000 : 0);
-    const ns = { ...save, gold: (save.gold||0) + gold };
+    const ns = { ...save, gold: (save.gold||0) + gold, modeStats: collRecordMode(save.modeStats, 'sevenK', { bingos, blackout, filled: fc }) };
     saveCollSave(ns); onUpdate(ns);
     setResult({ filledCount: fc, bingos, gold, blackout, wheel: fc >= 20 });
     setPhase('done');
@@ -9749,6 +9784,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
       gold: finalGold,
       rerolls: Math.max(0, (save.rerolls||0) - rerollsUsed),
       cardStats: collRecordCardStats(save.cardStats, playerBoard, isWin), // per-card placement record (#3)
+      modeStats: collRecordMode(save.modeStats, NCPU>1?'tourney':'traditional', { win:isWin, score:playerScore }),
       stats: {
         ...(save.stats||{}),
         games: (save.stats?.games||0)+1,
@@ -9777,6 +9813,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
     const s = save.stats || {};
     const newSave = { ...save,
       gold: wager > 0 ? Math.max(0, (save.gold||0) - wager) : (save.gold||0),
+      modeStats: collRecordMode(save.modeStats, NCPU>1?'tourney':'traditional', { win:false, score:0 }),
       stats: { ...s, games: (s.games||0) + 1, winStreak: 0 } };
     saveCollSave(newSave);
     onUpdate(newSave);
@@ -10923,8 +10960,8 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
         )}
         {revealed && (
           <div className="got-pop" style={{ marginTop:16, width:'100%', maxWidth:300 }}>
-            {postReveal === 'done' && <button className="btn btn-gold" style={{ width:'100%', padding:'12px' }} onClick={onDone}>Continue</button>}
-            {postReveal === 'spin' && <button className="btn btn-gold" style={{ width:'100%', padding:'12px' }} onClick={()=>onSpin && onSpin()}>Spin the Wheel →</button>}
+            {postReveal === 'done' && <button className="btn btn-gold" style={{ width:'100%', padding:'12px' }} onClick={()=>onDone(cardObj && cardObj.win)}>Continue</button>}
+            {postReveal === 'spin' && <button className="btn btn-gold" style={{ width:'100%', padding:'12px' }} onClick={()=>onSpin && onSpin(cardObj && cardObj.win)}>Spin the Wheel →</button>}
             {postReveal !== 'done' && postReveal !== 'spin' && (
               <button className="btn btn-gold" style={{ width:'100%', padding:'12px' }} onClick={()=>setStage(postReveal)}>Choose your card →</button>
             )}
@@ -10957,7 +10994,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
           )}
         </div>
         <div style={{ padding:'10px 16px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
-          <button className="btn btn-gold" style={{ width:'100%', padding:'13px' }} onClick={onDone}>Continue</button>
+          <button className="btn btn-gold" style={{ width:'100%', padding:'13px' }} onClick={()=>onDone(cardObj && cardObj.win)}>Continue</button>
         </div>
       </div>
     );
@@ -11257,7 +11294,8 @@ function CollectorHub({ onHome }) {
     }
     const wagerDelta = wager > 0 ? (result.isWin ? wager : -wager) : 0; // win returns it doubled (+wager net); loss loses it
     const placedIds = Object.values(result.cpuBoard || {}).filter(Boolean).map(c => c.id); // the CPU's 7 fielded cards
-    const ns = { ...save, gold: Math.max(0, (save.gold||0) + wagerDelta), cardStats: collRecordCardStats(save.cardStats, result.playerBoard, result.isWin, 'kingsguard') };
+    const ns = { ...save, gold: Math.max(0, (save.gold||0) + wagerDelta), cardStats: collRecordCardStats(save.cardStats, result.playerBoard, result.isWin, 'kingsguard'),
+      modeStats: collRecordMode(save.modeStats, 'trial', { win:result.isWin, score:result.playerScore }) };
     if (result.isWin) ns.pendingWinPull = { cards: placedIds }; // auto-award (from the 7 placed) if they bail (#6)
     saveCollSave(ns); setSave(ns);
     setTrialResult({ ...result, wager, wagerDelta }); setScreen('trialResult');
@@ -11267,8 +11305,13 @@ function CollectorHub({ onHome }) {
     setWinPullCards(placed); // Win Pull from the CPU's 7 PLACED Kingsguard cards
     setWinPullKG(true); setScreen('winpull');
   }
-  function handleGotDone() { setScreen('hub'); }
-  function handleGotSpin() { setWheelSpinsLeft(1); setScreen('wheel'); } // GoT "Spin the Wheel" card
+  function recordGot(wasWin) { // each GoT pick = 1 game; a Win card = win, a Loss card = loss
+    if (typeof wasWin !== 'boolean') return;
+    const ns = { ...save, modeStats: collRecordMode(save.modeStats, 'got', { win: wasWin }) };
+    saveCollSave(ns); setSave(ns);
+  }
+  function handleGotDone(wasWin) { recordGot(wasWin); setScreen('hub'); }
+  function handleGotSpin(wasWin) { recordGot(wasWin); setWheelSpinsLeft(1); setScreen('wheel'); } // GoT "Spin the Wheel" card (a Win)
   function startSevenKingdoms() {
     if ((save.owned||[]).length < 25) return; // you place a card per square — need a 25-card deck
     setShowModeChoice(false); setScreen('sevenK');
@@ -11440,7 +11483,7 @@ function CollectorHub({ onHome }) {
   const HUB_TABS = [
     { id:'deck',  label:'My Deck' },
     { id:'index', label:'Card Index' },
-    { id:'stats', label:'Card Stats' },
+    { id:'stats', label:'Stats' },
     { id:'store', label:'Store' },
     { id:'daily', label:'Daily' },
   ];
