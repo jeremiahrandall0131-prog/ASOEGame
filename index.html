@@ -1299,6 +1299,19 @@ function scoreColor(n) {
   if (n >= 5) return 'var(--text)';
   return '#e05555';
 }
+// Collector position scores span a huge range (a single seat can top 50), so this uses a
+// SIX-band scale — Collector ONLY; Classic keeps scoreColor's four bands. Gold is reserved
+// for genuinely elite scores so high-tier cards feel more valuable in their strong seats
+// (starter tops out ~white, uncommon ~blue, rare ~green, hero+ reach gold). High → low:
+// Gold ≥30 · Green ≥22 · Blue ≥15 · White ≥9 · Orange ≥4 · Red <4.
+function collScoreColor(n) {
+  if (n >= 30) return 'var(--gold2)';  // Gold
+  if (n >= 22) return '#4caf50';        // Green
+  if (n >= 15) return '#3aa0ff';        // Blue
+  if (n >= 9)  return 'var(--text)';    // White
+  if (n >= 4)  return '#ee8b30';        // Orange
+  return '#e05555';                     // Red
+}
 function totalScoreColor(score, maxScore) {
   const pct = score / maxScore;
   if (pct >= 0.95) return 'var(--gold2)';
@@ -7706,7 +7719,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
           return (
             <div key={p.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:'0.55rem' }}>
               <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-              <span style={{ color: sc >= 9 ? '#ffd700' : sc >= 7 ? T.color : 'var(--text)', fontWeight:700 }}>
+              <span style={{ color: collScoreColor(sc), fontWeight:700 }}>
                 {Math.round(sc*10)/10}
               </span>
             </div>
@@ -9655,7 +9668,7 @@ function CollectorDeckViewer({ cards, title, positions, defaultMode, onClose }) 
                 </div>
                 <CollTierBadge tier={c.tier} />
                 {mode==='position'
-                  ? <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: ps>=9?'#ffd700':ct.color, fontSize:'0.82rem', width:42, textAlign:'right' }}>{Math.round(ps*10)/10}</span>
+                  ? <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: collScoreColor(ps), fontSize:'0.82rem', width:42, textAlign:'right' }}>{Math.round(ps*10)/10}</span>
                   : <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.82rem', width:42, textAlign:'right' }}>{c.overall}</span>}
               </div>
             ); })}
@@ -9975,7 +9988,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
               {COLL_POS.map(p => { const sc = dc.scores?.[p.id]||0; return (
                 <div key={p.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'0.58rem' }}>
                   <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-                  <span style={{ color: sc>=9?'#ffd700':sc>=7?ct.color:'var(--text)', fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+                  <span style={{ color: collScoreColor(sc), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
                 </div>
               ); })}
             </div>
@@ -10104,7 +10117,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
                           <div key={p.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:'0.55rem',
                             background:isBest?'rgba(212,168,48,0.14)':'transparent', borderRadius:3, padding:'1px 4px' }}>
                             <span style={{ color:isBest?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-                            <span style={{ color: sc>=9?'#ffd700':sc>=7?(T[drawnCard.tier]||{}).color:'var(--text)', fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+                            <span style={{ color: collScoreColor(sc), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
                           </div>
                         );
                       })}
@@ -10149,14 +10162,14 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
                         </div>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
                           <CollTierBadge tier={placed.tier} />
-                          <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{Math.floor(score*10)/10}</span>
+                          <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor(score) }}>{Math.floor(score*10)/10}</span>
                         </div>
                       </>
                     ) : canPlace ? (
                       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
                         <span style={{ fontSize:'0.6rem', color:'var(--gold)', fontStyle:'italic' }}>← Place</span>
                         <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, fontSize:'0.95rem',
-                          color: (drawnCard.scores?.[pos.id]||0)>=9?'#ffd700':(drawnCard.scores?.[pos.id]||0)>=7?'var(--gold)':'var(--text2)' }}>
+                          color: collScoreColor(drawnCard.scores?.[pos.id]||0) }}>
                           {Math.floor((drawnCard.scores?.[pos.id]||0)*10)/10}
                         </span>
                       </div>
@@ -10346,7 +10359,7 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
                       <div style={{ fontSize:'0.62rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{card.name}</div>
                       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
                         <CollTierBadge tier={card.tier} />
-                        <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{sc}</span>
+                        <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor(sc) }}>{sc}</span>
                       </div>
                     </>
                   ) : (
@@ -10449,7 +10462,7 @@ function CollDetailModal({ card, onClose }) {
           {COLL_POS.map(p => { const sc = (card.scores&&card.scores[p.id])||0; return (
             <div key={p.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'0.58rem' }}>
               <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-              <span style={{ color: sc>=9?'#ffd700':sc>=7?ct.color:'var(--text)', fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+              <span style={{ color: collScoreColor(sc), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
             </div>
           ); })}
         </div>
@@ -10729,7 +10742,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
                     <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{card.name}</div>
                     <div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} /></div>
                   </div>
-                  <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.95rem' }}>{Math.round(((card.scores&&card.scores[p.id])||0)*10)/10}</span>
+                  <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor((card.scores&&card.scores[p.id])||0), fontSize:'0.95rem' }}>{Math.round(((card.scores&&card.scores[p.id])||0)*10)/10}</span>
                   <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(card); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, flexShrink:0 }}>ⓘ</button>
                 </>
               ) : (
@@ -11000,7 +11013,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
           {COLL_POS.map(p => { const sc=(card.scores&&card.scores[p.id])||0; return (
             <div key={p.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'0.5rem' }}>
               <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-              <span style={{ color: sc>=9?'#ffd700':sc>=7?ct.color:'var(--text)', fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+              <span style={{ color: collScoreColor(sc), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
             </div>
           ); })}
         </div>
