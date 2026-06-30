@@ -7726,7 +7726,7 @@ const TUTORIAL_STEPS = [
   // ── Orientation ──
   { title:'Welcome to Collector Mode!', body:'Collect thousands of unique Character Cards — exclusive variants found in no other mode — build a deck, and test your court across SIX different game modes against the CPU. This tour walks through every screen, mode, and rule. Tap Next!' },
   { title:'Your Deck', tab:'deck', target:'[data-tour="deck-composition"]', body:'This is your deck. You start with 20 cards and must always keep at least 20. The bar shows your tier mix; a card\'s Overall is the TOTAL of its ten position scores, so it captures exactly how it performs across every role.' },
-  { title:'Sort & Filter', tab:'deck', target:'[data-tour="deck-controls"]', body:'As your collection grows, sort by Overall, tier, or name and filter down to a single tier to find cards fast.' },
+  { title:'Sort & Filter', tab:'deck', target:'[data-tour="deck-controls"]', body:'Stack as many filters as you like — Tier, House, Gender and a text search all narrow at once — then sort by Overall, name, or a specific position\'s score. The same controls power the Card Index and the Buy Cards store.' },
   { title:'Card Tiers', tab:'deck', target:'[data-tour="deck-composition"]', body:'Tiers run Starter (green) · Uncommon (blue) · Rare (orange) · Hero (purple) · Legendary (silver) · Mythic (red) — and the radiant God tier above them all. Higher tiers are rarer and trend toward higher Overalls.' },
   { title:'Card Index', tab:'index', target:'[data-tour="hub-content"]', body:'The Index lets you browse every character and variant in the game — owned or not — so you can plan what to chase next.' },
   { title:'The Stats Tab', tab:'stats', target:'[data-tour="hub-content"]', body:'Stats has two views. OVERVIEW shows your record for every game mode — Traditional, Tourney, House Wars, The Game of Thrones, Trial of Seven and Seven Kingdoms — each with the numbers that matter to it. The CARD STATS sub-tab tracks how every individual card has performed: games placed, win %, and points per game.' },
@@ -7933,34 +7933,96 @@ function CollectorStartingPull({ onDone }) {
   );
 }
 
+// ─── Shared Collector search/filter engine ──────────────────────────────────
+// Every Collector browser (My Deck, Card Index, Buy Cards) uses these so ALL
+// criteria STACK: Tier + House + Gender + text Search narrow the set (AND), and a
+// Sort (incl. by a specific position's score) orders the result.
+let _collHouseOpts = null;
+function collHouseOptions() {
+  if (_collHouseOpts) return _collHouseOpts;
+  const set = new Set();
+  getCollCards().forEach(c => (c.houses || []).forEach(h => set.add(h)));
+  _collHouseOpts = [...set].sort();
+  return _collHouseOpts;
+}
+function collFilterAndSort(cards, o) {
+  let r = cards;
+  if (o.filterTier   && o.filterTier   !== 'all') r = r.filter(c => c.tier === o.filterTier);
+  if (o.filterHouse  && o.filterHouse  !== 'all') r = r.filter(c => (c.houses || []).includes(o.filterHouse));
+  if (o.filterGender && o.filterGender !== 'all') r = r.filter(c => c.gender === o.filterGender);
+  if (o.search && o.search.trim()) {
+    const q = o.search.trim().toLowerCase();
+    r = r.filter(c => c.name.toLowerCase().includes(q) || (c.identity || '').toLowerCase().includes(q) || (c.charId || '').toLowerCase().includes(q) || (c.houses || []).some(h => h.toLowerCase().includes(q)));
+  }
+  r = [...r];
+  const pos = o.posId;
+  if (o.sort === 'position')   r.sort((a, b) => (((b.scores && b.scores[pos]) || 0) - ((a.scores && a.scores[pos]) || 0)) || b.overall - a.overall);
+  else if (o.sort === 'name')  r.sort((a, b) => a.name.localeCompare(b.name));
+  else if (o.sort === 'house') r.sort((a, b) => ((a.houses || [])[0] || '').localeCompare((b.houses || [])[0] || '') || collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall);
+  else if (o.sort === 'tier')  r.sort((a, b) => collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall);
+  else if (o.sort === 'overall') r.sort((a, b) => b.overall - a.overall);
+  return r;
+}
+// Compact, wrapping control bar. `f` is the filter state object; `upd(patch)` merges a change.
+function CollFilterBar({ f, upd, houses, showTier = true, showSearch = true, extraSorts = [] }) {
+  const T = window.COLLECTOR_TIERS || {};
+  const sel = { fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 };
+  return (
+    <div style={{ display:'flex', gap:5, marginBottom:8, flexWrap:'wrap', alignItems:'center' }}>
+      {showSearch && <input style={{ flex:'1 1 130px', minWidth:108, ...sel }} placeholder="Search name / identity / house…" value={f.search || ''} onChange={e => upd({ search: e.target.value })} />}
+      {showTier && (
+        <select style={sel} value={f.filterTier} onChange={e => upd({ filterTier: e.target.value })}>
+          <option value="all">All Tiers</option>
+          {COLL_TIER_ORDER.map(t => <option key={t} value={t}>{(T[t] || {}).label || t}</option>)}
+        </select>
+      )}
+      <select style={sel} value={f.filterHouse} onChange={e => upd({ filterHouse: e.target.value })}>
+        <option value="all">All Houses</option>
+        {houses.map(h => <option key={h} value={h}>{h}</option>)}
+      </select>
+      <select style={sel} value={f.filterGender} onChange={e => upd({ filterGender: e.target.value })}>
+        <option value="all">Any ⚥</option>
+        <option value="M">♂ Male</option>
+        <option value="F">♀ Female</option>
+      </select>
+      <select style={sel} value={f.sort} onChange={e => upd({ sort: e.target.value })}>
+        <option value="overall">Sort: Overall</option>
+        <option value="tier">Sort: Tier</option>
+        <option value="name">Sort: A–Z</option>
+        <option value="house">Sort: House</option>
+        <option value="position">Sort: Position</option>
+        {extraSorts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+      {f.sort === 'position' && (
+        <select style={{ ...sel, borderColor:'var(--gold)' }} value={f.posId} onChange={e => upd({ posId: e.target.value })}>
+          {COLL_POS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
 // ─── My Deck ────────────────────────────────────────────────────────────────
 
 function CollectorMyDeck({ save, onUpdate }) {
-  const [sort, setSort] = React.useState('overall');
-  const [filterTier, setFilterTier] = React.useState('all');
-  const [posId, setPosId] = React.useState(COLL_POS[0].id); // selected position for "Sort: Position"
+  const [f, setF] = React.useState({ filterTier:'all', filterHouse:'all', filterGender:'all', search:'', sort:'overall', posId:COLL_POS[0].id });
+  const upd = patch => setF(s => ({ ...s, ...patch }));
   const [selected, setSelected] = React.useState(null);
   const [showAuction, setShowAuction] = React.useState(false);
   const [identityView, setIdentityView] = React.useState(null); // selected charId in "Sort: Identity" mode
 
   const ownedCards = (save.owned||[]).map(id=>getCollCard(id)).filter(Boolean);
-  let cards = [...ownedCards];
-  if (filterTier !== 'all') cards = cards.filter(c => c.tier === filterTier);
-  if (sort === 'overall') cards.sort((a,b) => b.overall - a.overall);
-  else if (sort === 'tier') cards.sort((a,b) => collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall);
-  else if (sort === 'name') cards.sort((a,b) => a.name.localeCompare(b.name));
-  else if (sort === 'house') cards.sort((a,b) => (a.houses?.[0]||'').localeCompare(b.houses?.[0]||'') || b.overall - a.overall);
-  else if (sort === 'position') cards.sort((a,b) => (((b.scores&&b.scores[posId])||0) - ((a.scores&&a.scores[posId])||0)) || b.overall - a.overall);
+  const cards = collFilterAndSort(ownedCards, f); // all of Tier/House/Gender/Search + Sort stack
 
-  // "Sort: Identity" — group the player's cards by character so they can drill into one
-  // character and see every variant of that identity they own.
+  // "Sort: Identity" — group the (filtered) cards by character so the player can drill into
+  // one character and see every variant of that identity they own.
   const identityGroups = {};
   cards.forEach(c => { (identityGroups[c.charId] = identityGroups[c.charId] || []).push(c); });
   const identities = Object.keys(identityGroups).map(charId => {
     const variants = identityGroups[charId].slice().sort((a,b) => b.overall - a.overall);
     return { charId, variants, count: variants.length, name: (CHARACTERS.find(ch => ch.id === charId) || {}).name || variants[0].name };
   }).sort((a,b) => a.name.localeCompare(b.name));
-  const currentIdentity = (sort === 'identity' && identityView) ? identities.find(i => i.charId === identityView) : null;
+  const currentIdentity = (f.sort === 'identity' && identityView) ? identities.find(i => i.charId === identityView) : null;
 
   function handleAuction(card) {
     if ((save.owned||[]).length <= 20) { alert('You must keep at least 20 cards in your deck!'); return; }
@@ -7995,29 +8057,11 @@ function CollectorMyDeck({ save, onUpdate }) {
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
-      <div style={{ display:'flex', gap:8, marginBottom:10, flexWrap:'wrap', alignItems:'center' }}>
-        <div style={{ fontSize:'0.7rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>
-          {ownedCards.length} CARDS · AVG <span style={{ color:'var(--gold)' }}>{avgOvr}</span> · DECK TIER: <CollTierBadge tier={deckTier} />
-        </div>
-        <div data-tour="deck-controls" style={{ marginLeft:'auto', display:'flex', gap:4 }}>
-          <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={sort} onChange={e=>{ setSort(e.target.value); setIdentityView(null); }}>
-            <option value="overall">Sort: Overall</option>
-            <option value="tier">Sort: Tier</option>
-            <option value="name">Sort: A-Z</option>
-            <option value="house">Sort: House</option>
-            <option value="position">Sort: Position</option>
-            <option value="identity">Sort: Identity</option>
-          </select>
-          {sort === 'position' && (
-            <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:4 }} value={posId} onChange={e=>setPosId(e.target.value)}>
-              {COLL_POS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
-          )}
-          <select style={{ fontSize:'0.6rem', padding:'3px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={filterTier} onChange={e=>setFilterTier(e.target.value)}>
-            <option value="all">All Tiers</option>
-            {COLL_TIER_ORDER.map(t => <option key={t} value={t}>{(T[t]||{}).label||t}</option>)}
-          </select>
-        </div>
+      <div style={{ fontSize:'0.7rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginBottom:6 }}>
+        {ownedCards.length} CARDS · AVG <span style={{ color:'var(--gold)' }}>{avgOvr}</span> · DECK TIER: <CollTierBadge tier={deckTier} />
+      </div>
+      <div data-tour="deck-controls">
+        <CollFilterBar f={f} upd={(p)=>{ if (p.sort !== undefined) setIdentityView(null); upd(p); }} houses={collHouseOptions()} showTier showSearch extraSorts={[['identity','Identity']]} />
       </div>
 
       {/* Deck composition + next-tier progress */}
@@ -8046,7 +8090,7 @@ function CollectorMyDeck({ save, onUpdate }) {
       )}
 
       <div className="scroll" style={{ flex:1 }}>
-        {sort === 'identity' ? (
+        {f.sort === 'identity' ? (
           currentIdentity ? (
             <>
               <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
@@ -8122,53 +8166,20 @@ function CollectorMyDeck({ save, onUpdate }) {
 
 function CollectorCardIndex({ save }) {
   const [page, setPage] = React.useState(0);
-  const [filterTier, setFilterTier] = React.useState('all');
-  const [search, setSearch] = React.useState('');
-  const [sort, setSort] = React.useState('tier'); // tier | overall | name | house | position
-  const [posId, setPosId] = React.useState(COLL_POS[0].id);
+  const [f, setF] = React.useState({ filterTier:'all', filterHouse:'all', filterGender:'all', search:'', sort:'tier', posId:COLL_POS[0].id });
+  const upd = patch => { setF(s => ({ ...s, ...patch })); setPage(0); };
   const [selected, setSelected] = React.useState(null);
   const PER_PAGE = 20;
   const T = window.COLLECTOR_TIERS || {};
   const ownedSet = new Set(save.owned || []);
 
-  let cards = getCollCards();
-  if (filterTier !== 'all') cards = cards.filter(c => c.tier === filterTier);
-  if (search.trim()) {
-    const q = search.trim().toLowerCase();
-    cards = cards.filter(c => c.name.toLowerCase().includes(q) || (c.identity||'').toLowerCase().includes(q) || c.charId.toLowerCase().includes(q) || (c.houses||[]).some(h=>h.toLowerCase().includes(q)));
-  }
-  if (sort === 'position') cards = [...cards].sort((a,b) => (((b.scores&&b.scores[posId])||0) - ((a.scores&&a.scores[posId])||0)) || b.overall - a.overall);
-  else if (sort === 'house') cards = [...cards].sort((a,b) => ((a.houses||[])[0]||'').localeCompare((b.houses||[])[0]||'') || collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall);
-  else if (sort === 'name') cards = [...cards].sort((a,b) => a.name.localeCompare(b.name));
-  else if (sort === 'overall') cards = [...cards].sort((a,b) => b.overall - a.overall);
-  else cards = [...cards].sort((a,b) => collTierRank(b.tier) - collTierRank(a.tier) || b.overall - a.overall); // tier (default)
+  const cards = collFilterAndSort(getCollCards(), f);
   const totalPages = Math.max(1, Math.ceil(cards.length / PER_PAGE));
   const pageCards = cards.slice(page * PER_PAGE, (page+1) * PER_PAGE);
 
-  React.useEffect(() => { setPage(0); }, [filterTier, search, sort, posId]);
-
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
-      <div style={{ display:'flex', gap:6, marginBottom:10, flexWrap:'wrap' }}>
-        <input style={{ flex:1, minWidth:120, fontSize:'0.65rem', padding:'4px 8px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }}
-          placeholder="Search name, identity, house..." value={search} onChange={e=>setSearch(e.target.value)} />
-        <select style={{ fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={filterTier} onChange={e=>setFilterTier(e.target.value)}>
-          <option value="all">All Tiers</option>
-          {COLL_TIER_ORDER.map(t => <option key={t} value={t}>{(T[t]||{}).label||t}</option>)}
-        </select>
-        <select style={{ fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={sort} onChange={e=>setSort(e.target.value)}>
-          <option value="tier">Sort: Tier</option>
-          <option value="overall">Sort: Overall</option>
-          <option value="name">Sort: A-Z</option>
-          <option value="house">Sort: House</option>
-          <option value="position">Sort: Position</option>
-        </select>
-        {sort === 'position' && (
-          <select style={{ fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:4 }} value={posId} onChange={e=>setPosId(e.target.value)}>
-            {COLL_POS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-        )}
-      </div>
+      <CollFilterBar f={f} upd={upd} houses={collHouseOptions()} showTier showSearch />
       <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:6 }}>{cards.length} cards · Page {page+1}/{totalPages}</div>
       <div className="scroll" style={{ flex:1 }}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8 }}>
@@ -8535,10 +8546,9 @@ function CollectorDailySection({ save, onUpdate }) {
 
 function CollectorStore({ save, onUpdate }) {
   const [tab, setTab] = React.useState('showcase');
-  const [buyFilter, setBuyFilter] = React.useState('starter');
-  const [buySearch, setBuySearch] = React.useState('');
-  const [buyMode, setBuyMode] = React.useState('name'); // search field: name | identity | house | position
-  const [buyPos, setBuyPos] = React.useState(COLL_POS[0].id); // selected position for "Position" mode
+  const [buyFilter, setBuyFilter] = React.useState('starter'); // tier sets the price, so it stays a button row
+  const [bf, setBf] = React.useState({ filterHouse:'all', filterGender:'all', search:'', sort:'overall', posId:COLL_POS[0].id });
+  const updBf = patch => { setBf(s => ({ ...s, ...patch })); setBuyPage(0); };
   const [buyPage, setBuyPage] = React.useState(0);
   const [lotteryType, setLotteryType] = React.useState('hero');
   const [lotteryResult, setLotteryResult] = React.useState(null);
@@ -8816,30 +8826,11 @@ function CollectorStore({ save, onUpdate }) {
                 </button>
               ))}
             </div>
-            <div style={{ display:'flex', gap:6, marginBottom:8 }}>
-              <select style={{ fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }} value={buyMode} onChange={e=>{ setBuyMode(e.target.value); setBuyPage(0); }}>
-                <option value="name">By Name</option>
-                <option value="identity">By Identity</option>
-                <option value="house">By House</option>
-                <option value="position">By Position</option>
-              </select>
-              {buyMode === 'position'
-                ? <select style={{ flex:1, fontSize:'0.62rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:4 }} value={buyPos} onChange={e=>{ setBuyPos(e.target.value); setBuyPage(0); }}>
-                    {COLL_POS.map(p => <option key={p.id} value={p.id}>{p.label} — high → low</option>)}
-                  </select>
-                : <input style={{ flex:1, fontSize:'0.65rem', padding:'4px 8px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 }}
-                    placeholder={`Search by ${buyMode}…`} value={buySearch} onChange={e=>{setBuySearch(e.target.value);setBuyPage(0);}} />}
-            </div>
+            <CollFilterBar f={bf} upd={updBf} houses={collHouseOptions()} showTier={false} showSearch />
             {(() => {
               const price = COLL_BUY_GOLD[buyFilter];
-              let pool = getCollCards().filter(c => c.tier === buyFilter); // owned may re-appear (Evolve)
-              // The dropdown picks the search field; Position instead sorts the tier high→low by that seat.
-              if (buyMode === 'position') {
-                pool = pool.slice().sort((a,b) => (((b.scores&&b.scores[buyPos])||0) - ((a.scores&&a.scores[buyPos])||0)) || b.overall - a.overall);
-              } else {
-                if (buySearch) { const q=buySearch.toLowerCase(); pool=pool.filter(c => buyMode==='identity' ? (c.identity||'').toLowerCase().includes(q) : buyMode==='house' ? (c.houses||[]).some(h=>h.toLowerCase().includes(q)) : c.name.toLowerCase().includes(q)); }
-                pool.sort((a,b)=>b.overall-a.overall);
-              }
+              // Tier comes from the button row above; House/Gender/Search/Sort all stack within it.
+              const pool = collFilterAndSort(getCollCards().filter(c => c.tier === buyFilter), bf);
               const pp = 20;
               const totalPg = Math.max(1,Math.ceil(pool.length/pp));
               const pg = pool.slice(buyPage*pp,(buyPage+1)*pp);
