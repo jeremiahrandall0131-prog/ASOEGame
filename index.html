@@ -7718,14 +7718,16 @@ function CollectorMyDeck({ save, onUpdate }) {
   }
 
   const T = window.COLLECTOR_TIERS || {};
-  const avgOvr = ownedCards.length ? Math.floor(ownedCards.reduce((s,c)=>s+c.overall,0)/ownedCards.length*10)/10 : 0;
+  // Average Overall = accumulative deck Overall ÷ number of cards (rounded to 1 decimal).
+  const avgOvr = ownedCards.length ? Math.round(ownedCards.reduce((s,c)=>s+(c.overall||0),0)/ownedCards.length*10)/10 : 0;
   const deckTier = deckTierLabel(save.owned);
 
-  // Deck composition + progress toward the next deck tier
-  const comp = {}; COLL_TIER_ORDER.forEach(t=>comp[t]=0);
+  // Deck composition + progress toward the next deck tier (God shown as its own radiant band).
+  const COMP_ORDER = COLL_TIER_ORDER.concat('god');
+  const comp = {}; COMP_ORDER.forEach(t=>comp[t]=0);
   ownedCards.forEach(c=>{ if(comp[c.tier]!==undefined) comp[c.tier]++; });
   const totalOwned = ownedCards.length || 1;
-  const compSegments = COLL_TIER_ORDER.filter(t=>comp[t]>0).map(t=>({ pct: comp[t]/totalOwned*100, color:(T[t]||{}).color||'#888' }));
+  const compSegments = COMP_ORDER.filter(t=>comp[t]>0).map(t=>({ pct: comp[t]/totalOwned*100, color:(T[t]||{}).color||'#888' }));
   const TIER_NEXT  = { starter:'uncommon', uncommon:'rare', rare:'hero', hero:'legendary', legendary:'mythic', mythic:null };
   const nextTier = TIER_NEXT[deckTier];
   // Progress toward the next deck tier on the same average-rarity scale deckTierLabel
@@ -7768,7 +7770,7 @@ function CollectorMyDeck({ save, onUpdate }) {
           </div>
           <div style={{ marginBottom:6 }}><CollBar segments={compSegments} height={9} /></div>
           <div style={{ display:'flex', flexWrap:'wrap', gap:'2px 10px' }}>
-            {COLL_TIER_ORDER.filter(t=>comp[t]>0).map(t=>(
+            {COMP_ORDER.filter(t=>comp[t]>0).map(t=>(
               <span key={t} style={{ fontSize:'0.52rem', color:(T[t]||{}).color, fontFamily:'Cinzel,serif' }}>● {comp[t]} {(T[t]||{}).label}</span>
             ))}
           </div>
@@ -8469,11 +8471,12 @@ function CollectorStore({ save, onUpdate }) {
               ))}
             </div>
             <input style={{ width:'100%', fontSize:'0.65rem', padding:'4px 8px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4, marginBottom:8 }}
-              placeholder="Search..." value={buySearch} onChange={e=>{setBuySearch(e.target.value);setBuyPage(0);}} />
+              placeholder="Search by name, identity, or house…" value={buySearch} onChange={e=>{setBuySearch(e.target.value);setBuyPage(0);}} />
             {(() => {
               const price = COLL_BUY_GOLD[buyFilter];
               let pool = getCollCards().filter(c => c.tier === buyFilter); // owned may re-appear (Evolve)
-              if (buySearch) { const q=buySearch.toLowerCase(); pool=pool.filter(c=>c.name.toLowerCase().includes(q)||(c.houses||[]).some(h=>h.toLowerCase().includes(q))); }
+              // Search matches card name, identity (many cards aren't named after their identity), or house.
+              if (buySearch) { const q=buySearch.toLowerCase(); pool=pool.filter(c=>c.name.toLowerCase().includes(q)||(c.identity||'').toLowerCase().includes(q)||(c.houses||[]).some(h=>h.toLowerCase().includes(q))); }
               pool.sort((a,b)=>b.overall-a.overall);
               const pp = 20;
               const totalPg = Math.max(1,Math.ceil(pool.length/pp));
@@ -10501,6 +10504,9 @@ function CollectorHub({ onHome }) {
     setHwNotice(`You left The Game of Thrones before resolving a Loss card — it struck ${name||'a random card'}.`);
   }, []);
 
+  // If a Win Pull was owed but the app closed before choosing, auto-award it on load (#6).
+  React.useEffect(() => { if (save.pendingWinPull) autoResolveWinPull(save); }, []);
+
   function handleStartingPullDone(cardIds) {
     const newSave = { ...save, tutorialSeen: true, owned: cardIds };
     saveCollSave(newSave);
@@ -10625,6 +10631,13 @@ function CollectorHub({ onHome }) {
 
   function handleGameEnd(result) {
     if (!result) { setScreen('hub'); return; }
+    // Remember the Win-Pull-eligible (out-placed) court cards so closing the app before choosing
+    // still auto-awards a pull on next load (#6). Cleared the moment a pull is taken.
+    const boards = (result.cpuBoards && result.cpuBoards.length) ? result.cpuBoards : [result.cpuBoard || {}];
+    const scores = (result.cpuScores && result.cpuScores.length) ? result.cpuScores : [result.cpuScore || 0];
+    const beatenCardIds = boards.filter((b, i) => (scores[i] || 0) < (result.playerScore || 0))
+      .reduce((acc, b) => acc.concat(Object.values(b || {}).filter(Boolean).map(c => c.id)), []);
+    if (beatenCardIds.length) { const ns = { ...save, pendingWinPull: { cards: beatenCardIds } }; saveCollSave(ns); setSave(ns); }
     setGameResult(result);
     setScreen('result');
   }
@@ -10645,13 +10658,27 @@ function CollectorHub({ onHome }) {
 
   function handlePickWinPull(card) {
     const res = collAcquire(save.owned || [], card.id);
-    const newSave = { ...save, owned: res.owned };
+    const newSave = { ...save, owned: res.owned, pendingWinPull: null };
     saveCollSave(newSave);
     setSave(newSave);
     if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
     if (gameResult && gameResult.wheelEarned) { setWheelSpinsLeft(1); setScreen('wheel'); return; } // 5-win streak reward
     setScreen('hub');
     setGameResult(null);
+  }
+
+  // Auto-perform a still-owed Win Pull (player left/closed before choosing) — award the best card.
+  function autoResolveWinPull(curSave) {
+    const pend = curSave && curSave.pendingWinPull;
+    if (!pend) return;
+    const cpuCards = (pend.cards || []).map(id => getCollCard(id)).filter(Boolean);
+    const pull = cpuCards.length ? genWinPullCards(cpuCards, curSave) : [];
+    const best = pull.reduce((b, c) => (c && (!b || (c.overall || 0) > (b.overall || 0))) ? c : b, null);
+    let ns;
+    if (best) { const res = collAcquire(curSave.owned || [], best.id); ns = { ...curSave, owned: res.owned, pendingWinPull: null }; }
+    else ns = { ...curSave, pendingWinPull: null };
+    saveCollSave(ns); setSave(ns);
+    if (best) setHwNotice(`Win Pull auto-awarded: you received ${best.name}.`);
   }
 
   function handleWheelDone(card) {
@@ -10689,7 +10716,7 @@ function CollectorHub({ onHome }) {
   if (screen === 'startingPull') return <CollectorStartingPull onDone={handleStartingPullDone} />;
   if (screen === 'wager') return <CollectorWager save={save} onStart={handleStartGame} onCancel={() => setScreen('hub')} numCpus={gameMode==='tourney'?3:1} />;
   if (screen === 'game') return <CollectorGame save={save} wager={gameWager} onEnd={handleGameEnd} onUpdate={handleUpdate} numCpus={gameMode==='tourney'?3:1} />;
-  if (screen === 'result' && gameResult) return <CollectorGameResult result={gameResult} save={save} onWinPull={handleWinPull} onHome={() => { setScreen('hub'); setGameResult(null); }} />;
+  if (screen === 'result' && gameResult) return <CollectorGameResult result={gameResult} save={save} onWinPull={handleWinPull} onHome={() => { autoResolveWinPull(save); setScreen('hub'); setGameResult(null); }} />;
   if (screen === 'winpull') return <CollectorWinPull winPullCards={winPullCards} onPick={handlePickWinPull} onSkip={() => setScreen('hub')} />;
   if (screen === 'hwSpin') return <CollectorHouseWarsSpin save={save} onDone={handleHwSpinDone} onCancel={() => setScreen('hub')} onRolled={handleHwRolled} onBackout={handleHwBackout} />;
   if (screen === 'hwLineup') return <CollectorHouseWarsLineup save={save} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onConfirm={handleHwLineupConfirm} onBackout={handleHwBackout} />;
