@@ -7748,7 +7748,7 @@ const TUTORIAL_STEPS = [
   { title:'Court Rules', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'Your court must be legal: the Ruler and Consort must be OPPOSITE genders, and the Heir must be younger than BOTH. Break a rule and Confirm locks, with a hint naming exactly how to fix it.' },
   { title:'The CPU & Scoring', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'The CPU builds its own court each round and always fields its strongest lineup — and it scales up as your collection grows, so it\'s always a real fight. Each of the 10 positions is compared head-to-head; win the most to take the game.' },
   { title:'Win Pulls & the Wheel', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'Win and you earn a Win Pull — the 10 cards the CPU played become random variants; choose ONE for free. Stack a 5-win streak and you also earn a Spin the Wheel: 30 cards, 5 of every tier, for a bonus pull.' },
-  { title:'Gold & Wagers', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'Finishing any game pays +5 Gold; winning pays more (by 5+ or 10+ adds bonuses), plus a Score Bonus for how well your court fits — a perfect 100 pays +500! You can also Wager up to 100 Gold per game.' },
+  { title:'Gold & Wagers', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'Finishing any game pays +5 Gold; winning pays more (by 5+ or 10+ adds bonuses), plus a Score Bonus for how well your court fits — up to +100 once your court reaches 100 points. You can also Wager up to 100 Gold per game.' },
   // ── Modes 2–6 ──
   { title:'② Tourney', screen:'modeChoice', target:'[data-tour="mode-tourney"]', body:'The same court as Traditional, but you face THREE CPUs at once. Everyone matches your wager into a single pot — finish 1st to claim it all, and earn a Win Pull from every opponent you outplaced.' },
   { title:'③ House Wars', screen:'modeChoice', target:'[data-tour="mode-houseWars"]', body:'Pledge to a single Great House. You and the CPU each field a 5-seat lineup drawn only from that House\'s cards (you need 10+ of one House to enter). The stakes are real: win and you pull a card from their House — lose and you SURRENDER one of yours.' },
@@ -9884,8 +9884,8 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
     const baseGold = isWin ? (margin >= 10 ? 30 : margin >= 5 ? 15 : 10) : 5; // win-by-margin, else completion
     const baseLabel = isWin ? (margin >= 10 ? 'Decisive win' : margin >= 5 ? 'Solid win' : 'Win') : 'Completion';
     // Graduated score bonus — rewards how well your cards fit their positions
-    // (a typical board is ~45-70; a perfect court hits 100).
-    const scoreBonus = playerScore >= 100 ? 500 : playerScore >= 90 ? 150 : playerScore >= 80 ? 75 : playerScore >= 70 ? 40 : playerScore >= 60 ? 20 : 0;
+    // (a typical board is ~45-70; a strong court can reach 100+).
+    const scoreBonus = playerScore >= 100 ? 100 : playerScore >= 90 ? 60 : playerScore >= 80 ? 35 : playerScore >= 70 ? 20 : playerScore >= 60 ? 10 : 0;
     const goldEarned = baseGold + scoreBonus;
     // Tourney: each of the N CPUs matches the wager, so a win takes the whole pot (+N×wager);
     // a loss still costs only your own wager. Traditional (N=1) is unchanged (+wager / −wager).

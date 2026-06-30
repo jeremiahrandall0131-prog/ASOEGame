@@ -664,7 +664,7 @@ window.ACHIEVEMENTS = [
   { id:'ach_coll_score_70',      name:'Formidable Deck',           icon:'📊', rarity:'uncommon',  desc:'Score 70 or more in a single Collector Mode game.', cat:'Collector' },
   { id:'ach_coll_score_80',      name:'The Grand Court',           icon:'📊', rarity:'rare',      desc:'Score 80 or more in a single Collector Mode game.', cat:'Collector' },
   { id:'ach_coll_score_90',      name:'Masterful Draw',            icon:'📊', rarity:'epic',      desc:'Score 90 or more in a single Collector Mode game.', cat:'Collector' },
-  { id:'ach_coll_perfect',       name:'A Perfect Hand',            icon:'✨', rarity:'legendary', desc:'Score a perfect 100 in Collector Mode.', cat:'Collector' },
+  { id:'ach_coll_perfect',       name:'Triple Digits',             icon:'✨', rarity:'legendary', desc:'Score 100 or more in a Collector Mode game.', cat:'Collector' },
 
   // Win Margins
   { id:'ach_coll_win_5',         name:'A Step Ahead',              icon:'📈', rarity:'common',    desc:'Win a Collector Mode game by 5 or more points.', cat:'Collector' },
