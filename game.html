@@ -7108,7 +7108,19 @@ function getCollCard(id) {
   COLL_POS.forEach(q => { scores[q.id] = Math.round(((base.scores[q.id] || 0) * (p.god ? 2 : 1) + p.mod) * 10) / 10; });
   const overall = Math.round(((base.overall || 0) * (p.god ? 2 : 1) + p.mod * COLL_POS.length) * 10) / 10;
   scores.overall = overall;
-  return { ...base, id, tier: p.god ? 'god' : base.tier, scores, overall, _god: p.god, _mod: p.mod, _devOrig: p.dev };
+  // Displayed tier follows the EFFECTIVE Overall through the bands: a card Degraded enough drops
+  // a tier, an Upgraded one rises — same variant, just reclassified (#2). God stays God.
+  return { ...base, id, tier: p.god ? 'god' : collTierFromOverall(overall), scores, overall, _god: p.god, _mod: p.mod, _devOrig: p.dev };
+}
+// Map an Overall to its tier using the generator's non-overlapping bands (clean cards already sit
+// inside their own band, so this is a no-op for them and only reclassifies Upgraded/Degraded cards).
+function collTierFromOverall(o) {
+  if (o >= 101) return 'mythic';
+  if (o >= 89)  return 'legendary';
+  if (o >= 74)  return 'hero';
+  if (o >= 58)  return 'rare';
+  if (o >= 40)  return 'uncommon';
+  return 'starter';
 }
 // Apply a +/- position-score mod to a card id, combining with any existing mod (keeps __god/__d).
 function collApplyMod(id, delta) {
@@ -7200,21 +7212,45 @@ function collRepairCard(card) {
 // Add a card to an owned[] list. Owning a card no longer blocks it from pools;
 // acquiring a duplicate MERGES the two into one card of the next tier up
 // (Mythic+Mythic -> God). Returns { owned, evolved, card, from }.
+// Evolve a CHARACTER to the tier ABOVE `fromTier` (God above Mythic) — a clean variant at that
+// tier, or a doubled Mythic for God. Prefers a variant the player doesn't already own.
+function collEvolveToTierAbove(charId, fromTier, owned) {
+  if (fromTier === 'god') return null; // already the ceiling
+  const ownedBases = new Set((owned || []).map(collStripId));
+  const pickFrom = arr => { const pref = arr.filter(c => !ownedBases.has(c.id)); const a = pref.length ? pref : arr; return a[Math.floor(Math.random() * a.length)]; };
+  if (fromTier === 'mythic') {
+    const myths = getCollCards().filter(c => c.charId === charId && c.tier === 'mythic');
+    if (!myths.length) return null;
+    return pickFrom(myths).id + '__god';
+  }
+  const nextTier = COLL_TIER_ORDER[collTierRank(fromTier) + 1];
+  if (!nextTier) return null;
+  const pool = getCollCards().filter(c => c.charId === charId && c.tier === nextTier);
+  if (!pool.length) return null;
+  return pickFrom(pool).id;
+}
+
 function collAcquire(owned, cardId) {
   owned = owned || [];
   const card = getCollCard(cardId);
   if (!card) return { owned: owned.slice(), evolved: false, card: null };
-  if (!owned.includes(cardId)) {
+  // Evolve triggers on the SAME VARIANT (same name), regardless of either copy's mods or current
+  // displayed tier (#2). The result is the tier ABOVE the higher of the two copies' tiers.
+  const baseId = collStripId(cardId);
+  const matchIdx = owned.findIndex(id => collStripId(id) === baseId);
+  if (matchIdx < 0) {
     return { owned: [...owned, cardId], evolved: false, card };
   }
-  const targetId = collEvolveTargetId(card, owned);
-  if (!targetId || targetId === cardId) {
-    return { owned: [...owned, cardId], evolved: false, card }; // no higher tier — just keep the copy
+  const existing = getCollCard(owned[matchIdx]) || card;
+  const hiTier = collTierRank(existing.tier) >= collTierRank(card.tier) ? existing.tier : card.tier;
+  const targetId = collEvolveToTierAbove(card.charId, hiTier, owned);
+  if (!targetId) {
+    return { owned: owned.slice(), evolved: false, card: existing }; // at the ceiling — dup absorbed
   }
   const newOwned = owned.slice();
-  newOwned.splice(newOwned.indexOf(cardId), 1); // consume the existing copy
-  newOwned.push(targetId);                        // add the evolved card
-  return { owned: newOwned, evolved: true, card: getCollCard(targetId), from: card };
+  newOwned.splice(matchIdx, 1); // consume the existing copy
+  newOwned.push(targetId);      // add the evolved card (clean, tier above the higher copy)
+  return { owned: newOwned, evolved: true, card: getCollCard(targetId), from: existing };
 }
 
 // ─── The Game of Thrones: Win or Die ────────────────────────────────────────
