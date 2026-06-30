@@ -743,6 +743,58 @@ window.ACHIEVEMENTS = [
   { id:'ach_coll_all_same_char', name:'Many Faces of One',         icon:'🎭', rarity:'epic',      desc:'Fill 3 or more positions with different variants of the same character.', cat:'Collector' },
 ];
 
+// ─── Collector Mode — generated milestone achievements (every game mode) ─────
+// Cumulative, save-state milestones (read from owned/gold/modeStats/hw/cardStats).
+// The matching boolean checks live in game.html's checkCollectorAchievements via
+// the SAME id scheme: `ach_cm_<prefix>_<threshold>`. Keep the prefix + threshold
+// lists in sync between the two files.
+(function() {
+  const A = window.ACHIEVEMENTS;
+  const fmt = n => n.toLocaleString('en-US');
+  const rar = t => t >= 250 ? 'legendary' : t >= 50 ? 'epic' : t >= 10 ? 'rare' : t >= 5 ? 'uncommon' : 'common';
+  // [prefix, icon, nameLabel, descA, descB, thresholds]
+  const FAM = [
+    ['deck','🗃️','Collection','Own','cards in your deck.',[25,40,60,80,100,125,150,200,250,300,400,500,750,1000,1500,2000]],
+    ['gold','💰','Treasury','Hold','Gold at once.',[100,250,500,1000,2500,5000,7500,10000,15000,25000,50000,100000,250000,500000,750000,1000000]],
+    ['unc','🔵','Uncommon Cache','Own','Uncommon cards.',[5,10,25,50,75,100]],
+    ['rare','🟠','Rare Cache','Own','Rare cards.',[5,10,25,50,75]],
+    ['hero','🟣','Hero Cache','Own','Hero cards.',[3,5,10,25,50]],
+    ['leg','⚪','Legendary Cache','Own','Legendary cards.',[1,3,5,10,25]],
+    ['myth','🔴','Mythic Cache','Own','Mythic cards.',[1,3,5,10,15,25]],
+    ['god','✨','Divinity','Own','God-tier cards.',[1,2,3,5]],
+    ['tradg','🃏','Traditional Player','Play','Traditional games.',[1,5,10,25,50,100,200,350,500,750,1000]],
+    ['tradw','⚔️','Traditional Victor','Win','Traditional games.',[1,5,10,25,50,100,150,250,500]],
+    ['trads','🔥','Traditional Streak','Hit a','win streak in Traditional.',[3,5,10,15,20,25]],
+    ['tourg','🏆','Tourney Entrant','Play','Tourney games.',[1,5,10,25,50,100]],
+    ['tourw','🏆','Tourney Winner','Win','Tourney games (1st place).',[1,5,10,25,50]],
+    ['tours','🏆','Tourney Streak','Hit a','win streak in Tourney.',[3,5,10]],
+    ['hwg','🏰','House Wars Soldier','Play','House Wars games.',[1,5,10,25,50,100]],
+    ['hww','🏰','House Wars Victor','Win','House Wars games.',[1,5,10,25,50]],
+    ['hws','🏰','House Wars Streak','Hit a','win streak in House Wars.',[3,5,10]],
+    ['gotp','👑','Player of the Game','Play','rounds of The Game of Thrones.',[1,5,10,25,50,100]],
+    ['gotw','👑','Crowned','Draw','Win cards in The Game of Thrones.',[1,5,10,25,50]],
+    ['gotl','💀','Survivor of the Game','Draw','Loss cards in The Game of Thrones.',[1,5,10,25]],
+    ['trialg','⚔️','Trial Aspirant','Play','Trial of Seven games.',[1,5,10,25,50]],
+    ['trialw','⚔️','Trial Champion','Win','Trial of Seven games.',[1,5,10,25]],
+    ['trials','⚔️','Trial Streak','Hit a','win streak in Trial of Seven.',[3,5,10]],
+    ['skg','🧩','Bingo Caller','Play','Seven Kingdoms games.',[1,5,10,25,50]],
+    ['skb','🎯','Line Maker','Complete','Bingo lines in Seven Kingdoms (lifetime).',[1,5,10,25,50,100,250,500]],
+    ['skbl','🌟','Blackout','Score','full blackouts in Seven Kingdoms.',[1,3,5,10]],
+    ['skf','📐','Board Filler','Fill','squares (of 25) in one Seven Kingdoms game.',[10,15,20,22,24,25]],
+    ['place','📋','Field Marshal','Place','cards on a board across all games.',[10,50,100,250,500,1000,2500,5000]],
+    ['chars','🎭','Roster','Own variants of','distinct characters.',[10,25,50,100,150,200,300,390]],
+    ['houses','⚜️','Houses United','Own cards from','distinct Houses.',[3,5,10,15,19]],
+    ['allg','🎲','All-Rounder','Play','games across all Collector modes.',[10,25,50,100,250,500,1000,2000]],
+    ['allw','🏅','Conqueror','Win','games across all Collector modes.',[10,25,50,100,250,500]],
+  ];
+  const seen = new Set(A.map(a => a.id));
+  FAM.forEach(([prefix,icon,label,da,db,ths]) => ths.forEach(t => {
+    const id = `ach_cm_${prefix}_${t}`;
+    if (seen.has(id)) return;
+    A.push({ id, name:`${label} ${fmt(t)}`, icon, rarity:rar(t), desc:`${da} ${fmt(t)} ${db}`, cat:'Collector' });
+  }));
+})();
+
 // ─── Dynamic achievement generation ──────────────────────────────────────────
 (function() {
   if (!window.CHARACTERS) return;
