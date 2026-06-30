@@ -102,7 +102,7 @@ window.CHARACTERS = [
   {id:'damon-grey-lion',name:'Damon Lannister (The Grey Lion)',houses:['Lannister'],gender:'M',birth:130,age:62,scores:S(7.2,5.2,6.2,8.2,7.5,7.2,5.2,8.2,8.2,6.2),notes:'Drove enemies from the Westerlands; greatly expanded Lannister dominance.'},
   {id:'loreon-lannister',name:'Loreon Lannister (The Gold)',houses:['Lannister'],gender:'M',birth:190,age:50,scores:S(6.2,5.2,6.2,6.2,5.2,5.2,5.2,8.2,6.2,5.2),notes:'Extended Lannister power; capable lord.'},
   // â”€â”€ STARK â”€â”€
-  {id:'eddard',name:'Eddard Stark',houses:['Stark'],gender:'M',birth:263,age:36,scores:S(8.2,6.2,8.2,7.5,7.2,5.5,6.2,6.2,9.2,7.2),notes:'Excellent ruler of North; poor Hand.'},
+  {id:'eddard',name:'Eddard Stark (Ned)',houses:['Stark'],gender:'M',birth:263,age:36,scores:S(8.2,6.2,8.2,7.5,7.2,5.5,6.2,6.2,9.2,7.2),notes:'Excellent ruler of North; poor Hand.'},
   {id:'robb',name:'Robb Stark',houses:['Stark','Tully'],gender:'M',birth:283,age:16,scores:S(8.2,5.2,9.2,9.5,7.2,7.2,5.2,6.2,9.2,7.2),notes:'Undefeated in battle; wise beyond years.'},
   {id:'bran',name:'Bran Stark',houses:['Stark','Tully'],gender:'M',birth:290,age:10,scores:S(6.2,5.2,6.2,2.2,1.5,1.5,5.2,5.2,5.2,5.2),notes:'Greenseer potential; crippled.'},
   {id:'rickon',name:'Rickon Stark',houses:['Stark','Tully'],gender:'M',birth:295,age:5,scores:S(2.0,1.2,3.2,1.2,1.2,1.2,1.2,4.0,1.2,2.0),notes:'Very young; feral.'},
@@ -475,7 +475,7 @@ window.CHARACTERS = [
   {id:"lommy",name:"Lommy",houses:["Other"],gender:"M",birth:289,age:11,scores:S(1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0),notes:"Young dyer?s apprentice from Flea Bottom; traveled with Arya Stark on the Kingsroad; killed by Polliver."},
   {id:"mord",name:"Mord",houses:["Other"],gender:"M",birth:258,age:42,scores:S(1.0,1.0,1.0,3.2,3.2,2.2,1.0,1.0,1.0,1.0),notes:"Brutal gaoler of the Sky Cells at the Eyrie; motivated entirely by gold, as Tyrion Lannister discovered."},
   // -- NIGHT?S WATCH ADDITIONS --
-  {id:"maester-orwyle-nw",name:"Maester Orwyle",houses:["Night?s Watch"],gender:"M",birth:90,age:47,scores:S(1.0,6.5,1.0,1.2,1.2,1.2,8.5,4.2,4.2,1.0),isNW:true,notes:"Grand Maester Orwyle after taking the black; chose the Wall over execution following the Dance; his scholarship remains but his worldly ambitions are sworn away."},
+  {id:"maester-orwyle-nw",name:"Orwyle",houses:["Night?s Watch"],gender:"M",birth:90,age:47,scores:S(1.0,6.5,1.0,1.2,1.2,1.2,8.5,4.2,4.2,1.0),isNW:true,notes:"Grand Maester Orwyle after taking the black; chose the Wall over execution following the Dance; his scholarship remains but his worldly ambitions are sworn away."},
 
 ];
 
@@ -776,7 +776,7 @@ function dynastyDefault(char, key) {
   if (key === 'MoS') return cap(Math.max(r('AC'), r('Ally')) * 0.7);
   if (key === 'MoW') return cap(Math.max(r('SC'), r('H')) * 0.9);
   // Warden = Ruler score + 1, capped at 10
-  if (key === 'Warden') return Math.min(10, Math.floor((r('R') + 1) * 10) / 10);
+  if (key === 'Warden') return (char.isNW || char.isKG) ? 1.0 : Math.min(10, Math.floor((r('R') + 1) * 10) / 10);
   return 1.0;
 }
 window.getSlotScore = function(slot) {

@@ -5243,7 +5243,7 @@ function CharacterIndexScreen({ onBack, embedded }) {
     if (key === 'DR') return c.DR ?? null;
     if (key === 'Dragon') return c.isDragon ? (c.power ?? null) : null;
     if (key === 'Knight' || key === 'Squire') return c.isDragon ? null : (c.scores?.KG ?? null);
-    if (key === 'Warden') return c.isDragon ? null : (c.scores?.AC ?? null);
+    if (key === 'Warden') return c.isDragon ? null : getSlotScore({ character: c, scoreKey: 'Warden' });
     if (DYNASTY_SCORE_KEYS_SET.has(key)) return getSlotScore({ character: c, scoreKey: key });
     return c.scores?.[key] ?? null;
   };
@@ -5261,7 +5261,7 @@ function CharacterIndexScreen({ onBack, embedded }) {
     { k: 'R',      label: 'Ruler'                          },
     { k: 'Con',    label: 'Consort'                        },
     { k: 'Hr',     label: 'Heir'                           },
-    { k: 'Hs',     label: 'House (H1-12)'                  },
+    { k: 'Hs',     label: 'House'                          },
     { k: 'H',      label: 'Hand'                           },
     { k: 'GM',     label: 'Grand Maester'                   },
     { k: 'MoC',    label: 'Master of Coin'                 },
@@ -5411,7 +5411,7 @@ function CharacterIndexScreen({ onBack, embedded }) {
                   ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 6, marginBottom: 8 }}>
                       {activeSortKeys.filter(k => k !== 'Dragon').map(k => {
-                        const isDynOnly = ['Hs','GM','MoC','MoL','MoS','MoW','Knight','Squire','DR'].includes(k);
+                        const isDynOnly = ['Hs','GM','MoC','MoL','MoS','MoW','Warden','Knight','Squire','DR'].includes(k);
                         const labelColor = isDynOnly ? '#f0c84a' : 'var(--text2)';
                         const sv = getPositionScore(c, k);
                         if (sv === null && isDynOnly && !dynastyMode) return null;
