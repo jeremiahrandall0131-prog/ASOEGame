@@ -7057,6 +7057,7 @@ function collDefaultSave() {
   return { gold:100, rerolls:0, owned:[], lastDailyPull:null, lastDailyReward:null,
            storeRefresh:null, storeShowcase:[], featuredHouse:null, featuredHouseCards:{}, tutorialSeen:false,
            storeClosedUntil:null, gotPending:null, // The Game of Thrones: store-closed timer + pending loss-choice marker
+           cardStats:{}, // per-card record (keyed by base variant id): { placements, wins, points } for cards ever PLACED on a board
            stats:{ games:0, wins:0, totalScore:0, cardPlays:{}, cardScores:{} },
            // House Wars: separate stats/streak, the 3-in-a-row rotation tracker, pending wheel
            // spins, and an "active game" marker used to penalise quitting / closing mid-match.
@@ -7251,6 +7252,22 @@ function collAcquire(owned, cardId) {
   newOwned.splice(matchIdx, 1); // consume the existing copy
   newOwned.push(targetId);      // add the evolved card (clean, tier above the higher copy)
   return { owned: newOwned, evolved: true, card: getCollCard(targetId), from: existing };
+}
+
+// Record each card PLACED on the player's board this game into the per-card stats (keyed by base
+// variant, so mods/evolves don't fragment a card's history). Tracks placements, wins, total points.
+function collRecordCardStats(prev, playerBoard, won) {
+  const cs = { ...(prev || {}) };
+  Object.entries(playerBoard || {}).forEach(([posId, card]) => {
+    if (!card) return;
+    const key = collStripId(card.id);
+    const e = cs[key] ? { ...cs[key] } : { placements: 0, wins: 0, points: 0 };
+    e.placements += 1;
+    if (won) e.wins += 1;
+    e.points = Math.round((e.points + ((card.scores && card.scores[posId]) || 0)) * 10) / 10;
+    cs[key] = e;
+  });
+  return cs;
 }
 
 // ─── The Game of Thrones: Win or Die ────────────────────────────────────────
@@ -7958,6 +7975,8 @@ function CollectorCardStats({ save }) {
   const stats = save.stats || {};
   const [statMode, setStatMode] = React.useState('traditional'); // traditional | hw
   const [houseFilter, setHouseFilter] = React.useState('all');
+  const [view, setView] = React.useState('overview'); // overview | cards (per-card stats tab)
+  const [cardSort, setCardSort] = React.useState('ppg'); // ppg | winrate | name | tier
   const ownedCards = (save.owned||[]).map(id=>getCollCard(id)).filter(Boolean);
   const cardPlays = stats.cardPlays || {};
   const cardScores = stats.cardScores || {};
@@ -8000,8 +8019,57 @@ function CollectorCardStats({ save }) {
   allCards.forEach(c => { if(tierTotals[c.tier]!==undefined) tierTotals[c.tier]++; });
   ownedCards.forEach(c => { if(tierOwned[c.tier]!==undefined) tierOwned[c.tier]++; });
 
+  // ── Per-card record (#3): every card ever PLACED on a board, by variant ──
+  const cardStats = save.cardStats || {};
+  let cardRows = Object.keys(cardStats).map(id => {
+    const card = getCollCard(id), st = cardStats[id] || {};
+    if (!card || !(st.placements > 0)) return null; // must have been placed to qualify
+    const winRate = st.placements ? Math.round((st.wins||0) / st.placements * 100) : 0;
+    const ppg = st.placements ? Math.round((st.points||0) / st.placements * 10) / 10 : 0;
+    return { card, placements: st.placements, winRate, ppg };
+  }).filter(Boolean);
+  if (cardSort === 'name') cardRows.sort((a,b) => a.card.name.localeCompare(b.card.name));
+  else if (cardSort === 'winrate') cardRows.sort((a,b) => b.winRate - a.winRate || b.placements - a.placements);
+  else if (cardSort === 'tier') cardRows.sort((a,b) => collTierRank(b.card.tier) - collTierRank(a.card.tier) || b.ppg - a.ppg);
+  else cardRows.sort((a,b) => b.ppg - a.ppg || b.placements - a.placements); // ppg (default)
+
   return (
     <div className="scroll" style={{ height:'100%' }}>
+      <div style={{ display:'flex', gap:6, marginBottom:12 }}>
+        <button onClick={()=>setView('overview')} className={`btn btn-${view==='overview'?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }}>Overview</button>
+        <button onClick={()=>setView('cards')} className={`btn btn-${view==='cards'?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }}>Card Stats</button>
+      </div>
+
+      {view === 'cards' && (
+        <div className="card">
+          <div style={{ fontSize:'0.58rem', color:'var(--text2)', marginBottom:8, lineHeight:1.5 }}>Every card you've ever <b style={{color:'var(--gold)'}}>placed on a board</b> (Traditional, Tourney, or House Wars) — even cards you no longer own. <b>GP</b> = games placed · <b>PPG</b> = avg points per placement.</div>
+          <div style={{ display:'flex', gap:4, marginBottom:8 }}>
+            {[['ppg','PPG'],['winrate','Win %'],['name','A-Z'],['tier','Tier']].map(([m,l]) => (
+              <button key={m} className={`btn btn-${cardSort===m?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.56rem' }} onClick={()=>setCardSort(m)}>{l}</button>
+            ))}
+          </div>
+          {cardRows.length === 0 ? (
+            <div style={{ textAlign:'center', color:'var(--text2)', fontSize:'0.72rem', margin:'28px 0' }}>No cards placed on a board yet — play a game!</div>
+          ) : (<>
+            <div style={{ display:'flex', fontSize:'0.5rem', color:'var(--text2)', padding:'0 4px 4px', fontFamily:'Cinzel,serif', letterSpacing:'0.04em', borderBottom:'1px solid var(--border)' }}>
+              <span style={{ flex:1 }}>CARD</span><span style={{ width:38, textAlign:'right' }}>GP</span><span style={{ width:46, textAlign:'right' }}>WIN%</span><span style={{ width:42, textAlign:'right' }}>PPG</span>
+            </div>
+            {cardRows.map(r => { const ct = T[r.card.tier] || { color:'#888' }; return (
+              <div key={r.card.id} style={{ display:'flex', alignItems:'center', gap:6, padding:'5px 4px', borderBottom:'1px solid var(--border)' }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:'0.64rem', color:ct.color, fontWeight:700, lineHeight:1.2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{r.card.name}</div>
+                  <div style={{ marginTop:1 }}><CollTierBadge tier={r.card.tier} /></div>
+                </div>
+                <span style={{ width:38, textAlign:'right', fontFamily:'Cinzel,serif', fontSize:'0.72rem', color:'var(--text2)' }}>{r.placements}</span>
+                <span style={{ width:46, textAlign:'right', fontFamily:'Cinzel,serif', fontSize:'0.72rem', color: r.winRate>=50?'#4caf50':'var(--text)' }}>{r.winRate}%</span>
+                <span style={{ width:42, textAlign:'right', fontFamily:'Cinzel,serif', fontSize:'0.72rem', color:'var(--gold)' }}>{r.ppg}</span>
+              </div>
+            ); })}
+          </>)}
+        </div>
+      )}
+
+      {view === 'overview' && (<>
       {/* Combat record (Traditional / House Wars toggle) */}
       <div className="card" style={{ marginBottom:12 }}>
         <div style={{ display:'flex', gap:6, marginBottom:10 }}>
@@ -8092,6 +8160,7 @@ function CollectorCardStats({ save }) {
           Play some games to see your card statistics!
         </div>
       )}
+      </>)}
     </div>
   );
 }
@@ -9151,6 +9220,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
       ...save,
       gold: finalGold,
       rerolls: Math.max(0, (save.rerolls||0) - rerollsUsed),
+      cardStats: collRecordCardStats(save.cardStats, playerBoard, isWin), // per-card placement record (#3)
       stats: {
         ...(save.stats||{}),
         games: (save.stats?.games||0)+1,
@@ -10679,7 +10749,7 @@ function CollectorHub({ onHome }) {
     const newHw = { ...hw, games:(hw.games||0)+1, wins:(hw.wins||0)+(isWin?1:0), streak,
                     maxStreak: Math.max(hw.maxStreak||0, streak), byHouse, recentHouse: house, recentRun,
                     active: isWin ? null : { userHouse: house, cpuHouse: hwCpuHouse, lineupIds: placedIds, phase:'lossPending' } };
-    const newSave = { ...save, hw: newHw };
+    const newSave = { ...save, hw: newHw, cardStats: collRecordCardStats(save.cardStats, result.playerBoard, isWin) }; // per-card record (#3)
     saveCollSave(newSave); setSave(newSave);
     setHwReward(isWin ? hwRollReward(hwCpuHouse) : null); // pre-rolled, spawns after the scorecard
     setHwResult({ ...result, wheelEarned });
