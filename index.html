@@ -11887,11 +11887,13 @@ const FirebaseSync = (() => {
   async function _pullAll() {
     if (!_user || !_db) return;
     try {
+      const cloudIds = new Set();
       const snap = await _db.collection('saves').where('uid', '==', _user.uid).get();
       snap.forEach(doc => {
         const data = doc.data();
         const saveId = data.saveId;
         if (!saveId) return;
+        cloudIds.add(saveId);
         if (data.deleted) { removeLocalSaveData(saveId); return; } // deleted on another device → drop locally
         // Ensure save slot exists locally, and mark it Online (a save present in the cloud is
         // an Online save on every device — so it stays locked when signed out).
@@ -11916,17 +11918,20 @@ const FirebaseSync = (() => {
         }
       });
       await _pullCollector();
+      // Upload any LOCAL-only saves (created offline, or legacy saves that predate cloud sync) so
+      // signing in carries them UP to the account as well as pulling everything down.
+      for (const m of getSaveMeta()) {
+        if (!cloudIds.has(m.id)) { try { await pushSave(m.id); await pushCollector(m.id); } catch (e) {} }
+      }
       window.dispatchEvent(new CustomEvent('asoe-cloud-sync'));
     } catch(e) { console.warn('FirebaseSync pull failed', e); }
   }
 
-  async function pushCollector() {
+  async function pushCollector(saveIdArg) {
     if (!_user || !_db) return;
     try {
-      const sid = getActiveSaveId() || 1;
-      const cmeta = getSaveMeta().find(s => s.id === sid);
-      if (!cmeta || !cmeta.online) return; // Offline saves keep their Collector data on-device only
-      const raw = localStorage.getItem(collKey());
+      const sid = saveIdArg || getActiveSaveId() || 1;
+      const raw = localStorage.getItem(sk(sid, 'collector'));
       if (!raw) return;
       const data = JSON.parse(raw);
       // Per-save cloud doc so one save's collection never overwrites another's.
@@ -11937,26 +11942,30 @@ const FirebaseSync = (() => {
   async function _pullCollector() {
     if (!_user || !_db) return;
     try {
-      const sid = getActiveSaveId() || 1;
-      const localKey = collKey();
-      const doc = await _db.collection('collector').doc(_docId(sid)).get();
-      if (doc.exists) {
+      // Pull EVERY save's Collector data (not just the active slot) so all three slots carry across.
+      const snap = await _db.collection('collector').where('uid', '==', _user.uid).get();
+      snap.forEach(doc => {
         const { uid, saveId, updatedAt, ...data } = doc.data();
+        if (!saveId) return;
+        const localKey = sk(saveId, 'collector');
         const local = JSON.parse(localStorage.getItem(localKey) || '{}');
-        // Cloud wins if it has a later updatedAt, otherwise keep local
-        if (!local.updatedAt || updatedAt > (local.updatedAt || 0)) {
+        // Cloud wins if it has a later updatedAt, otherwise keep local.
+        if (!local.updatedAt || (updatedAt || 0) > (local.updatedAt || 0)) {
           localStorage.setItem(localKey, JSON.stringify({ ...collDefaultSave(), ...data }));
         }
-      }
+      });
     } catch(e) { console.warn('FirebaseSync collector pull failed', e); }
   }
 
   async function pushSave(saveId) {
     if (!_user || !_db || !saveId) return;
     try {
-      const meta = getSaveMeta().find(s => s.id === saveId);
-      if (!meta || !meta.online) return; // Only Online saves sync to the cloud; Offline saves stay on-device
-      const payload = { uid: _user.uid, saveId, online: true, deleted: false, updatedAt: Date.now(), createdAt: meta.created || Date.now(), saveName: meta.name || `Save ${saveId}` };
+      // Signed in ⇒ this save IS Online and must sync. Auto-heal the flag rather than block the
+      // push — covers the async-auth race at save creation AND legacy saves that predate the flag.
+      const metaArr = getSaveMeta(); const _i = metaArr.findIndex(s => s.id === saveId);
+      if (_i >= 0 && !metaArr[_i].online) { metaArr[_i].online = true; setSaveMeta(metaArr); }
+      const meta = _i >= 0 ? metaArr[_i] : null;
+      const payload = { uid: _user.uid, saveId, online: true, deleted: false, updatedAt: Date.now(), createdAt: meta?.created || Date.now(), saveName: meta?.name || `Save ${saveId}` };
       for (const key of SYNC_KEYS) {
         const raw = localStorage.getItem(sk(saveId, key));
         if (raw !== null) {
