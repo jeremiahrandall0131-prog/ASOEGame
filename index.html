@@ -11912,7 +11912,7 @@ const FirebaseSync = (() => {
 
   async function _pullAll() {
     if (!_user || !_db) return;
-    let found = 0;
+    let found = 0; const names = [];
     try {
       const cloudIds = new Set();
       const snap = await _db.collection('saves').where('uid', '==', _user.uid).get();
@@ -11922,17 +11922,18 @@ const FirebaseSync = (() => {
         if (!saveId) return;
         cloudIds.add(saveId);
         if (data.deleted) { removeLocalSaveData(saveId); return; } // deleted on another device → drop locally
-        found++;
-        // Ensure save slot exists locally, and mark it Online (a save present in the cloud is
-        // an Online save on every device — so it stays locked when signed out).
+        found++; names.push(data.saveName || `Save ${saveId}`);
+        // Ensure the slot exists locally, keep its NAME in sync from the cloud, and mark it Online.
         const meta = getSaveMeta();
         const existingIdx = meta.findIndex(s => s.id === saveId);
         if (existingIdx < 0) {
           meta.push({ id: saveId, created: data.createdAt || Date.now(), lastPlayed: data.updatedAt || Date.now(), name: data.saveName || `Save ${saveId}`, online: true });
-          setSaveMeta(meta);
-        } else if (!meta[existingIdx].online) {
-          meta[existingIdx].online = true; setSaveMeta(meta);
+        } else {
+          meta[existingIdx].online = true;
+          if (data.saveName) meta[existingIdx].name = data.saveName;         // fix: sync the file name from the cloud
+          if (data.updatedAt) meta[existingIdx].lastPlayed = data.updatedAt;
         }
+        setSaveMeta(meta);
         for (const key of SYNC_KEYS) {
           if (data[key] !== undefined && data[key] !== null) {
             const val = typeof data[key] === 'string' ? data[key] : JSON.stringify(data[key]);
@@ -11951,11 +11952,11 @@ const FirebaseSync = (() => {
       for (const m of getSaveMeta()) {
         if (!cloudIds.has(m.id)) { try { await pushSave(m.id); await pushCollector(m.id); } catch (e) {} }
       }
-      _lastPull = { ok: true, found, error: null, at: Date.now() };
-      console.log(`[Sync] pulled ${found} cloud file(s) for ${_user.email || _user.uid}`);
+      _lastPull = { ok: true, found, names, email: (_user && _user.email) || '', uid: (_user && _user.uid) || '', error: null, at: Date.now() };
+      console.log(`[Sync] pulled ${found} cloud file(s) [${names.join(', ')}] for ${_user.email || _user.uid} (uid ${_user.uid})`);
       window.dispatchEvent(new CustomEvent('asoe-cloud-sync', { detail: _lastPull }));
     } catch(e) {
-      _lastPull = { ok: false, found, error: (e && (e.code || e.message)) || 'unknown', at: Date.now() };
+      _lastPull = { ok: false, found, names, email: (_user && _user.email) || '', uid: (_user && _user.uid) || '', error: (e && (e.code || e.message)) || 'unknown', at: Date.now() };
       console.warn('[Sync] pull FAILED:', e);
       window.dispatchEvent(new CustomEvent('asoe-cloud-sync', { detail: _lastPull }));
     }
@@ -12065,8 +12066,8 @@ function AccountScreen({ onBack, startup, onContinue }) {
       // (_pullAll fires 'asoe-cloud-sync', which re-renders the save-dependent screens.)
       await FirebaseSync.signIn();
       const lp = FirebaseSync.getLastPull && FirebaseSync.getLastPull();
-      if (lp && lp.ok) setStatus(`☁ Signed in — found ${lp.found} file(s) in your account and synced them here.`);
-      else if (lp && !lp.ok) setStatus(`⚠ Signed in, but sync had a problem: ${lp.error}`);
+      if (lp && lp.ok) setStatus(`☁ ${lp.email} — found ${lp.found} file(s): ${(lp.names && lp.names.join(', ')) || '—'}`);
+      else if (lp && !lp.ok) setStatus(`⚠ Sync problem (${lp.email}): ${lp.error}`);
       else setStatus('Signed in — syncing…');
     }
     catch(e) { setStatus(`Error: ${e.code || e.message || 'unknown'}`); }
@@ -12122,7 +12123,7 @@ function AccountScreen({ onBack, startup, onContinue }) {
               try {
                 await FirebaseSync.syncNow();
                 const lp = FirebaseSync.getLastPull && FirebaseSync.getLastPull();
-                if (lp && lp.ok) setStatus(`☁ Synced — found ${lp.found} file(s) in your account.`);
+                if (lp && lp.ok) setStatus(`☁ ${lp.email} — found ${lp.found} file(s): ${(lp.names && lp.names.join(', ')) || '—'}`);
                 else if (lp && !lp.ok) setStatus(`⚠ Sync problem: ${lp.error}`);
                 else setStatus('Synced.');
               } finally { setLoading(false); }
