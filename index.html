@@ -1788,8 +1788,9 @@ function renameSaveSlot(slotId, name) {
   if (idx >= 0) {
     meta[idx].name = name.trim() || `Save ${slotId}`;
     setSaveMeta(meta);
-    // Sync the new name to the cloud so it carries to other devices (Online saves only).
-    if (meta[idx].online) { try { FirebaseSync.pushSave(slotId); } catch (e) {} }
+    // Always push — pushSave no-ops when signed out, and when signed in it promotes the save to
+    // Online and syncs the new name to the cloud so it carries to other devices.
+    try { FirebaseSync.pushSave(slotId); } catch (e) {}
   }
 }
 function touchSave(saveId) {
@@ -11876,9 +11877,21 @@ const FirebaseSync = (() => {
 
   function onAuthChange(fn) { _listeners.push(fn); }
   function getUser() { return _user; }
-  function signIn() {
+  // Signing in does NOT resolve until the account's ENTIRE data has been pulled down to this
+  // device (and any local-only saves pushed up). The caller shows a "Syncing…" state meanwhile,
+  // so the player never lands on an empty save list before their files have arrived.
+  async function signIn() {
     const provider = new firebase.auth.GoogleAuthProvider();
-    return _auth.signInWithPopup(provider);
+    const res = await _auth.signInWithPopup(provider);
+    _user = res.user || (_auth && _auth.currentUser);
+    try { await _pullAll(); } catch (e) { console.warn('sign-in sync failed', e); }
+    return res;
+  }
+  // Force a full re-sync on demand (used to guarantee data is present before leaving a screen).
+  async function syncNow() {
+    if (!_user && _auth) _user = _auth.currentUser;
+    if (!_user || !_db) return;
+    try { await _pullAll(); } catch (e) { console.warn('syncNow failed', e); }
   }
   function signOut() { return _auth.signOut(); }
 
@@ -11995,7 +12008,7 @@ const FirebaseSync = (() => {
     } catch(e) { console.warn('FirebaseSync delete failed', e); }
   }
 
-  return { init, signIn, signOut, getUser, onAuthChange, pushSave, pushCollector, deleteSave };
+  return { init, signIn, signOut, getUser, onAuthChange, pushSave, pushCollector, deleteSave, syncNow };
 })();
 
 // ─── Account Screen ───────────────────────────────────────────────────────────
@@ -12003,21 +12016,26 @@ function AccountScreen({ onBack, startup, onContinue }) {
   const [user, setUser] = useState(() => FirebaseSync.getUser());
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(null);
+  const [continuing, setContinuing] = useState(false); // syncing before leaving the startup login
   const [convertSlot, setConvertSlot] = useState(null); // active Offline save offered for Online conversion (#9)
 
   useEffect(() => {
     FirebaseSync.onAuthChange(u => setUser(u));
   }, []);
 
+  // Don't leave the login screen until a signed-in account has fully synced to this device.
+  async function handleContinue() {
+    if (user) { setContinuing(true); try { await FirebaseSync.syncNow(); } catch (e) {} setContinuing(false); }
+    if (onContinue) onContinue();
+  }
+
   async function handleSignIn() {
-    setLoading(true); setStatus(null);
+    setLoading(true); setStatus('Syncing your account… hang tight.');
     try {
+      // signIn() does not resolve until the ENTIRE account has been pulled to this device.
+      // (_pullAll fires 'asoe-cloud-sync', which re-renders the save-dependent screens.)
       await FirebaseSync.signIn();
-      setStatus('Signed in! Your progress is now syncing.');
-      // If the player is currently in an Offline save, offer to convert it to Online (#9).
-      const aid = getActiveSaveId();
-      const meta = aid ? getSaveMeta().find(s => s.id === aid) : null;
-      if (meta && !isSaveOnline(meta)) setConvertSlot(meta);
+      setStatus('Signed in — all your files and progress are synced to this device.');
     }
     catch(e) { setStatus(`Error: ${e.code || e.message || 'unknown'}`); }
     finally { setLoading(false); }
@@ -12079,7 +12097,7 @@ function AccountScreen({ onBack, startup, onContinue }) {
               Sign in with Google to sync your progress across all your devices. Your chaos ladder, achievements, and history will follow you everywhere.
             </div>
             <button className="btn btn-gold" style={{ padding: '13px 32px', fontSize: '0.88rem', letterSpacing: '0.08em', display: 'flex', alignItems: 'center', gap: 10 }} onClick={handleSignIn} disabled={loading}>
-              {loading ? 'Opening…' : <><span style={{ fontSize: '1.1rem' }}>G</span> Sign in with Google</>}
+              {loading ? '☁ Syncing your account…' : <><span style={{ fontSize: '1.1rem' }}>G</span> Sign in with Google</>}
             </button>
           </>
         )}
@@ -12088,9 +12106,10 @@ function AccountScreen({ onBack, startup, onContinue }) {
           <button
             className={user ? 'btn btn-gold' : 'btn btn-ghost'}
             style={{ marginTop: 8, padding: '12px 28px', fontSize: '0.82rem', letterSpacing: '0.08em', minWidth: 200 }}
-            onClick={onContinue}
+            onClick={handleContinue}
+            disabled={continuing || loading}
           >
-            {user ? 'Continue →' : 'Skip for now →'}
+            {continuing ? '☁ Syncing…' : user ? 'Continue →' : 'Skip for now →'}
           </button>
         )}
       </div>
