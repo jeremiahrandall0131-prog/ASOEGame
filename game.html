@@ -1742,7 +1742,18 @@ function sk(saveId, name) {
   return `asoe-s${saveId}-${name}`;
 }
 function getSaveMeta() { return JSON.parse(localStorage.getItem('asoe-saves') || '[]'); }
-function setSaveMeta(arr) { localStorage.setItem('asoe-saves', JSON.stringify(arr)); }
+function setSaveMeta(arr) {
+  // TRACER: log every change to the save-list SIZE with the call chain that caused it, so a save
+  // vanishing (count → fewer) names its exact culprit. Temporary diagnostic.
+  try {
+    const prev = JSON.parse(localStorage.getItem('asoe-saves') || '[]');
+    if (prev.length !== arr.length) {
+      let who = ''; try { who = (new Error().stack || '').split('\n').slice(2, 5).map(l => l.replace(/.*at\s+/, '').replace(/\s*\(.*/, '').trim()).filter(Boolean).join(' ← '); } catch (e) {}
+      dlog(`META ${prev.length}→${arr.length} [${arr.map(s => s.id).join(',') || '∅'}] via ${who}`);
+    }
+  } catch (e) {}
+  localStorage.setItem('asoe-saves', JSON.stringify(arr));
+}
 function getActiveSaveId() { const v = parseInt(localStorage.getItem('asoe-active-save') || '0'); return isNaN(v) || v < 1 ? null : v; }
 function setActiveSaveId(id) { localStorage.setItem('asoe-active-save', String(id)); }
 // Persistent, cross-login diagnostic timeline: records every create/delete/push/pull so an
@@ -1786,6 +1797,8 @@ function createSaveSlot(slotId) {
 // keys). Used both for a user-initiated delete AND when a cloud pull learns the save was
 // deleted on another device — so it does NOT touch the cloud itself.
 function removeLocalSaveData(slotId) {
+  // TRACER: name the call chain that erased this save's local data. Temporary diagnostic.
+  try { let who = (new Error().stack || '').split('\n').slice(2, 5).map(l => l.replace(/.*at\s+/, '').replace(/\s*\(.*/, '').trim()).filter(Boolean).join(' ← '); dlog(`REMOVE-LOCAL #${slotId} via ${who}`); } catch (e) {}
   const names = ['history','achievements','chaosProgress','chaosCompletions','p1Averages','collector'];
   names.forEach(k => localStorage.removeItem(sk(slotId, k)));
   const prefix = (slotId === 1) ? null : `asoe-s${slotId}-`;
@@ -2104,7 +2117,9 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
         <div style={{ position: 'absolute', top: 12, right: 14, zIndex: 10 }}><SettingsButton /></div>
         <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 10 }}>
           <button className="btn btn-ghost btn-sm" onClick={() => {
-            deleteSaveSlot(slot);
+            // Backing out KEEPS the save (it defaults to "Save N") — only the explicit delete button
+            // removes a file. Previously this deleted+tombstoned the just-created save, a landmine.
+            if (slot) { renameSaveSlot(slot, (editName || '').trim() || `Save ${slot}`); }
             if (onSaveChange) onSaveChange(null, 'main-menu');
           }}>← Back</button>
         </div>
