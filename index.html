@@ -11927,6 +11927,8 @@ const FirebaseSync = (() => {
       const cloudIds = new Set();
       const collectorPushUp = new Set();
       const detail = []; // per-slot diagnostic of what the cloud returned + the decision made
+      const metaStr = () => getSaveMeta().map(s => `${s.id}${s.online ? '*' : ''}${s.name ? ':' + s.name.slice(0, 6) : ''}`).join(',') || '∅';
+      const metaBefore = metaStr();
       const snap = await _db.collection('saves').where('uid', '==', _user.uid).get();
       snap.forEach(doc => {
         const data = doc.data();
@@ -11998,6 +12000,7 @@ const FirebaseSync = (() => {
       for (const m of getSaveMeta()) {
         if (!cloudIds.has(m.id)) { detail.push(`#${m.id} UPLOAD(local-only) cr=${m.created || 0}`); try { await pushSave(m.id); await pushCollector(m.id); } catch (e) {} }
       }
+      detail.push(`meta ${metaBefore} → ${metaStr()}`); // local save-list before → after this pull
       _lastPull = { ok: true, found, names, detail, email: (_user && _user.email) || '', uid: (_user && _user.uid) || '', error: null, at: Date.now() };
       console.log(`[Sync] pulled ${found} cloud file(s) [${names.join(', ')}] for ${_user.email || _user.uid} (uid ${_user.uid})`);
       console.log('[Sync] detail:', detail);
