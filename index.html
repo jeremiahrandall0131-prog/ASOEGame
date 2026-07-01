@@ -7036,6 +7036,34 @@ function canPlaceDrawnLegally(board, card) {
   }
   return false;
 }
+// Can these cards fill the three constrained slots at once? ∃ distinct Ruler/Consort/Heir with
+// Ruler & Consort opposite genders and Heir no older than either. (Only relevant for a full board.)
+function collCanFillRCH(cards) {
+  for (let i = 0; i < cards.length; i++) {
+    for (let j = 0; j < cards.length; j++) {
+      if (i === j) continue;
+      const R = cards[i], C = cards[j];
+      if (R.gender === C.gender) continue;                 // Ruler & Consort must differ
+      const maxHeir = Math.min(R.age || 0, C.age || 0);
+      for (let h = 0; h < cards.length; h++) {
+        if (h === i || h === j) continue;
+        if ((cards[h].age || 0) <= maxHeir) return true;   // a valid Heir exists
+      }
+    }
+  }
+  return false;
+}
+// Whether the drawn card can be FIELDED on this board given free repositioning of everything
+// already placed — not just dropped into an open slot. With 7 unconstrained slots, any lineup of
+// fewer than a full board can always be arranged legally (leave a constrained slot open), so the
+// only way a card is truly unplayable is a FULL board with no legal Ruler/Consort/Heir triple
+// among all its cards (e.g. every card is the same gender, so Ruler & Consort can't be paired).
+function canFieldDrawn(board, card) {
+  if (!card) return true;
+  const cards = COLL_POS.map(p => board[p.id]).filter(Boolean).concat([card]);
+  if (cards.length < COLL_POS.length) return true;          // room to leave a hard slot empty
+  return collCanFillRCH(cards);                             // full board — needs a legal court
+}
 // Build the CPU's hidden deck: a fully random multiset drawn from the WHOLE card pool (any
 // tier, duplicates allowed, the same card the player owns is fair game) whose cumulative
 // Overall lands within ±2% of the player's cumulative deck Overall, with at least 20 cards.
@@ -10069,25 +10097,41 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
     if (rerollsLeft <= 0 || rerollsUsed >= GAME_REROLL_LIMIT) return;
     const available = playerDeck.filter(c => !usedCardIds.has(c.id) && c.id !== drawnCard?.id && !Object.values(playerBoard).some(pc=>pc?.id===c.id));
     if (!available.length) return;
-    const card = available[Math.floor(Math.random()*available.length)];
+    // Prefer a card that can actually complete a legal court, so a forced reroll (when the current
+    // card is unfieldable) converges on a playable one instead of burning rerolls at random.
+    const fieldable = available.filter(c => canFieldDrawn(playerBoard, c));
+    const pool = fieldable.length ? fieldable : available;
+    const card = pool[Math.floor(Math.random()*pool.length)];
     setDrawnCard(card);
     setRerollsLeft(r=>r-1);
     setRerollsUsed(r=>r+1);
   }
 
-  // Forfeit the card in hand: don't place it, leaving a slot empty (it scores 0). Lets the
-  // player decline a placement that would otherwise force an illegal board.
+  // Forfeit the card in hand. This is only reachable on the FINAL slot with no legal court possible
+  // and no rerolls left (see the draw panel), so it LOSES the turn: the slot stays empty (scores 0),
+  // the CPUs take their last turn too, and the game ends with 9 placements — no free re-draw.
   function discardDrawn() {
     if (!drawnCard) return;
     setUsedCardIds(new Set([...usedCardIds, drawnCard.id]));
     setDrawnCard(null);
     setHeldDisplaced(false);
     setSelectedPos(null);
-    setPhase('arrange');
+    setCpus(advanceCpus());   // CPUs draft their final card so both sides get equal rounds
+    setPhase('done');
+  }
+
+  // Is a reroll still available AND is there an undrawn card to reroll into?
+  function canRerollNow() {
+    if (rerollsLeft <= 0 || rerollsUsed >= GAME_REROLL_LIMIT || heldDisplaced) return false;
+    return playerDeck.some(c => !usedCardIds.has(c.id) && c.id !== drawnCard?.id && !Object.values(playerBoard).some(pc=>pc?.id===c.id));
   }
 
   function placeCard(posId) {
     if (!drawnCard) return;
+    // If this card can't complete a legal court no matter how the board is arranged and the player
+    // still has rerolls, they must reroll for a fieldable card first — placing it is a dead end
+    // (the board could never be confirmed legal), so block it rather than let them get stuck.
+    if (!heldDisplaced && !canFieldDrawn(playerBoard, drawnCard) && canRerollNow()) return;
     const occupant = playerBoard[posId];
     if (occupant) {
       // Placing onto an occupied slot SWAPS: the drawn card takes the slot and the displaced
@@ -10412,10 +10456,18 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
                 <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginTop:8, fontStyle:'italic' }}>
                   Tap an empty slot to place — or an occupied slot to swap. (Best fit highlighted.)
                 </div>
-                {!canPlaceDrawnLegally(playerBoard, drawnCard) && (
-                  <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:8, fontSize:'0.58rem', color:'#c98a3a', borderColor:'#c98a3a' }} onClick={discardDrawn}>
-                    🗑 No legal position for this card — forfeit it (that slot scores 0)
-                  </button>
+                {!canFieldDrawn(playerBoard, drawnCard) && (
+                  canRerollNow() ? (
+                    <div style={{ marginTop:8, padding:'6px 8px', borderRadius:6, background:'rgba(201,138,58,0.12)', border:'1px solid #c98a3a' }}>
+                      <div style={{ fontSize:'0.58rem', color:'#e0a34a', fontStyle:'italic', lineHeight:1.4 }}>
+                        ⚠ This card can't complete a legal court in any position. Reroll it ({rerollsLeft} left) — you must field a playable card.
+                      </div>
+                    </div>
+                  ) : (
+                    <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:8, fontSize:'0.58rem', color:'#c98a3a', borderColor:'#c98a3a' }} onClick={discardDrawn}>
+                      🗑 No legal court possible & no rerolls left — forfeit this turn (that slot scores 0)
+                    </button>
+                  )
                 )}
               </div>
             )}
