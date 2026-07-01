@@ -1758,8 +1758,14 @@ function createSaveSlot(slotId) {
   const meta = getSaveMeta().filter(s => s.id !== slotId);
   meta.push({ id: slotId, created: Date.now(), lastPlayed: Date.now(), online: isSignedInNow() }); // tag Online if signed in at creation (#9)
   setSaveMeta(meta); setActiveSaveId(slotId);
-  // Register the new save in the cloud immediately so it syncs to other devices.
+  // Register the new save in the cloud immediately so it syncs to other devices — then retry a few
+  // times. The single create-time push can be dropped by the post-sign-in auth-settle race (_user not
+  // yet populated), which left brand-new, un-played files as a cloud tombstone only. Each retry is a
+  // harmless idempotent merge, and is guarded so it NEVER resurrects a save the user just deleted.
   try { FirebaseSync.pushSave(slotId); } catch (e) {}
+  [500, 1500, 4000].forEach(ms => setTimeout(() => {
+    try { if (isSignedInNow() && getSaveMeta().some(s => s.id === slotId)) FirebaseSync.pushSave(slotId); } catch (e) {}
+  }, ms));
 }
 // Wipe EVERY piece of local data for a save (history, achievements, chaos progress/
 // completions, averages, the per-save collector deck/gold/stats, and dynamic daily_<date>
@@ -1778,9 +1784,13 @@ function removeLocalSaveData(slotId) {
   if (getActiveSaveId() === slotId) localStorage.removeItem('asoe-active-save');
 }
 function deleteSaveSlot(slotId) {
+  // Capture the save's generation (its created stamp) BEFORE we wipe it, so the cloud tombstone can
+  // record exactly WHICH instance was deleted. A future save reusing this slot gets a new generation,
+  // so this tombstone can never delete it.
+  const gen = (getSaveMeta().find(s => s.id === slotId) || {}).created || 0;
   removeLocalSaveData(slotId);
   // Propagate the deletion to the cloud so other signed-in devices drop it too.
-  try { FirebaseSync.deleteSave(slotId); } catch (e) {}
+  try { FirebaseSync.deleteSave(slotId, gen); } catch (e) {}
 }
 function renameSaveSlot(slotId, name) {
   const meta = getSaveMeta();
@@ -11924,21 +11934,23 @@ const FirebaseSync = (() => {
         if (!saveId) { detail.push('(session/no-id doc)'); return; }
         cloudIds.add(saveId);
         if (data.deleted === true) {
-          // A tombstone normally means the save was deleted on another device → drop it locally.
-          // BUT if THIS device holds a save in the same slot that was created AFTER the deletion, the
-          // tombstone is STALE — the slot was reused for a brand-new file. Killing it here (and leaving
-          // the slot in cloudIds) is what made freshly-created, un-played files vanish on the next login:
-          // the upload loop below skips any slot already in cloudIds, so the new file could never heal.
-          // Resurrect it instead: keep the local save and free the slot so the upload loop re-pushes it.
+          // A tombstone means the save was deleted on another device. Honor it ONLY if it targets the
+          // exact save instance this device holds (same generation = its `created` stamp). If this
+          // device has a save here with a DIFFERENT generation — the slot was reused for a brand-new
+          // file — the tombstone is stale; keep the local save and free the slot so the upload loop
+          // re-pushes it, healing the cloud. (Old tombstones lack deletedGen; if we still hold a local
+          // save we favor keeping it, since we can't prove the tombstone is for this instance.)
           const lm = getSaveMeta().find(s => s.id === saveId);
           const lc = lm ? (lm.created || 0) : -1;
-          if (lm && (lm.created || 0) > (data.deletedAt || 0)) {
-            detail.push(`#${saveId} DEL dAt=${data.deletedAt || 0} localCr=${lc} →RESURRECT`);
-            cloudIds.delete(saveId); // let the local-only upload loop re-push (resurrect) it, overwriting the dead tombstone
+          const dg = (data.deletedGen != null) ? data.deletedGen : 'none';
+          const sameInstance = lm && data.deletedGen != null && (lm.created || 0) === data.deletedGen;
+          if (lm && !sameInstance) {
+            detail.push(`#${saveId} DEL dGen=${dg} localCr=${lc} →RESURRECT(reused slot)`);
+            cloudIds.delete(saveId); // free it so the local-only upload loop re-pushes (resurrects) it
             return;
           }
-          detail.push(`#${saveId} DEL dAt=${data.deletedAt || 0} localCr=${lc} →REMOVE`);
-          removeLocalSaveData(saveId); return; // genuine remote deletion → drop locally
+          detail.push(`#${saveId} DEL dGen=${dg} localCr=${lc} →REMOVE`);
+          removeLocalSaveData(saveId); return; // genuine deletion of the same instance (or nothing local) → drop
         }
         found++; names.push(data.saveName || `Save ${saveId}`);
         detail.push(`#${saveId} LIVE cr=${data.createdAt || 0} up=${data.updatedAt || 0} coll=${typeof data.collectorBlob === 'string' ? 'Y' : 'N'}`);
@@ -12080,13 +12092,14 @@ const FirebaseSync = (() => {
     } catch(e) { console.warn('FirebaseSync push failed', e); }
   }
 
-  // Tombstone a deleted save in the cloud so every other signed-in device drops it on its
-  // next pull, and clear its cloud collector data.
-  async function deleteSave(saveId) {
+  // Tombstone a deleted save in the cloud so every other signed-in device drops it on its next pull.
+  // `gen` is the deleted save's generation (its created stamp) — the pull only honors this tombstone
+  // for a local save of the SAME generation, so it can never delete a new file that reused the slot.
+  async function deleteSave(saveId, gen) {
+    if (!_user && _auth) _user = _auth.currentUser;
     if (!_user || !_db || !saveId) return;
     try {
-      await _db.collection('saves').doc(_docId(saveId)).set({ uid: _user.uid, saveId, deleted: true, deletedAt: Date.now() });
-      await _db.collection('collector').doc(_docId(saveId)).delete();
+      await _db.collection('saves').doc(_docId(saveId)).set({ uid: _user.uid, saveId, deleted: true, deletedAt: Date.now(), deletedGen: gen || 0 });
     } catch(e) { console.warn('FirebaseSync delete failed', e); }
   }
 
@@ -12105,12 +12118,12 @@ function AccountScreen({ onBack, startup, onContinue }) {
     FirebaseSync.onAuthChange(u => setUser(u));
     // Surface the diagnostic from EVERY pull (incl. the automatic one on reopen), so the failing
     // login's cloud state is always visible here without needing to tap Sign in / Sync Now.
-    const onSync = e => {
-      const lp = e && e.detail; if (!lp) return;
-      const dt = (lp.detail && lp.detail.length) ? `\n⟨${lp.detail.join(' | ')}⟩` : '';
-      setStatus(`${lp.ok ? '☁' : '⚠'} found ${lp.found || 0}: ${(lp.names && lp.names.join(', ')) || '—'}${dt}`);
-    };
+    const fmt = lp => { const dt = (lp.detail && lp.detail.length) ? `\n⟨${lp.detail.join(' | ')}⟩` : ''; return `${lp.ok ? '☁' : '⚠'} found ${lp.found || 0}: ${(lp.names && lp.names.join(', ')) || '—'}${dt}`; };
+    const onSync = e => { const lp = e && e.detail; if (lp) setStatus(fmt(lp)); };
     window.addEventListener('asoe-cloud-sync', onSync);
+    // On mount, show the most recent pull too — the automatic pull on reopen can fire BEFORE this
+    // screen mounts, so the event alone would be missed (that's why the laptop showed no message).
+    try { const lp0 = FirebaseSync.getLastPull && FirebaseSync.getLastPull(); if (lp0) setStatus(fmt(lp0)); } catch (e) {}
     return () => window.removeEventListener('asoe-cloud-sync', onSync);
   }, []);
 

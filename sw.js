@@ -1,4 +1,4 @@
-const CACHE = 'asoe-v5';
+const CACHE = 'asoe-v6';
 const ASSETS = ['/', './index.html', './characters.js', './achievements.js', './collector_cards.js', './manifest.json'];
 
 self.addEventListener('install', e => {
