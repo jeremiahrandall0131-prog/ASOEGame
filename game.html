@@ -11922,7 +11922,20 @@ const FirebaseSync = (() => {
         const saveId = data.saveId;
         if (!saveId) return;
         cloudIds.add(saveId);
-        if (data.deleted) { removeLocalSaveData(saveId); return; } // deleted on another device → drop locally
+        if (data.deleted === true) {
+          // A tombstone normally means the save was deleted on another device → drop it locally.
+          // BUT if THIS device holds a save in the same slot that was created AFTER the deletion, the
+          // tombstone is STALE — the slot was reused for a brand-new file. Killing it here (and leaving
+          // the slot in cloudIds) is what made freshly-created, un-played files vanish on the next login:
+          // the upload loop below skips any slot already in cloudIds, so the new file could never heal.
+          // Resurrect it instead: keep the local save and free the slot so the upload loop re-pushes it.
+          const lm = getSaveMeta().find(s => s.id === saveId);
+          if (lm && (lm.created || 0) > (data.deletedAt || 0)) {
+            cloudIds.delete(saveId); // let the local-only upload loop re-push (resurrect) it, overwriting the dead tombstone
+            return;
+          }
+          removeLocalSaveData(saveId); return; // genuine remote deletion → drop locally
+        }
         found++; names.push(data.saveName || `Save ${saveId}`);
         // Ensure the slot exists locally, keep its NAME in sync from the cloud, and mark it Online.
         const meta = getSaveMeta();
