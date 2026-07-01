@@ -1785,7 +1785,12 @@ function deleteSaveSlot(slotId) {
 function renameSaveSlot(slotId, name) {
   const meta = getSaveMeta();
   const idx = meta.findIndex(s => s.id === slotId);
-  if (idx >= 0) { meta[idx].name = name.trim() || `Save ${slotId}`; setSaveMeta(meta); }
+  if (idx >= 0) {
+    meta[idx].name = name.trim() || `Save ${slotId}`;
+    setSaveMeta(meta);
+    // Sync the new name to the cloud so it carries to other devices (Online saves only).
+    if (meta[idx].online) { try { FirebaseSync.pushSave(slotId); } catch (e) {} }
+  }
 }
 function touchSave(saveId) {
   const meta = getSaveMeta(); const idx = meta.findIndex(s => s.id === saveId);
@@ -11756,7 +11761,7 @@ function CollectorHub({ onHome }) {
 
       {/* Gold / Rerolls / Daily indicators */}
       <div data-tour="gold-bar" style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
-        <div style={{ fontFamily:'Cinzel,serif', color:'var(--gold)', fontSize:'0.75rem' }}>🪙 {save.gold||0} Gold</div>
+        <div style={{ fontFamily:'Cinzel,serif', color:(save.gold||0) <= 0 ? '#e05555' : 'var(--gold)', fontSize:'0.75rem' }}>🪙 {save.gold||0} Gold</div>
         <div style={{ fontFamily:'Cinzel,serif', color:'var(--text2)', fontSize:'0.7rem' }}>🎲 {save.rerolls||0} Rerolls</div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           {[{ icon:'🃏', label:'Pull', ms:pullCountdown, color:'#4caf50' },
@@ -12393,7 +12398,9 @@ function App() {
       setSaveId(getActiveSaveId()); // a pull may have added or removed saves
       setSyncKey(k => k + 1);
     }
-    function onSessionEnded() { setSessionEnded(true); }
+    // Signed out because another device signed into this account → send this device straight to
+    // the login screen so the player logs back in and re-syncs (names, saves, everything).
+    function onSessionEnded() { setSessionEnded(true); setScreen('account'); }
     window.addEventListener('asoe-cloud-sync', onSync);
     window.addEventListener('asoe-session-ended', onSessionEnded);
     return () => { window.removeEventListener('asoe-cloud-sync', onSync); window.removeEventListener('asoe-session-ended', onSessionEnded); };
