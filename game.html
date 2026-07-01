@@ -9273,7 +9273,7 @@ function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
         <button onClick={()=>setShowDeckView(true)} title="View your lineup" style={{ width:30, height:30, borderRadius:'50%', background:'var(--bg3)', border:'1px solid var(--border2)', color:'var(--gold)', cursor:'pointer', fontSize:'1rem', flexShrink:0, lineHeight:1 }}>🃏</button>
       </div>
       <div style={{ display:'flex', borderBottom:'1px solid var(--border)' }}>
-        <button onClick={()=>setShowCpu(false)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: !showCpu?'rgba(212,168,48,0.15)':'var(--bg2)', color:!showCpu?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>My Seven ({Math.round(playerScore*10)/10})</button>
+        <button onClick={()=>setShowCpu(false)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: !showCpu?'rgba(212,168,48,0.15)':'var(--bg2)', color:!showCpu?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>P1 Seven ({Math.round(playerScore*10)/10})</button>
         <button onClick={()=>setShowCpu(true)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: showCpu?'rgba(224,85,85,0.15)':'var(--bg2)', color:showCpu?'#e05555':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>CPU Seven ({Math.round(cpuScore*10)/10})</button>
       </div>
       <div className="scroll" style={{ flex:1, padding:'10px 12px' }}>
@@ -9602,13 +9602,18 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
   );
 }
 
-function CollectorWinPull({ winPullCards, onPick, onSkip, kingsguard }) {
+function CollectorWinPull({ winPullCards, onPick, onSkip, kingsguard, owned }) {
   const [selected, setSelected] = React.useState(null);
+  const [detail, setDetail] = React.useState(null); // full-card preview (ⓘ)
   const T = window.COLLECTOR_TIERS || {};
   const scoreOf = c => kingsguard ? `⚔ ${(c.scores && c.scores.kingsguard) || 0}` : c.overall;
+  // "Owned" = you already hold this character/card (match on base id, so mods/evolves still count).
+  const ownedBases = React.useMemo(() => new Set((owned || []).map(id => collStripId(id))), [owned]);
+  const isOwned = c => !!(c && ownedBases.has(collStripId(c.id)));
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.95)', zIndex:300, display:'flex', flexDirection:'column', padding:16 }}>
+      {detail && <CollDetailModal card={detail} owned={isOwned(detail)} onClose={()=>setDetail(null)} />}
       <div style={{ fontFamily:'Cinzel,serif', textAlign:'center', marginBottom:4 }}>
         <div style={{ fontSize:'1rem', color:'var(--gold)' }}>⚔ WIN PULL ⚔</div>
         <div style={{ fontSize:'0.65rem', color:'var(--text2)' }}>Choose ONE card from the defeated {kingsguard ? 'Seven' : 'court'}{(!kingsguard && winPullCards.length>10)?'s':''} to add to your deck</div>
@@ -9619,12 +9624,17 @@ function CollectorWinPull({ winPullCards, onPick, onSkip, kingsguard }) {
             if (!card) return null;
             const ct = T[card.tier] || { color:'#888' };
             const isSel = selected?.id === card.id;
+            const own = isOwned(card);
             return (
-              <div key={card.id} style={{ border:`2px solid ${isSel ? ct.color : 'var(--border)'}`, borderRadius:8,
+              <div key={card.id} style={{ position:'relative', border:`2px solid ${isSel ? ct.color : 'var(--border)'}`, borderRadius:8,
                 background: isSel ? ct.bg : '#0a0a14', padding:10, cursor:'pointer', transition:'all 0.2s' }}
                 onClick={() => setSelected(card)}>
-                <div style={{ fontSize:'0.6rem', fontFamily:'Cinzel,serif', color:ct.color, fontWeight:700, marginBottom:2 }}>{card.name}</div>
-                <div style={{ fontSize:'0.55rem', color:'var(--text2)', marginBottom:4 }}>{card.houses?.[0]}</div>
+                <button onClick={(e)=>{ e.stopPropagation(); setDetail(card); }} title="View card" style={{ position:'absolute', top:5, right:6, background:'none', border:'none', color:'var(--text2)', fontSize:'0.8rem', cursor:'pointer', padding:0, lineHeight:1 }}>ⓘ</button>
+                <div style={{ fontSize:'0.6rem', fontFamily:'Cinzel,serif', color:ct.color, fontWeight:700, marginBottom:2, paddingRight:14 }}>{card.name}</div>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:4, marginBottom:4 }}>
+                  <span style={{ fontSize:'0.55rem', color:'var(--text2)' }}>{card.houses?.[0]}</span>
+                  <span style={{ fontSize:'0.5rem', fontWeight:700, color: own?'#4caf50':'var(--text2)' }}>{own?'Owned':'Not Owned'}</span>
+                </div>
                 <CollTierBadge tier={card.tier} />
                 <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, textAlign:'right', fontSize:'1rem', marginTop:4 }}>{scoreOf(card)}</div>
               </div>
@@ -9634,7 +9644,7 @@ function CollectorWinPull({ winPullCards, onPick, onSkip, kingsguard }) {
       </div>
       {selected && (
         <div className="card" style={{ marginTop:10, borderColor:'var(--gold)' }}>
-          <div style={{ fontSize:'0.7rem', color:'var(--gold)', marginBottom:4 }}>Selected: <strong>{selected.name}</strong>{kingsguard?` · ⚔ ${(selected.scores&&selected.scores.kingsguard)||0} Kingsguard`:''}</div>
+          <div style={{ fontSize:'0.7rem', color:'var(--gold)', marginBottom:4 }}>Selected: <strong>{selected.name}</strong> · <span style={{ color: isOwned(selected)?'#4caf50':'var(--text2)' }}>{isOwned(selected)?'Owned':'Not Owned'}</span>{kingsguard?` · ⚔ ${(selected.scores&&selected.scores.kingsguard)||0} Kingsguard`:''}</div>
           <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:8 }}>{selected.desc}</div>
           <button className="btn btn-gold" style={{ width:'100%' }} onClick={() => onPick(selected)}>Add to Deck</button>
         </div>
@@ -9752,6 +9762,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
   const [showSettings, setShowSettings] = React.useState(false);
   const [showDeckView, setShowDeckView] = React.useState(false);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
+  const [undoData, setUndoData] = React.useState(null); // { board, card } to take THIS turn's placement back until it's confirmed
 
   // Each CPU draws fate from its OWN hidden deck each round (like the player), spending up to
   // 3 rerolls wisely on weak draws, then always re-fields its optimal LEGAL lineup. Their deck
@@ -9872,12 +9883,26 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
       setSelectedPos(null);
       return; // stay in 'place' phase, now holding the displaced card
     }
+    setUndoData({ board: playerBoard, card: drawnCard }); // snapshot so the placement can be undone until confirmed
     setPlayerBoard({ ...playerBoard, [posId]: drawnCard });
     setUsedCardIds(new Set([...usedCardIds, drawnCard.id]));
     setDrawnCard(null);
     setHeldDisplaced(false);
     setSelectedPos(null);
     setPhase('arrange'); // let the player reposition, then confirm to pass the turn
+  }
+
+  // Take THIS turn's placed card back before confirming: restore the board, return the card to hand,
+  // and drop to the place phase (where Reroll is available again). Cleared once the turn is confirmed.
+  function undoPlacement() {
+    if (!undoData) return;
+    setPlayerBoard(undoData.board);
+    setUsedCardIds(prev => { const n = new Set(prev); n.delete(undoData.card.id); return n; });
+    setDrawnCard(undoData.card);
+    setHeldDisplaced(false);
+    setSelectedPos(null);
+    setPhase('place');
+    setUndoData(null);
   }
 
   // Reposition during the arrange step: tap a placed card to pick it up, then tap another
@@ -9899,6 +9924,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
   function confirmTurn() {
     if (phase !== 'arrange') return;
     if (!collBoardLegal(playerBoard)) return; // gender/age violation — must be fixed first
+    setUndoData(null); // turn finalized — the placement can no longer be undone
     setCpus(advanceCpus());
     setSelectedPos(null);
     if (Object.keys(playerBoard).length >= COLL_POS.length) setPhase('done');
@@ -10101,7 +10127,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
 
       {/* Board view toggle — your board and each CPU's, like the other modes */}
       <div style={{ display:'flex', gap:6, padding:'6px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
-        <button className={`btn btn-${view<0?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize: NCPU>1?'0.55rem':'0.62rem' }} onClick={()=>setView(-1)}>{NCPU>1?`My (${playerScore})`:`My Board (${playerScore})`}</button>
+        <button className={`btn btn-${view<0?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize: NCPU>1?'0.55rem':'0.62rem' }} onClick={()=>setView(-1)}>{NCPU>1?`P1 (${playerScore})`:`P1 Board (${playerScore})`}</button>
         {cpus.map((c,i)=>(
           <button key={i} className={`btn btn-${view===i?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize: NCPU>1?'0.55rem':'0.62rem' }} onClick={()=>setView(i)}>{NCPU>1?`CPU ${i+1} (${cpuScores[i]})`:`CPU Board (${cpuScores[i]})`}</button>
         ))}
@@ -10271,6 +10297,11 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
           <div style={{ fontSize:'0.58rem', color:'var(--text2)', textAlign:'center', marginBottom:6, fontStyle:'italic' }}>
             {selectedPos ? 'Tap another slot to move/swap — or tap the same card to cancel.' : 'Tap any placed card to reposition it, then confirm your lineup.'}
           </div>
+          {undoData && (
+            <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginBottom:6, fontSize:'0.62rem', color:'var(--gold2)', borderColor:'var(--gold2)' }} onClick={undoPlacement}>
+              ↩ Undo placement{rerollsLeft>0 && rerollsUsed<GAME_REROLL_LIMIT ? ' — take it back & reroll' : ' — take it back'}
+            </button>
+          )}
           <button className="btn btn-gold" style={{ width:'100%', padding:'13px', fontSize:'0.85rem', letterSpacing:'0.08em', opacity: cErrs.length?0.45:1, cursor: cErrs.length?'not-allowed':'pointer' }} onClick={confirmTurn} disabled={cErrs.length>0}>
             ✓ CONFIRM LINEUP — END TURN
           </button>
@@ -10293,18 +10324,27 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
 function CollectorGameResult({ result, save, onWinPull, onHome }) {
   const { isWin, playerScore, cpuScore, goldEarned, margin, wager } = result;
   const T = window.COLLECTOR_TIERS || {};
-  const [boardView, setBoardView] = React.useState('mine'); // mine | cpu
-  const shownBoard = boardView === 'mine' ? (result.playerBoard||{}) : (result.cpuBoard||{});
+  // ALL opponents (Tourney = up to 3). Fall back to the single-CPU fields for Traditional/legacy.
+  const cpuBoardsArr = (result.cpuBoards && result.cpuBoards.length) ? result.cpuBoards : [result.cpuBoard || {}];
+  const cpuDecksArr  = (result.cpuDecks  && result.cpuDecks.length)  ? result.cpuDecks  : [result.cpuDeck  || []];
+  const cpuScoresArr = (result.cpuScores && result.cpuScores.length) ? result.cpuScores : [cpuScore];
+  const isTourney = result.numCpus > 1 && cpuScoresArr.length > 1;
+  // Which opponent the head-to-head / board view / deck reveal is inspecting. Defaults to the top CPU;
+  // the selector below lets the player inspect ALL rival courts and reveal each one's full deck.
+  const [oppIdx, setOppIdx] = React.useState(() => { let bi = 0; cpuScoresArr.forEach((s,i) => { if (s > cpuScoresArr[bi]) bi = i; }); return bi; });
+  const oi = Math.max(0, Math.min(oppIdx, cpuBoardsArr.length - 1));
+  const cpuBoardSel = cpuBoardsArr[oi] || {};
+  const cpuScoreSel = cpuScoresArr[oi] || 0;
+  const [boardView, setBoardView] = React.useState('mine'); // mine | cpu (the selected opponent)
+  const shownBoard = boardView === 'mine' ? (result.playerBoard||{}) : cpuBoardSel;
   const [revealDeck, setRevealDeck] = React.useState(false);
   const [deckPage, setDeckPage] = React.useState(0);
   const gb = result.goldBreakdown;
-  const cpuDeck = result.cpuDeck || [];
+  const cpuDeck = (cpuDecksArr[oi] || []).slice().sort((a,b) => (b.overall||0) - (a.overall||0)); // highest → lowest overall
   const DECK_PAGE = 12;
   const deckPages = Math.max(1, Math.ceil(cpuDeck.length / DECK_PAGE));
-  // Tourney placement: rank, how many CPUs the player outplaced (their boards feed the Win Pull),
-  // and the 4 courts sorted high→low for the scorecard. Win Pull is offered for any non-last finish.
-  const isTourney = result.numCpus > 1 && Array.isArray(result.cpuScores);
-  const cpuScoresArr = result.cpuScores || [cpuScore];
+  const selectOpp = i => { setOppIdx(i); setDeckPage(0); }; // inspect a specific rival court (head-to-head + deck)
+  // Tourney placement: rank, how many CPUs the player outplaced (their boards feed the Win Pull).
   const beatenCount = cpuScoresArr.filter(s => s < playerScore).length;
   const placeRank = 1 + cpuScoresArr.filter(s => s > playerScore).length;
   const canWinPull = beatenCount > 0;
@@ -10361,11 +10401,18 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
         <div className="card" style={{ marginBottom:12 }}>
           <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
             <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.65rem', color:'var(--gold)' }}>HEAD-TO-HEAD</div>
-            <div style={{ marginLeft:'auto', fontSize:'0.5rem', color:'var(--text2)' }}>YOU vs CPU</div>
+            <div style={{ marginLeft:'auto', fontSize:'0.5rem', color:'var(--text2)' }}>P1 vs {isTourney ? `CPU ${oi+1}` : 'CPU'}</div>
           </div>
+          {isTourney && (
+            <div style={{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' }}>
+              {cpuScoresArr.map((s,i) => (
+                <button key={i} className={`btn btn-${oi===i?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.55rem', minWidth:0 }} onClick={()=>selectOpp(i)}>vs CPU {i+1} ({s})</button>
+              ))}
+            </div>
+          )}
           {COLL_POS.map(pos => {
             const pCard = result.playerBoard?.[pos.id];
-            const cCard = result.cpuBoard?.[pos.id];
+            const cCard = cpuBoardSel?.[pos.id];
             const pSc = pCard ? Math.floor((pCard.scores?.[pos.id]||0)*10)/10 : 0;
             const cSc = cCard ? Math.floor((cCard.scores?.[pos.id]||0)*10)/10 : 0;
             return (
@@ -10383,8 +10430,8 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
         {/* Full board view with toggle (like other game modes) */}
         <div className="card" style={{ marginBottom:12 }}>
           <div style={{ display:'flex', gap:6, marginBottom:10 }}>
-            <button className={`btn btn-${boardView==='mine'?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setBoardView('mine')}>My Board ({playerScore})</button>
-            <button className={`btn btn-${boardView==='cpu'?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setBoardView('cpu')}>CPU Board ({cpuScore})</button>
+            <button className={`btn btn-${boardView==='mine'?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setBoardView('mine')}>P1 Board ({playerScore})</button>
+            <button className={`btn btn-${boardView==='cpu'?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.62rem' }} onClick={()=>setBoardView('cpu')}>{isTourney ? `CPU ${oi+1}` : 'CPU'} Board ({cpuScoreSel})</button>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
             {COLL_POS.map(pos => {
@@ -10415,11 +10462,18 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
         {cpuDeck.length > 0 && (
           <div className="card" style={{ marginBottom:12 }}>
             <button className="btn btn-ghost btn-sm" style={{ width:'100%', fontSize:'0.62rem' }} onClick={()=>setRevealDeck(v=>!v)}>
-              {revealDeck ? '▲ Hide Opponent Deck' : `👁 Reveal Opponent Deck (${cpuDeck.length} cards)`}
+              {revealDeck ? `▲ Hide ${isTourney ? `CPU ${oi+1}` : 'Opponent'} Deck` : `👁 Reveal ${isTourney ? `CPU ${oi+1}` : 'Opponent'} Deck (${cpuDeck.length} cards)`}
             </button>
             {revealDeck && (
               <div style={{ marginTop:10 }}>
-                <div style={{ fontSize:'0.55rem', color:'var(--text2)', marginBottom:8, fontStyle:'italic' }}>Every card the CPU brought this game — drawn or not.</div>
+                {isTourney && (
+                  <div style={{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' }}>
+                    {cpuScoresArr.map((s,i) => (
+                      <button key={i} className={`btn btn-${oi===i?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.55rem', minWidth:0 }} onClick={()=>selectOpp(i)}>CPU {i+1}</button>
+                    ))}
+                  </div>
+                )}
+                <div style={{ fontSize:'0.55rem', color:'var(--text2)', marginBottom:8, fontStyle:'italic' }}>Every card {isTourney ? `CPU ${oi+1}` : 'the CPU'} brought this game — drawn or not, highest Overall first.</div>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
                   {cpuDeck.slice(deckPage*DECK_PAGE, deckPage*DECK_PAGE+DECK_PAGE).map((card,i) => { const ct=T[card.tier]||{color:'#888',bg:'#111'}; return (
                     <div key={i} style={{ border:`1px solid ${ct.color}`, borderRadius:6, padding:'6px 8px', background:ct.bg }}>
@@ -10472,7 +10526,7 @@ function genWheelCards() {
 }
 
 // Reusable card-stats popup (full 10-position profile + gender/age).
-function CollDetailModal({ card, onClose }) {
+function CollDetailModal({ card, onClose, owned }) {
   const T = window.COLLECTOR_TIERS || {};
   if (!card) return null;
   const ct = T[card.tier] || { color:'#888' };
@@ -10494,6 +10548,7 @@ function CollDetailModal({ card, onClose }) {
         <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
           <CollTierBadge tier={card.tier} />
           <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>Overall {card.overall}</span>
+          {owned !== undefined && <span style={{ fontSize:'0.55rem', fontWeight:700, color: owned?'#4caf50':'var(--text2)', border:`1px solid ${owned?'#4caf50':'var(--border)'}`, borderRadius:4, padding:'1px 5px' }}>{owned?'Owned':'Not Owned'}</span>}
           <span style={{ marginLeft:'auto', fontSize:'0.55rem', color:'var(--text2)' }}>{(card.houses||[]).join(' · ')}</span>
         </div>
         {_negLabel && <div style={{ fontSize:'0.6rem', color:'#e05555', fontWeight:700, marginTop:8, border:'1px solid #e05555', background:'rgba(224,85,85,0.12)', borderRadius:4, padding:'4px 7px' }}>⚠ {_negLabel}</div>}
@@ -10759,7 +10814,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
       {showDeckView && <CollectorDeckViewer cards={playerCards} title="Your Lineup" positions={HW_POS} onClose={()=>setShowDeckView(false)} />}
       {/* Score / board toggle */}
       <div style={{ display:'flex', borderBottom:'1px solid var(--border)' }}>
-        <button onClick={()=>setShowCpu(false)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: !showCpu?'rgba(58,160,255,0.15)':'var(--bg2)', color:!showCpu?'var(--p1,#3aa0ff)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>My Court ({Math.round(playerScore*10)/10})</button>
+        <button onClick={()=>setShowCpu(false)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: !showCpu?'rgba(58,160,255,0.15)':'var(--bg2)', color:!showCpu?'var(--p1,#3aa0ff)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>P1 Court ({Math.round(playerScore*10)/10})</button>
         <button onClick={()=>setShowCpu(true)} style={{ flex:1, padding:'7px', border:'none', cursor:'pointer', background: showCpu?'rgba(224,85,85,0.15)':'var(--bg2)', color:showCpu?'var(--p2,#e05555)':'var(--text2)', fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700 }}>CPU Court ({Math.round(cpuScore*10)/10})</button>
       </div>
       {/* Seats */}
@@ -10801,7 +10856,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
         )}
         {phase === 'place' && drawnCard && (() => { const ct = T[drawnCard.tier]||{color:'#888'}; return (
           <div>
-            <div style={{ fontSize:'0.6rem', color:'var(--text2)', textAlign:'center', marginBottom:6 }}>Fate drew — tap a seat to place {showCpu?'(switch to My Court)':''}</div>
+            <div style={{ fontSize:'0.6rem', color:'var(--text2)', textAlign:'center', marginBottom:6 }}>Fate drew — tap a seat to place {showCpu?'(switch to P1 Court)':''}</div>
             <div className="card" style={{ borderColor:ct.color, padding:'8px 10px', display:'flex', alignItems:'center', gap:10 }}>
               <div style={{ flex:1 }}><div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:ct.color, fontWeight:700 }}>{drawnCard.name}</div><div style={{ marginTop:3 }}><CollTierBadge tier={drawnCard.tier} /></div></div>
               <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{drawnCard.overall}</span>
@@ -11587,13 +11642,18 @@ function CollectorHub({ onHome }) {
 
   function handleGameEnd(result) {
     if (!result) { setScreen('hub'); return; }
+    // CollectorGame.handleFinish already persisted the gold + stats via onUpdate. Build on that FRESH
+    // save (loadCollSave), NOT the stale `save` closure — the closure still holds the pre-game gold,
+    // and re-saving from it clobbered the winnings back down (the Tourney "gold didn't credit" bug).
+    const cur = loadCollSave();
     // Remember the Win-Pull-eligible (out-placed) court cards so closing the app before choosing
     // still auto-awards a pull on next load (#6). Cleared the moment a pull is taken.
     const boards = (result.cpuBoards && result.cpuBoards.length) ? result.cpuBoards : [result.cpuBoard || {}];
     const scores = (result.cpuScores && result.cpuScores.length) ? result.cpuScores : [result.cpuScore || 0];
     const beatenCardIds = boards.filter((b, i) => (scores[i] || 0) < (result.playerScore || 0))
       .reduce((acc, b) => acc.concat(Object.values(b || {}).filter(Boolean).map(c => c.id)), []);
-    if (beatenCardIds.length) { const ns = { ...save, pendingWinPull: { cards: beatenCardIds } }; saveCollSave(ns); setSave(ns); }
+    const ns = beatenCardIds.length ? { ...cur, pendingWinPull: { cards: beatenCardIds } } : cur;
+    saveCollSave(ns); setSave(ns);
     setGameResult(result);
     setScreen('result');
   }
@@ -11735,7 +11795,7 @@ function CollectorHub({ onHome }) {
   if (screen === 'wager') return <CollectorWager save={save} onStart={handleStartGame} onCancel={() => setScreen('hub')} numCpus={gameMode==='tourney'?3:1} />;
   if (screen === 'game') return <CollectorGame save={save} wager={gameWager} onEnd={handleGameEnd} onUpdate={handleUpdate} numCpus={gameMode==='tourney'?3:1} />;
   if (screen === 'result' && gameResult) return <CollectorGameResult result={gameResult} save={save} onWinPull={handleWinPull} onHome={() => { autoResolveWinPull(save); setScreen('hub'); setGameResult(null); }} />;
-  if (screen === 'winpull') return <CollectorWinPull winPullCards={winPullCards} kingsguard={winPullKG} onPick={handlePickWinPull} onSkip={() => { setScreen('hub'); setTrialResult(null); }} />;
+  if (screen === 'winpull') return <CollectorWinPull winPullCards={winPullCards} kingsguard={winPullKG} owned={save.owned||[]} onPick={handlePickWinPull} onSkip={() => { setScreen('hub'); setTrialResult(null); }} />;
   if (screen === 'hwSpin') return <CollectorHouseWarsSpin save={save} onDone={handleHwSpinDone} onCancel={() => setScreen('hub')} onRolled={handleHwRolled} onBackout={handleHwBackout} />;
   if (screen === 'hwLineup') return <CollectorHouseWarsLineup save={save} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onConfirm={handleHwLineupConfirm} onBackout={handleHwBackout} />;
   if (screen === 'hwGame' && hwLineup) return <CollectorHouseWarsGame playerCards={hwLineup.cards} cpuCards={hwCpuCards} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onEnd={handleHwEnd} />;
