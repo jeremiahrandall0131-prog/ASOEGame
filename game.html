@@ -8117,7 +8117,10 @@ function CollectorMyDeck({ save, onUpdate }) {
   // uses: each tier is a 1.0-wide band centred on its index, so the deck advances a
   // tier once its average card rarity crosses the halfway point to the next.
   const _ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
-  const avgIdx = ownedCards.length ? ownedCards.reduce((s,c)=>s+Math.max(0,_ORDER.indexOf(c.tier)),0)/ownedCards.length : 0;
+  // God ranks at the top of the scale (index 5, like Mythic) — same as deckTierLabel. Previously it
+  // fell through to Math.max(0, indexOf('god')) = 0, counting a God card as a Starter and understating
+  // the progress bar for any deck holding a God.
+  const avgIdx = ownedCards.length ? ownedCards.reduce((s,c)=>s+(c.tier==='god'?5:Math.max(0,_ORDER.indexOf(c.tier))),0)/ownedCards.length : 0;
   const curIdx = Math.max(0, _ORDER.indexOf(deckTier));
   const tierProgress = nextTier ? Math.max(0, Math.min(100, (avgIdx - curIdx + 0.5) * 100)) : 100;
 
