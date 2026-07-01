@@ -7577,21 +7577,22 @@ function weightedDraw(pool, probs, excludeIds, seed) {
 }
 
 // Generate store showcase (5 cards: starter, uncommon, rare, hero, then 2 random-tier)
+// Showcase: 6 slots. First 4 are always Starter / Uncommon / Rare / Hero; the last 2
+// roll a variable tier by these odds (shown to the player in the Showcase tab).
+const COLL_SHOWCASE_FIXED = ['starter','uncommon','rare','hero'];
+const COLL_SHOWCASE_VAR_PROBS = { starter:.50, uncommon:.20, rare:.10, hero:.08, legendary:.06, mythic:.06 };
 function genStoreShowcase(save) {
   const all = getCollCards();
   const available = all; // owned cards may re-appear now (duplicates Evolve)
   const showcase = [];
   const used = new Set();
-  const fixed = ['starter','uncommon','rare','hero'];
-  fixed.forEach(tier => {
+  COLL_SHOWCASE_FIXED.forEach(tier => {
     const pool = available.filter(c => c.tier === tier && !used.has(c.id));
     if (pool.length) { const c = pool[Math.floor(Math.random()*pool.length)]; showcase.push(c.id); used.add(c.id); }
   });
   // Last 2 positions have variable tiers
-  const varProbs = [{starter:.50,uncommon:.20,rare:.10,hero:.08,legendary:.06,mythic:.06},
-                    {starter:.50,uncommon:.20,rare:.10,hero:.08,legendary:.06,mythic:.06}];
-  varProbs.forEach((probs, i) => {
-    const c = weightedDraw(available.filter(c=>!used.has(c.id)), probs, used, 'showcase'+i);
+  [0,1].forEach(i => {
+    const c = weightedDraw(available.filter(c=>!used.has(c.id)), COLL_SHOWCASE_VAR_PROBS, used, 'showcase'+i);
     if (c) { showcase.push(c.id); used.add(c.id); }
   });
   return showcase;
@@ -8074,7 +8075,7 @@ function CollectorMyDeck({ save, onUpdate }) {
         {ownedCards.length} CARDS · AVG <span style={{ color:'var(--gold)' }}>{avgOvr}</span> · DECK TIER: <CollTierBadge tier={deckTier} />
       </div>
       <div data-tour="deck-controls">
-        <CollFilterBar f={f} upd={(p)=>{ if (p.sort !== undefined) setIdentityView(null); upd(p); }} houses={collHouseOptions()} showTier showSearch extraSorts={[['identity','Identity']]} />
+        <CollFilterBar f={f} upd={(p)=>{ if (p.sort !== undefined) setIdentityView(null); upd(p); }} houses={[...new Set(ownedCards.flatMap(c=>c.houses||[]))].sort()} showTier showSearch extraSorts={[['identity','Identity']]} />
       </div>
 
       {/* Deck composition + next-tier progress */}
@@ -8781,7 +8782,10 @@ function CollectorStore({ save, onUpdate }) {
         {tab === 'showcase' && (
           <div>
             <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10 }}>
-              5 cards refresh every 24h. First 4 are always Starter/Uncommon/Rare/Hero.
+              6 cards refresh every 24h — the first 4 are always Starter · Uncommon · Rare · Hero. The last 2 roll a random tier:
+              <div style={{ marginTop:4, display:'flex', flexWrap:'wrap', gap:'2px 10px', fontFamily:'Cinzel,serif', fontSize:'0.6rem' }}>
+                {COLL_TIER_ORDER.map(t => COLL_SHOWCASE_VAR_PROBS[t] ? <span key={t} style={{ color:((window.COLLECTOR_TIERS||{})[t]||{}).color||'var(--text2)' }}>{((window.COLLECTOR_TIERS||{})[t]||{}).label||t} {Math.round(COLL_SHOWCASE_VAR_PROBS[t]*100)}%</span> : null)}
+              </div>
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:8 }}>
               {showcaseCards.map(cardId => {
@@ -8807,7 +8811,7 @@ function CollectorStore({ save, onUpdate }) {
             {featuredHouse && (
               <div style={{ marginTop:18, paddingTop:14, borderTop:'2px solid var(--gold)' }}>
                 <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:'var(--gold)', letterSpacing:'0.06em' }}>🏰 FEATURED HOUSE · {featuredHouse}</div>
-                <div style={{ fontSize:'0.62rem', color:'var(--text2)', margin:'4px 0 10px' }}>One card per tier from House {featuredHouse}, refreshed daily — stock up to unlock House Wars.</div>
+                <div style={{ fontSize:'0.62rem', color:'var(--text2)', margin:'4px 0 10px' }}>One card per tier from House {featuredHouse}, refreshed daily.</div>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:8 }}>
                   {['starter','uncommon','rare','hero'].map(t => {
                     const id = featuredCards[t]; const card = id && getCollCard(id);
@@ -9337,6 +9341,18 @@ const SK_LINES = [
 ];
 function skTierLabel(t) { return ((window.COLLECTOR_TIERS||{})[t]||{}).label || t; }
 function skPosLabel(id) { return ((COLL_POS.find(p=>p.id===id))||{}).label || id; }
+// Highest achievable score for each position across the whole Card Index (base pool),
+// so a "Position (N)" square never demands more than any card can actually provide
+// (e.g. the best Consort is 17, so Consort squares cap at 17, never 18-30).
+let _skPosCeil = null;
+function skPosCeil(posId) {
+  if (!_skPosCeil) {
+    _skPosCeil = {};
+    COLL_POS.forEach(p => { _skPosCeil[p.id] = 0; });
+    getCollCards().forEach(c => COLL_POS.forEach(p => { const v = (c.scores && c.scores[p.id]) || 0; if (v > _skPosCeil[p.id]) _skPosCeil[p.id] = v; }));
+  }
+  return _skPosCeil[posId] || 0;
+}
 function skRandomPrompt() {
   const pick = a => a[Math.floor(Math.random()*a.length)];
   const ri = (lo,hi) => lo + Math.floor(Math.random()*(hi-lo+1));
@@ -9346,7 +9362,7 @@ function skRandomPrompt() {
     case 'houseTier': return { type:'houseTier', house: pick(HW_HOUSES), tier: pick(SK_TIERS) };
     case 'maxAge':    return { type:'maxAge', age: ri(20,45) };
     case 'minAge':    return { type:'minAge', age: ri(25,50) };
-    case 'position':  return { type:'position', pos: pick(COLL_POS).id, min: ri(5,30) };
+    case 'position':  { const pid = pick(COLL_POS).id; const cap = Math.min(30, Math.floor(skPosCeil(pid))); return { type:'position', pos: pid, min: ri(Math.min(5, cap), cap) }; }
     case 'identity':  { const c = pick(getCollCards()); return { type:'identity', charId: c.charId, name: c.identity || c.name }; }
     case 'letter':    return { type:'letter', letter: String.fromCharCode(65 + Math.floor(Math.random()*26)) };
     default:          return { type:'overall', n: ri(21,110) };
