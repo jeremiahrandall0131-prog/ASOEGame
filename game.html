@@ -11830,6 +11830,7 @@ const FirebaseSync = (() => {
   const SYNC_KEYS = ['history', 'achievements', 'chaosProgress', 'chaosCompletions', 'p1Averages'];
   let _auth = null, _db = null, _user = null;
   let _sessionId = null, _sessionUnsub = null;
+  let _lastPull = null; // diagnostic: { ok, found, error, at } from the most recent _pullAll
   const _listeners = [];
 
   function init() {
@@ -11911,6 +11912,7 @@ const FirebaseSync = (() => {
 
   async function _pullAll() {
     if (!_user || !_db) return;
+    let found = 0;
     try {
       const cloudIds = new Set();
       const snap = await _db.collection('saves').where('uid', '==', _user.uid).get();
@@ -11920,6 +11922,7 @@ const FirebaseSync = (() => {
         if (!saveId) return;
         cloudIds.add(saveId);
         if (data.deleted) { removeLocalSaveData(saveId); return; } // deleted on another device → drop locally
+        found++;
         // Ensure save slot exists locally, and mark it Online (a save present in the cloud is
         // an Online save on every device — so it stays locked when signed out).
         const meta = getSaveMeta();
@@ -11948,8 +11951,14 @@ const FirebaseSync = (() => {
       for (const m of getSaveMeta()) {
         if (!cloudIds.has(m.id)) { try { await pushSave(m.id); await pushCollector(m.id); } catch (e) {} }
       }
-      window.dispatchEvent(new CustomEvent('asoe-cloud-sync'));
-    } catch(e) { console.warn('FirebaseSync pull failed', e); }
+      _lastPull = { ok: true, found, error: null, at: Date.now() };
+      console.log(`[Sync] pulled ${found} cloud file(s) for ${_user.email || _user.uid}`);
+      window.dispatchEvent(new CustomEvent('asoe-cloud-sync', { detail: _lastPull }));
+    } catch(e) {
+      _lastPull = { ok: false, found, error: (e && (e.code || e.message)) || 'unknown', at: Date.now() };
+      console.warn('[Sync] pull FAILED:', e);
+      window.dispatchEvent(new CustomEvent('asoe-cloud-sync', { detail: _lastPull }));
+    }
   }
 
   // Store the WHOLE Collector save as ONE JSON string ("blob"). Firestore silently rejects some
@@ -12028,7 +12037,7 @@ const FirebaseSync = (() => {
     } catch(e) { console.warn('FirebaseSync delete failed', e); }
   }
 
-  return { init, signIn, signOut, getUser, onAuthChange, pushSave, pushCollector, deleteSave, syncNow };
+  return { init, signIn, signOut, getUser, onAuthChange, pushSave, pushCollector, deleteSave, syncNow, getLastPull: () => _lastPull };
 })();
 
 // ─── Account Screen ───────────────────────────────────────────────────────────
@@ -12055,7 +12064,10 @@ function AccountScreen({ onBack, startup, onContinue }) {
       // signIn() does not resolve until the ENTIRE account has been pulled to this device.
       // (_pullAll fires 'asoe-cloud-sync', which re-renders the save-dependent screens.)
       await FirebaseSync.signIn();
-      setStatus('Signed in — all your files and progress are synced to this device.');
+      const lp = FirebaseSync.getLastPull && FirebaseSync.getLastPull();
+      if (lp && lp.ok) setStatus(`☁ Signed in — found ${lp.found} file(s) in your account and synced them here.`);
+      else if (lp && !lp.ok) setStatus(`⚠ Signed in, but sync had a problem: ${lp.error}`);
+      else setStatus('Signed in — syncing…');
     }
     catch(e) { setStatus(`Error: ${e.code || e.message || 'unknown'}`); }
     finally { setLoading(false); }
@@ -12105,7 +12117,17 @@ function AccountScreen({ onBack, startup, onContinue }) {
               <div style={{ fontSize: '0.7rem', color: 'var(--gold)', fontFamily: 'Cinzel,serif', letterSpacing: '0.1em', marginBottom: 4 }}>☁ CLOUD SYNC ACTIVE</div>
               <div style={{ fontSize: '0.68rem', color: 'var(--text2)', lineHeight: 1.5 }}>Your progress syncs automatically after every game. Sign into any device with this Google account to pick up where you left off.</div>
             </div>
-            <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={handleSignOut} disabled={loading}>
+            <button className="btn btn-gold" style={{ marginTop: 4 }} disabled={loading} onClick={async () => {
+              setLoading(true); setStatus('☁ Syncing…');
+              try {
+                await FirebaseSync.syncNow();
+                const lp = FirebaseSync.getLastPull && FirebaseSync.getLastPull();
+                if (lp && lp.ok) setStatus(`☁ Synced — found ${lp.found} file(s) in your account.`);
+                else if (lp && !lp.ok) setStatus(`⚠ Sync problem: ${lp.error}`);
+                else setStatus('Synced.');
+              } finally { setLoading(false); }
+            }}>{loading ? '☁ Syncing…' : '☁ Sync Now'}</button>
+            <button className="btn btn-ghost" style={{ marginTop: 4 }} onClick={handleSignOut} disabled={loading}>
               {loading ? 'Signing out…' : 'Sign Out'}
             </button>
           </>
