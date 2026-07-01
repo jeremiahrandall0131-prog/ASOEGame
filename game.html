@@ -11888,11 +11888,15 @@ const FirebaseSync = (() => {
         const saveId = data.saveId;
         if (!saveId) return;
         if (data.deleted) { removeLocalSaveData(saveId); return; } // deleted on another device → drop locally
-        // Ensure save slot exists locally
+        // Ensure save slot exists locally, and mark it Online (a save present in the cloud is
+        // an Online save on every device — so it stays locked when signed out).
         const meta = getSaveMeta();
-        if (!meta.find(s => s.id === saveId)) {
-          meta.push({ id: saveId, created: data.createdAt || Date.now(), lastPlayed: data.updatedAt || Date.now(), name: data.saveName || `Save ${saveId}` });
+        const existingIdx = meta.findIndex(s => s.id === saveId);
+        if (existingIdx < 0) {
+          meta.push({ id: saveId, created: data.createdAt || Date.now(), lastPlayed: data.updatedAt || Date.now(), name: data.saveName || `Save ${saveId}`, online: true });
           setSaveMeta(meta);
+        } else if (!meta[existingIdx].online) {
+          meta[existingIdx].online = true; setSaveMeta(meta);
         }
         for (const key of SYNC_KEYS) {
           if (data[key] !== undefined && data[key] !== null) {
@@ -11915,6 +11919,8 @@ const FirebaseSync = (() => {
     if (!_user || !_db) return;
     try {
       const sid = getActiveSaveId() || 1;
+      const cmeta = getSaveMeta().find(s => s.id === sid);
+      if (!cmeta || !cmeta.online) return; // Offline saves keep their Collector data on-device only
       const raw = localStorage.getItem(collKey());
       if (!raw) return;
       const data = JSON.parse(raw);
@@ -11944,7 +11950,8 @@ const FirebaseSync = (() => {
     if (!_user || !_db || !saveId) return;
     try {
       const meta = getSaveMeta().find(s => s.id === saveId);
-      const payload = { uid: _user.uid, saveId, deleted: false, updatedAt: Date.now(), createdAt: meta?.created || Date.now(), saveName: meta?.name || `Save ${saveId}` };
+      if (!meta || !meta.online) return; // Only Online saves sync to the cloud; Offline saves stay on-device
+      const payload = { uid: _user.uid, saveId, online: true, deleted: false, updatedAt: Date.now(), createdAt: meta.created || Date.now(), saveName: meta.name || `Save ${saveId}` };
       for (const key of SYNC_KEYS) {
         const raw = localStorage.getItem(sk(saveId, key));
         if (raw !== null) {
