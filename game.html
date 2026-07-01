@@ -11982,6 +11982,7 @@ const FirebaseSync = (() => {
   // raw-object writes (nested arrays / undefined), which was quietly dropping the Collector push;
   // a single string field always writes cleanly and is read back verbatim on pull.
   async function pushCollector(saveIdArg) {
+    if (!_user && _auth) _user = _auth.currentUser; // auth-race safe
     if (!_user || !_db) return;
     try {
       const sid = saveIdArg || getActiveSaveId() || 1;
@@ -11989,9 +11990,15 @@ const FirebaseSync = (() => {
       if (!raw) return;
       let cu = Date.now();
       try { const p = JSON.parse(raw); if (p && p.updatedAt) cu = p.updatedAt; } catch (e) {}
-      // Merge the collector blob into the SAVE doc (proven-working 'saves' collection + rules),
-      // rather than a separate 'collector' collection that was being silently denied.
-      await _db.collection('saves').doc(_docId(sid)).set({ uid: _user.uid, saveId: sid, collectorBlob: raw, collectorUpdatedAt: cu }, { merge: true });
+      const m = getSaveMeta().find(s => s.id === sid) || null;
+      // Write a COMPLETE, LIVE save doc into the 'saves' collection — a collector action must also
+      // lock the save in as non-deleted + named, so it can never sit on a stale tombstone or a
+      // half-formed doc (which a later pull would treat as deleted / nameless).
+      await _db.collection('saves').doc(_docId(sid)).set({
+        uid: _user.uid, saveId: sid, online: true, deleted: false,
+        updatedAt: Date.now(), createdAt: (m && m.created) || Date.now(), saveName: (m && m.name) || `Save ${sid}`,
+        collectorBlob: raw, collectorUpdatedAt: cu
+      }, { merge: true });
     } catch(e) { console.warn('FirebaseSync collector push failed', e); }
   }
 
@@ -12019,6 +12026,7 @@ const FirebaseSync = (() => {
   }
 
   async function pushSave(saveId) {
+    if (!_user && _auth) _user = _auth.currentUser; // auth-race safe: never DROP a create-time push
     if (!_user || !_db || !saveId) return;
     try {
       // Signed in ⇒ this save IS Online and must sync. Auto-heal the flag rather than block the
