@@ -9760,8 +9760,7 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
         {phase==='draw' && <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.1em' }} onClick={drawFate}>🎴 DRAW FATE</button>}
         {phase==='place' && drawnCard && (() => { const ct=T[drawnCard.tier]||{color:'#888'}; return (
           <div className="got-pop">
-            <div className="card" style={{ position:'relative', borderColor:ct.color, boxShadow:`0 0 14px ${ct.color}`, padding:'8px 11px', display:'flex', alignItems:'center', gap:10, cursor:'pointer' }} onClick={()=>setDetailCard(drawnCard)}>
-              <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(drawnCard); }} title="View card" style={{ position:'absolute', top:5, right:7, background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, zIndex:2 }}>ⓘ</button>
+            <div className="card" style={{ borderColor:ct.color, boxShadow:`0 0 14px ${ct.color}`, padding:'8px 11px', display:'flex', alignItems:'center', gap:10, cursor:'pointer' }} onClick={()=>setDetailCard(drawnCard)}>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:ct.color, fontWeight:800, lineHeight:1.15 }}>{drawnCard.name}</div>
                 <div style={{ fontSize:'0.54rem', color:'var(--text2)', marginTop:2 }}>{drawnCard.identity||drawnCard.name} · {drawnCard.gender==='F'?'♀':'♂'} · Age {drawnCard.age} · {(drawnCard.houses||[]).join(', ')}</div>
@@ -9771,6 +9770,7 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
                 <div style={{ fontFamily:'Cinzel,serif', fontWeight:800, color:ct.color, fontSize:'1.3rem', lineHeight:1 }}>{drawnCard.overall}</div>
                 <div style={{ fontSize:'0.45rem', color:'var(--text2)' }}>OVERALL</div>
               </div>
+              <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(drawnCard); }} title="View card" style={{ flexShrink:0, background:'none', border:'none', color:'var(--gold)', fontSize:'1.1rem', cursor:'pointer', padding:'0 2px', lineHeight:1 }}>ⓘ</button>
             </div>
             <div style={{ textAlign:'center', marginTop:7 }}>
               {anyEligible
