@@ -11915,6 +11915,7 @@ const FirebaseSync = (() => {
     let found = 0; const names = [];
     try {
       const cloudIds = new Set();
+      const collectorPushUp = new Set();
       const snap = await _db.collection('saves').where('uid', '==', _user.uid).get();
       snap.forEach(doc => {
         const data = doc.data();
@@ -11945,8 +11946,23 @@ const FirebaseSync = (() => {
             localStorage.setItem(sk(saveId, `daily_${dateKey}`), JSON.stringify(completed));
           }
         }
+        // Collector data now rides inside the save doc. Reconcile last-write-wins: the newer side wins,
+        // and if THIS device is ahead (or the cloud has no collector yet — the state right after this
+        // migration) queue a push so the cloud gets seeded and the other device pulls it next sync.
+        {
+          const ck = sk(saveId, 'collector');
+          let lc = {}; try { lc = JSON.parse(localStorage.getItem(ck) || '{}'); } catch (e) {}
+          const cloudCU = (typeof data.collectorBlob === 'string') ? (data.collectorUpdatedAt || 0) : -1;
+          const localCU = (lc && lc.updatedAt) || 0;
+          if (cloudCU >= 0 && cloudCU >= localCU) {
+            localStorage.setItem(ck, data.collectorBlob);           // cloud is newer-or-equal → take it
+          } else if (localStorage.getItem(ck)) {
+            collectorPushUp.add(saveId);                            // this device is ahead (or cloud empty) → seed up
+          }
+        }
       });
-      await _pullCollector();
+      // Seed/refresh any collector decks where this device is ahead of the cloud (incl. first-run migration).
+      for (const sid of collectorPushUp) { try { await pushCollector(sid); } catch (e) {} }
       // Upload any LOCAL-only saves (created offline, or legacy saves that predate cloud sync) so
       // signing in carries them UP to the account as well as pulling everything down.
       for (const m of getSaveMeta()) {
@@ -11971,9 +11987,11 @@ const FirebaseSync = (() => {
       const sid = saveIdArg || getActiveSaveId() || 1;
       const raw = localStorage.getItem(sk(sid, 'collector'));
       if (!raw) return;
-      let updatedAt = Date.now();
-      try { const p = JSON.parse(raw); if (p && p.updatedAt) updatedAt = p.updatedAt; } catch (e) {}
-      await _db.collection('collector').doc(_docId(sid)).set({ uid: _user.uid, saveId: sid, updatedAt, blob: raw });
+      let cu = Date.now();
+      try { const p = JSON.parse(raw); if (p && p.updatedAt) cu = p.updatedAt; } catch (e) {}
+      // Merge the collector blob into the SAVE doc (proven-working 'saves' collection + rules),
+      // rather than a separate 'collector' collection that was being silently denied.
+      await _db.collection('saves').doc(_docId(sid)).set({ uid: _user.uid, saveId: sid, collectorBlob: raw, collectorUpdatedAt: cu }, { merge: true });
     } catch(e) { console.warn('FirebaseSync collector push failed', e); }
   }
 
@@ -12023,6 +12041,13 @@ const FirebaseSync = (() => {
       if (dailyRaw) {
         payload.dailyCompletions = {};
         try { payload.dailyCompletions[dateKey] = JSON.parse(dailyRaw); } catch {}
+      }
+      // Collector data rides INSIDE the save doc — same 'saves' collection (and rules) that already
+      // sync — instead of a separate 'collector' collection that was being denied/dropped.
+      const collRaw = localStorage.getItem(sk(saveId, 'collector'));
+      if (collRaw) {
+        payload.collectorBlob = collRaw;
+        try { const cp = JSON.parse(collRaw); payload.collectorUpdatedAt = (cp && cp.updatedAt) || Date.now(); } catch { payload.collectorUpdatedAt = Date.now(); }
       }
       await _db.collection('saves').doc(_docId(saveId)).set(payload, { merge: true });
     } catch(e) { console.warn('FirebaseSync push failed', e); }
