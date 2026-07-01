@@ -1745,6 +1745,18 @@ function getSaveMeta() { return JSON.parse(localStorage.getItem('asoe-saves') ||
 function setSaveMeta(arr) { localStorage.setItem('asoe-saves', JSON.stringify(arr)); }
 function getActiveSaveId() { const v = parseInt(localStorage.getItem('asoe-active-save') || '0'); return isNaN(v) || v < 1 ? null : v; }
 function setActiveSaveId(id) { localStorage.setItem('asoe-active-save', String(id)); }
+// Persistent, cross-login diagnostic timeline: records every create/delete/push/pull so an
+// intermittent sync bug can be read back from ONE device after a full repro (see Account screen).
+function dlog(msg) {
+  try {
+    const a = JSON.parse(localStorage.getItem('asoe-synclog') || '[]');
+    const d = new Date(); const p = n => ('0' + n).slice(-2);
+    a.push(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${msg}`);
+    while (a.length > 18) a.shift();
+    localStorage.setItem('asoe-synclog', JSON.stringify(a));
+  } catch (e) {}
+}
+function getSyncLog() { try { return JSON.parse(localStorage.getItem('asoe-synclog') || '[]'); } catch (e) { return []; } }
 // Is the player currently signed into their Google (cloud) account?
 function isSignedInNow() { try { return !!(FirebaseSync && FirebaseSync.getUser && FirebaseSync.getUser()); } catch (e) { return false; } }
 // A save is "Online" if it was created while signed in (it belongs to the cloud account) — Online
@@ -1755,16 +1767,18 @@ function setSaveOnlineFlag(slotId, online) {
   if (idx >= 0) { meta[idx].online = !!online; setSaveMeta(meta); if (online) { try { FirebaseSync.pushSave(slotId); } catch (e) {} } }
 }
 function createSaveSlot(slotId) {
+  const created = Date.now();
   const meta = getSaveMeta().filter(s => s.id !== slotId);
-  meta.push({ id: slotId, created: Date.now(), lastPlayed: Date.now(), online: isSignedInNow() }); // tag Online if signed in at creation (#9)
+  meta.push({ id: slotId, created, lastPlayed: created, online: isSignedInNow() }); // tag Online if signed in at creation (#9)
   setSaveMeta(meta); setActiveSaveId(slotId);
+  dlog(`CREATE #${slotId} gen=${created} signedIn=${isSignedInNow()}`);
   // Register the new save in the cloud immediately so it syncs to other devices — then retry a few
   // times. The single create-time push can be dropped by the post-sign-in auth-settle race (_user not
   // yet populated), which left brand-new, un-played files as a cloud tombstone only. Each retry is a
   // harmless idempotent merge, and is guarded so it NEVER resurrects a save the user just deleted.
   try { FirebaseSync.pushSave(slotId); } catch (e) {}
   [500, 1500, 4000].forEach(ms => setTimeout(() => {
-    try { if (isSignedInNow() && getSaveMeta().some(s => s.id === slotId)) FirebaseSync.pushSave(slotId); } catch (e) {}
+    try { if (isSignedInNow() && getSaveMeta().some(s => s.id === slotId)) { FirebaseSync.pushSave(slotId); dlog(`CREATE-retry #${slotId} @${ms}ms`); } } catch (e) {}
   }, ms));
 }
 // Wipe EVERY piece of local data for a save (history, achievements, chaos progress/
@@ -1788,6 +1802,7 @@ function deleteSaveSlot(slotId) {
   // record exactly WHICH instance was deleted. A future save reusing this slot gets a new generation,
   // so this tombstone can never delete it.
   const gen = (getSaveMeta().find(s => s.id === slotId) || {}).created || 0;
+  dlog(`DELETE #${slotId} gen=${gen} (user/UI)`);
   removeLocalSaveData(slotId);
   // Propagate the deletion to the cloud so other signed-in devices drop it too.
   try { FirebaseSync.deleteSave(slotId, gen); } catch (e) {}
@@ -12006,6 +12021,7 @@ const FirebaseSync = (() => {
         if (!cloudIds.has(m.id)) { detail.push(`#${m.id} UPLOAD(local-only) cr=${m.created || 0}`); try { await pushSave(m.id); await pushCollector(m.id); } catch (e) {} }
       }
       detail.push(`meta ${metaBefore} → ${metaStr()}`); // local save-list before → after this pull
+      dlog(`PULL found=${found} | ${detail.join(' | ')}`);
       _lastPull = { ok: true, found, names, detail, email: (_user && _user.email) || '', uid: (_user && _user.uid) || '', error: null, at: Date.now() };
       console.log(`[Sync] pulled ${found} cloud file(s) [${names.join(', ')}] for ${_user.email || _user.uid} (uid ${_user.uid})`);
       console.log('[Sync] detail:', detail);
@@ -12097,7 +12113,8 @@ const FirebaseSync = (() => {
         try { const cp = JSON.parse(collRaw); payload.collectorUpdatedAt = (cp && cp.updatedAt) || Date.now(); } catch { payload.collectorUpdatedAt = Date.now(); }
       }
       await _db.collection('saves').doc(_docId(saveId)).set(payload, { merge: true });
-    } catch(e) { console.warn('FirebaseSync push failed', e); }
+      dlog(`PUSH #${saveId} live cr=${payload.createdAt} coll=${payload.collectorBlob ? 'Y' : 'N'}`);
+    } catch(e) { console.warn('FirebaseSync push failed', e); dlog(`PUSH #${saveId} FAILED ${(e && (e.code || e.message)) || ''}`); }
   }
 
   // Tombstone a deleted save in the cloud so every other signed-in device drops it on its next pull.
@@ -12108,6 +12125,7 @@ const FirebaseSync = (() => {
     if (!_user || !_db || !saveId) return;
     try {
       await _db.collection('saves').doc(_docId(saveId)).set({ uid: _user.uid, saveId, deleted: true, deletedAt: Date.now(), deletedGen: gen || 0 });
+      dlog(`TOMBSTONE #${saveId} gen=${gen || 0} written to cloud`);
     } catch(e) { console.warn('FirebaseSync delete failed', e); }
   }
 
@@ -12229,6 +12247,22 @@ function AccountScreen({ onBack, startup, onContinue }) {
           </>
         )}
         {status && <div style={{ fontSize: '0.72rem', color: 'var(--gold)', textAlign: 'center', marginTop: 4, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxWidth: 340 }}>{status}</div>}
+        {/* Persistent sync diagnostic log — temporary; remove once the sync race is nailed. */}
+        {(() => {
+          const log = getSyncLog();
+          if (!log.length) return null;
+          return (
+            <div style={{ width: '100%', maxWidth: 340, marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+                <button className="btn btn-ghost btn-sm" style={{ flex: 1, fontSize: '0.62rem' }}
+                  onClick={() => { try { navigator.clipboard.writeText(getSyncLog().join('\n')); setStatus('✓ Log copied — paste it to Claude.'); } catch (e) { setStatus('Copy failed — screenshot the log below.'); } }}>📋 Copy log</button>
+                <button className="btn btn-ghost btn-sm" style={{ flex: 1, fontSize: '0.62rem' }}
+                  onClick={() => { try { localStorage.removeItem('asoe-synclog'); } catch (e) {} setStatus('Log cleared — now do the repro.'); }}>🗑 Clear log</button>
+              </div>
+              <pre style={{ fontSize: '0.58rem', lineHeight: 1.5, color: '#bfe3ff', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(120,160,220,0.35)', borderRadius: 8, padding: '8px 10px', maxHeight: 210, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', textAlign: 'left', margin: 0 }}>{log.join('\n')}</pre>
+            </div>
+          );
+        })()}
         {startup && (
           <button
             className={user ? 'btn btn-gold' : 'btn btn-ghost'}
