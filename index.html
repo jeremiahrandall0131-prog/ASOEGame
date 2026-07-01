@@ -11882,10 +11882,22 @@ const FirebaseSync = (() => {
   // so the player never lands on an empty save list before their files have arrived.
   async function signIn() {
     const provider = new firebase.auth.GoogleAuthProvider();
-    const res = await _auth.signInWithPopup(provider);
-    _user = res.user || (_auth && _auth.currentUser);
-    try { await _pullAll(); } catch (e) { console.warn('sign-in sync failed', e); }
-    return res;
+    try {
+      const res = await _auth.signInWithPopup(provider);
+      _user = res.user || (_auth && _auth.currentUser);
+      try { await _pullAll(); } catch (e) { console.warn('sign-in sync failed', e); }
+      return res;
+    } catch (e) {
+      // Popups are unreliable on phones / installed PWAs (blocked, unsupported, or the OAuth window
+      // can't share state → "missing initial state"). Fall back to a full-page redirect; the sign-in
+      // completes when the app reloads — getRedirectResult() fires onAuthStateChanged, which pulls.
+      const info = ((e && e.code) || '') + ' ' + ((e && e.message) || '');
+      if (/popup|redirect|initial.state|operation-not-supported|web-storage|cancelled|internal-error|network/i.test(info)) {
+        await _auth.signInWithRedirect(provider);
+        return; // page navigates away; nothing after this runs
+      }
+      throw e;
+    }
   }
   // Force a full re-sync on demand (used to guarantee data is present before leaving a screen).
   async function syncNow() {
