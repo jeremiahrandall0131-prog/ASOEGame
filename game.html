@@ -8890,7 +8890,11 @@ function CollectorStore({ save, onUpdate }) {
             {(() => {
               const price = COLL_BUY_GOLD[buyFilter];
               // Tier comes from the button row above; House/Gender/Search/Sort all stack within it.
-              const pool = collFilterAndSort(getCollCards().filter(c => c.tier === buyFilter), bf);
+              // Hide cards you already own: buying a card you hold just Evolves it, which is cheaper
+              // than the Upgrade tab for the same result — so an owned card in Buy makes Upgrade
+              // pointless. Match on BASE id (like the Evolve rule) so modded copies count as owned too.
+              const ownedBases = new Set((save.owned || []).map(collStripId));
+              const pool = collFilterAndSort(getCollCards().filter(c => c.tier === buyFilter && !ownedBases.has(collStripId(c.id))), bf);
               const pp = 20;
               const totalPg = Math.max(1,Math.ceil(pool.length/pp));
               const pg = pool.slice(buyPage*pp,(buyPage+1)*pp);
