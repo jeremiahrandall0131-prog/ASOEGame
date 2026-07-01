@@ -7512,6 +7512,9 @@ const GOT_WIN_CARDS = [
   { id:'win100', name:'Win 100 Gold', kind:'gold', amount:100, icon:'🪙', desc:'+100 Gold to your balance.' },
   { id:'win250', name:'Win 250 Gold', kind:'gold', amount:250, icon:'💰', desc:'+250 Gold to your balance.' },
   { id:'win500', name:'Win 500 Gold', kind:'gold', amount:500, icon:'💰', desc:'+500 Gold to your balance.' },
+  { id:'reroll5',  name:'Win 5 Rerolls',  kind:'rerolls', amount:5,  icon:'🎲', desc:'+5 Rerolls to your balance.' },
+  { id:'reroll10', name:'Win 10 Rerolls', kind:'rerolls', amount:10, icon:'🎲', desc:'+10 Rerolls to your balance.' },
+  { id:'reroll20', name:'Win 20 Rerolls', kind:'rerolls', amount:20, icon:'🎲', desc:'+20 Rerolls to your balance.' },
   { id:'cardMythic',    name:'Mythic Card',    kind:'randomCard', tier:'mythic',    icon:'🃏', desc:'Receive a random Mythic card.' },
   { id:'cardLegendary', name:'Legendary Card', kind:'randomCard', tier:'legendary', icon:'🃏', desc:'Receive a random Legendary card.' },
   { id:'cardHero',      name:'Hero Card',      kind:'randomCard', tier:'hero',      icon:'🃏', desc:'Receive a random Hero card.' },
@@ -7529,6 +7532,9 @@ const GOT_LOSS_CARDS = [
   { id:'lose100', name:'Lose 100 Gold', kind:'gold', amount:-100, icon:'💸', desc:'−100 Gold from your balance.' },
   { id:'lose250', name:'Lose 250 Gold', kind:'gold', amount:-250, icon:'💸', desc:'−250 Gold from your balance.' },
   { id:'lose500', name:'Lose 500 Gold', kind:'gold', amount:-500, icon:'💸', desc:'−500 Gold from your balance.' },
+  { id:'loseReroll5',  name:'Lose 5 Rerolls',  kind:'rerolls', amount:-5,  icon:'🎲', desc:'−5 Rerolls — your balance can go negative.' },
+  { id:'loseReroll10', name:'Lose 10 Rerolls', kind:'rerolls', amount:-10, icon:'🎲', desc:'−10 Rerolls — your balance can go negative.' },
+  { id:'loseReroll20', name:'Lose 20 Rerolls', kind:'rerolls', amount:-20, icon:'🎲', desc:'−20 Rerolls — your balance can go negative.' },
   { id:'loseBest',     name:'Lose Best Card',    kind:'loseBest',     icon:'💔', desc:'Lose the highest-Overall card in your deck.' },
   { id:'loseChoose',   name:'Lose Card',         kind:'loseChoose',   icon:'🗡️', desc:'Surrender a card of your choosing.' },
   { id:'bestDevolve',  name:'Best Card Devolve', kind:'bestDevolve',  icon:'🔻', desc:'Your highest-Overall card drops a tier.' },
@@ -7808,7 +7814,7 @@ const TUTORIAL_STEPS = [
   { title:'Gold & Wagers', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'Finishing any game pays +5 Gold; winning pays more (by 5+ or 10+ adds bonuses), plus a Score Bonus for how well your court fits — up to +100 once your court reaches 100 points. You can also Wager up to 100 Gold per game.' },
   // ── Modes 2–6 ──
   { title:'② Tourney', screen:'modeChoice', target:'[data-tour="mode-tourney"]', body:'The same court as Traditional, but you face THREE CPUs at once. Everyone matches your wager into a single pot — finish 1st to claim it all, and earn a Win Pull from every opponent you outplaced.' },
-  { title:'③ House Wars', screen:'modeChoice', target:'[data-tour="mode-houseWars"]', body:'Pledge to a single Great House. You and the CPU each field a 5-seat lineup drawn only from that House\'s cards (you need 10+ of one House to enter). The stakes are real: win and you pull a card from their House — lose and you SURRENDER one of yours.' },
+  { title:'③ House Wars', screen:'modeChoice', target:'[data-tour="mode-houseWars"]', body:'Pledge to a single Great House. You and the CPU each field a 5-seat lineup drawn only from that House\'s cards (you need 10+ of one House to enter). The stakes are real: win and you Spin the Wheel for a card from the enemy\'s House — and a 5-win streak lets you spin it FIVE times. Lose and you SURRENDER one of your own.' },
   { title:'④ The Game of Thrones', screen:'modeChoice', target:'[data-tour="mode-got"]', body:'Pure fate. Ten cards lie face-down — five Win, five Loss. Pick ONE and its effect fires instantly and permanently: a Gold windfall, a free Evolve, a wheel spin… or a Devolve, a Degrade, or worse. Win or die.' },
   { title:'Devolve & Degrade', screen:'modeChoice', target:'[data-tour="mode-got"]', body:'That\'s the risk in The Game of Thrones (and in House Wars stakes): a card can be DEVOLVED — knocked down a full tier — or DEGRADED, losing points across every position. Wounded cards show a red ⚠ in your deck. Reforge them at the Blacksmith, or Evolve the card to cleanse the damage entirely.' },
   { title:'⑤ Trial of Seven', screen:'modeChoice', target:'[data-tour="mode-trial"]', body:'A duel of champions where ONLY the Kingsguard score counts. Pick a 15-card lineup and the CPU fields a closely-matched roster. You alternate drawing fate into seven Kingsguard seats — highest total wins, with the same optional wager and a Win Pull from the CPU\'s seven.' },
@@ -10013,7 +10019,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
     const newSave = {
       ...save,
       gold: finalGold,
-      rerolls: Math.max(0, (save.rerolls||0) - rerollsUsed),
+      rerolls: (save.rerolls||0) - rerollsUsed, // NOT clamped to 0 — a negative balance (e.g. a GoT Loss card) must persist until earned/bought back
       cardStats: collRecordCardStats(save.cardStats, playerBoard, isWin), // per-card placement record (#3)
       modeStats: collRecordMode(save.modeStats, NCPU>1?'tourney':'traditional', { win:isWin, score:playerScore }),
       stats: {
@@ -10565,6 +10571,23 @@ function genWheelCards() {
   for (let i = 0; i < 5; i++) for (const t of COLL_TIER_ORDER) if (byTier[t][i]) wheel.push(byTier[t][i]);
   return wheel;
 }
+// House Wars spoils wheel: 30 cards drawn from the CPU's whole House (not just its fielded cards),
+// each slot's tier rolled by the House Wars reward odds (HW_REWARD_ODDS) so the wheel carries the
+// same tier chances as the old single-card reward. God is never rolled (Evolve only).
+function genHwWheelCards(house) {
+  const inHouse = getCollCards().filter(c => cardInHouse(c, house));
+  if (inHouse.length < 6) return genWheelCards(); // house too thin → fall back to the standard wheel
+  const byTier = {};
+  inHouse.forEach(c => { (byTier[c.tier] = byTier[c.tier] || []).push(c); });
+  const rollTier = () => { const r = Math.random(); let cum = 0; for (const [t, p] of HW_REWARD_ODDS) { cum += p; if (r < cum) return t; } return 'starter'; };
+  const wheel = [];
+  for (let i = 0; i < 30; i++) {
+    let pool = byTier[rollTier()];
+    if (!pool || !pool.length) pool = inHouse; // House lacks that tier → any card from the House
+    wheel.push(pool[Math.floor(Math.random() * pool.length)]);
+  }
+  return wheel;
+}
 
 // Reusable card-stats popup (full 10-position profile + gender/age).
 function CollDetailModal({ card, onClose, owned }) {
@@ -10914,7 +10937,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
 }
 
 // ─── House Wars: scorecard → reward spawn (win) / card surrender (loss) ──────
-function CollectorHouseWarsResult({ result, reward, onClaim, onDiscard }) {
+function CollectorHouseWarsResult({ result, onClaim, onDiscard }) {
   const { isWin, playerScore, cpuScore, playerBoard, cpuBoard, userHouse, cpuHouse } = result;
   const [stage, setStage] = React.useState('score'); // score | reward | discard
   const [discardSel, setDiscardSel] = React.useState(null);
@@ -10957,31 +10980,11 @@ function CollectorHouseWarsResult({ result, reward, onClaim, onDiscard }) {
             <div style={{ textAlign:'center', fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginTop:8, padding:'0 0 4px' }}>{p_arrow_legend()}</div>
           </div>
           <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
-            <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.1em' }} onClick={() => setStage(isWin?'reward':'discard')}>
-              {isWin ? 'Continue →' : 'Continue →'}
+            <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.1em' }} onClick={() => isWin ? onClaim() : setStage('discard')}>
+              {isWin ? `🎡 Spin ${cpuHouse}'s spoils →` : 'Continue →'}
             </button>
           </div>
         </>
-      )}
-
-      {stage === 'reward' && (
-        <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center' }}>
-          <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.1rem', color:'var(--gold)', fontWeight:700, marginBottom:4 }}>🏆 Spoils of War</div>
-          <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:18 }}>A {cpuHouse} card joins your collection!</div>
-          {reward && (() => { const ct = T[reward.tier]||{color:'var(--gold)'}; return (
-            <div className="fade-in" style={{ width:'100%', maxWidth:300 }}>
-              <div className="card" style={{ borderColor:ct.color, boxShadow:`0 0 26px ${ct.color}`, marginBottom:16 }}>
-                <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color:ct.color, fontWeight:700 }}>{reward.name}</div>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:8 }}>
-                  <CollTierBadge tier={reward.tier} />
-                  <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'1.05rem' }}>{reward.overall}</span>
-                </div>
-              </div>
-              <button className="btn btn-gold" style={{ width:'100%' }} onClick={onClaim}>Add to Deck ✓</button>
-            </div>
-          ); })()}
-          {!reward && <button className="btn btn-gold" onClick={onClaim}>Continue</button>}
-        </div>
       )}
 
       {stage === 'discard' && (
@@ -11055,6 +11058,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
     // reveal that follows is purely cosmetic. `next` = the stage the reveal advances into.
     let next = 'done';
     if (k === 'gold') { commit({ ...save, gold: (save.gold||0) + c.amount }); setSummary(`${c.amount>=0?'+':''}${c.amount} Gold`); }
+    else if (k === 'rerolls') { commit({ ...save, rerolls: (save.rerolls||0) + c.amount }); setSummary(`${c.amount>=0?'+':''}${c.amount} Rerolls`); } // NOT clamped — balance can go negative
     else if (k === 'randomCard') { const got = gotRandomTierCard(c.tier); if (got) { const res = collAcquire(save.owned||[], got.id); commit({ ...save, owned: res.owned }); setReward(res.evolved?res.card:got); setRewardEvolved(res.evolved); } }
     else if (k === 'massEvolve') { commit({ ...save, owned: gotMassEvolve(save.owned) }); setSummary('Every card in your deck leveled up a tier!'); }
     else if (k === 'massDevolve') { commit({ ...save, owned: gotMassDevolve(save.owned) }); setSummary('Every card dropped a tier (Starters spared).'); }
@@ -11331,9 +11335,9 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
   return wrap(<div style={{ flex:1 }}>{header}</div>);
 }
 
-function CollectorWheel({ onDone, streak, spinsLeft }) {
+function CollectorWheel({ onDone, streak, spinsLeft, house }) {
   const T = window.COLLECTOR_TIERS || {};
-  const [wheel] = React.useState(genWheelCards);
+  const [wheel] = React.useState(() => house ? genHwWheelCards(house) : genWheelCards());
   const n = wheel.length || 30;
   const seg = 360 / n;
   const [rotation, setRotation] = React.useState(0);
@@ -11357,7 +11361,7 @@ function CollectorWheel({ onDone, streak, spinsLeft }) {
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, textAlign:'center' }}>
       <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.25rem', color:'var(--gold)', fontWeight:700 }}>🎡 Spin the Wheel!</div>
-      <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginTop:4, marginBottom:18 }}>{streak||5}-win streak reward · 30 cards · 5 per tier{spinsLeft > 1 ? ` · ${spinsLeft} spins left` : ''}</div>
+      <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginTop:4, marginBottom:18 }}>{house ? `${house} spoils · 30 cards` : `${streak||5}-win streak reward · 30 cards · 5 per tier`}{spinsLeft > 1 ? ` · ${spinsLeft} spins left` : ''}</div>
       <div style={{ position:'relative', width:280, height:280, marginBottom:18 }}>
         <div style={{ position:'absolute', top:-4, left:'50%', transform:'translateX(-50%)', width:0, height:0, borderLeft:'12px solid transparent', borderRight:'12px solid transparent', borderTop:'22px solid var(--gold2,#f0c84a)', zIndex:5, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.85))' }} />
         <div style={{ width:'100%', height:'100%', borderRadius:'50%', background:grad, border:'4px solid #2a2008', boxShadow:'0 0 30px rgba(0,0,0,0.7), inset 0 0 22px rgba(0,0,0,0.55)', transform:`rotate(${rotation}deg)`, transition: spinning ? 'transform 4.2s cubic-bezier(0.15,0.85,0.25,1)' : 'none' }} />
@@ -11439,7 +11443,8 @@ function CollectorHub({ onHome }) {
   const [selectedMode, setSelectedMode] = React.useState(null); // highlighted mode on the Game Modes screen
   const [helpMode, setHelpMode] = React.useState(null);          // mode whose "?" how-to-play is open
   const [gameMode, setGameMode] = React.useState('traditional'); // 'traditional' (1 CPU) | 'tourney' (3 CPUs)
-  const [wheelSpinsLeft, setWheelSpinsLeft] = React.useState(1);     // multi-spin wheel (HW grants 5)
+  const [wheelSpinsLeft, setWheelSpinsLeft] = React.useState(1);     // multi-spin wheel (HW streak grants 5)
+  const [wheelHouse, setWheelHouse] = React.useState(null);         // when set, the wheel draws 30 cards from this House (HW spoils)
   // House Wars active-game state
   const [hwUserHouse, setHwUserHouse] = React.useState(null);
   const [hwCpuHouse, setHwCpuHouse] = React.useState(null);
@@ -11581,12 +11586,12 @@ function CollectorHub({ onHome }) {
     saveCollSave(ns); setSave(ns);
   }
   function handleGotDone(wasWin) { recordGot(wasWin); setScreen('hub'); }
-  function handleGotSpin(wasWin) { recordGot(wasWin); setWheelSpinsLeft(1); setScreen('wheel'); } // GoT "Spin the Wheel" card (a Win)
+  function handleGotSpin(wasWin) { recordGot(wasWin); setWheelHouse(null); setWheelSpinsLeft(1); setScreen('wheel'); } // GoT "Spin the Wheel" card (a Win)
   function startSevenKingdoms() {
     if ((save.owned||[]).length < 25) return; // you place a card per square — need a 25-card deck
     setShowModeChoice(false); setScreen('sevenK');
   }
-  function handleSevenKingdomsSpin() { setWheelSpinsLeft(1); setScreen('wheel'); } // 20+ squares filled reward
+  function handleSevenKingdomsSpin() { setWheelHouse(null); setWheelSpinsLeft(1); setScreen('wheel'); } // 20+ squares filled reward
 
   function handleStartGame(wager) {
     setGameWager(wager);
@@ -11634,20 +11639,14 @@ function CollectorHub({ onHome }) {
                     active: isWin ? null : { userHouse: house, cpuHouse: hwCpuHouse, lineupIds: placedIds, phase:'lossPending' } };
     const newSave = { ...save, hw: newHw, cardStats: collRecordCardStats(save.cardStats, result.playerBoard, isWin) }; // per-card record (#3)
     saveCollSave(newSave); setSave(newSave);
-    setHwReward(isWin ? hwRollReward(hwCpuHouse) : null); // pre-rolled, spawns after the scorecard
+    setHwReward(null); // spoils are now paid via the wheel (handleHwClaim), not a single pre-rolled card
     setHwResult({ ...result, wheelEarned });
     setScreen('hwResult');
   }
-  function handleHwClaim() { // win: spawn the reward into the deck
-    let s = save;
-    if (hwReward) {
-      const res = collAcquire(s.owned||[], hwReward.id);
-      s = { ...s, owned: res.owned }; saveCollSave(s); setSave(s);
-      if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
-    }
-    const earned = hwResult && hwResult.wheelEarned;
+  function handleHwClaim() { // win: spin the enemy House's spoils wheel — 5 spins on a 5-win streak, else 1
+    const spins = (hwResult && hwResult.wheelEarned) ? 5 : 1;
     setHwResult(null); setHwReward(null);
-    if (earned) { setWheelSpinsLeft(5); setScreen('wheel'); } else setScreen('hub');
+    setWheelHouse(hwCpuHouse); setWheelSpinsLeft(spins); setScreen('wheel');
   }
   function handleHwDiscard(cardId) { // loss: surrender the chosen card (clears the pending marker)
     const owned = (save.owned||[]).slice();
@@ -11721,7 +11720,7 @@ function CollectorHub({ onHome }) {
     setSave(newSave);
     if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
     setWinPullKG(false); setTrialResult(null);
-    if (gameResult && gameResult.wheelEarned) { setWheelSpinsLeft(1); setScreen('wheel'); return; } // 5-win streak reward
+    if (gameResult && gameResult.wheelEarned) { setWheelHouse(null); setWheelSpinsLeft(1); setScreen('wheel'); return; } // 5-win streak reward
     setScreen('hub');
     setGameResult(null);
   }
@@ -11751,6 +11750,7 @@ function CollectorHub({ onHome }) {
     const left = wheelSpinsLeft - 1;
     if (left > 0) { setWheelSpinsLeft(left); return; } // another spin (keyed remount re-spins)
     setWheelSpinsLeft(1);
+    setWheelHouse(null);
     setScreen('hub');
     setGameResult(null);
   }
@@ -11782,7 +11782,7 @@ function CollectorHub({ onHome }) {
     const MODES = [
       { id:'traditional', label:'Traditional', icon:'⚔', col:'#d4a830', start:startTraditional, locked:false, how:'Draft a 10-seat court against 1 CPU. Each turn you draw fate and place a card into one of the ten positions (Ruler, Hand, Kingsguard, and more), with an optional Gold wager. Outscore the CPU to win a card from their court.' },
       { id:'tourney', label:'Tourney', icon:'🏆', col:'#3aa0ff', start:startTourney, locked:false, how:'Just like Traditional, but you face 3 CPUs at once. Each rival matches your wager for a 4× pot — place 1st to take it all, and pull a card from every court you outplaced.' },
-      { id:'houseWars', label:'House Wars', icon:'🏰', col:'#e05555', start:startHouseWars, locked:hwLocked, lockMsg:(!enough?'Need 21+ cards':'Need 10 in one House'), how:'A House is spun for you and the CPU. Field 10 cards of your House across a 5-seat court (no rerolls). Win and you pull a card from their House; lose and you surrender one of yours. Needs 10+ cards in a single House.' },
+      { id:'houseWars', label:'House Wars', icon:'🏰', col:'#e05555', start:startHouseWars, locked:hwLocked, lockMsg:(!enough?'Need 21+ cards':'Need 10 in one House'), how:'A House is spun for you and the CPU. Field 10 cards of your House across a 5-seat court (no rerolls). Win and you Spin the Wheel for a card from their House — a 5-win streak spins it 5 times; lose and you surrender one of yours. Needs 10+ cards in a single House.' },
       { id:'got', label:'The Game of Thrones', icon:'👑', col:'#a04ad0', start:startGameOfThrones, locked:!enough, lockMsg:'Need 21+ cards', how:'Pick 1 of 10 face-down cards — 5 Win and 5 Loss. The effect (gold, evolve, devolve, genocide, store-closed…) is applied INSTANTLY and can\'t be undone. Win or die. Needs 21+ cards.' },
       { id:'trial', label:'Trial of Seven', icon:'7️⃣', col:'#2bb3b3', start:startTrial, locked:!trialEnough, lockMsg:'Need 15+ cards', how:'Only the Kingsguard score matters. Pick 15 cards and the CPU fields a closely-matched roster. Alternate drawing fate into seven Kingsguard seats — highest total wins, and a win pulls a card from the CPU\'s seven.' },
       { id:'sevenK', label:'Seven Kingdoms', icon:'🗺️', col:'#3ec97a', start:startSevenKingdoms, locked:!sevenEnough, lockMsg:'Need 25+ cards', how:'A 5×5 bingo board where every square is a random card requirement. Over 25 draws, place each card where it fits (a card that fits nowhere is discarded). Each completed line = 20 Gold, a full blackout = 2,000, and filling 20+ squares earns a wheel spin.' },
@@ -11840,14 +11840,14 @@ function CollectorHub({ onHome }) {
   if (screen === 'hwSpin') return <CollectorHouseWarsSpin save={save} onDone={handleHwSpinDone} onCancel={() => setScreen('hub')} onRolled={handleHwRolled} onBackout={handleHwBackout} />;
   if (screen === 'hwLineup') return <CollectorHouseWarsLineup save={save} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onConfirm={handleHwLineupConfirm} onBackout={handleHwBackout} />;
   if (screen === 'hwGame' && hwLineup) return <CollectorHouseWarsGame playerCards={hwLineup.cards} cpuCards={hwCpuCards} userHouse={hwUserHouse} cpuHouse={hwCpuHouse} onEnd={handleHwEnd} />;
-  if (screen === 'hwResult' && hwResult) return <CollectorHouseWarsResult result={hwResult} reward={hwReward} onClaim={handleHwClaim} onDiscard={handleHwDiscard} />;
+  if (screen === 'hwResult' && hwResult) return <CollectorHouseWarsResult result={hwResult} onClaim={handleHwClaim} onDiscard={handleHwDiscard} />;
   if (screen === 'got') return <CollectorGoT save={save} onUpdate={handleUpdate} onDone={handleGotDone} onSpin={handleGotSpin} />;
   if (screen === 'trialLineup') return <CollectorTrialLineup save={save} onConfirm={handleTrialLineupConfirm} onCancel={() => setScreen('hub')} />;
   if (screen === 'trialWager') return <CollectorWager save={save} onStart={handleTrialWagerStart} onCancel={() => setScreen('hub')} numCpus={1} />;
   if (screen === 'trialGame' && trialLineup) return <CollectorTrialGame playerCards={trialLineup} cpuCards={trialCpu||[]} onEnd={handleTrialEnd} />;
   if (screen === 'trialResult' && trialResult) return <CollectorTrialResult result={trialResult} onWinPull={handleTrialWinPull} onHome={() => { if (save.pendingWinPull) autoResolveWinPull(save); setScreen('hub'); setTrialResult(null); }} />;
   if (screen === 'sevenK') return <CollectorSevenKingdoms save={save} onUpdate={handleUpdate} onDone={() => setScreen('hub')} onSpin={handleSevenKingdomsSpin} />;
-  if (screen === 'wheel') return <React.Fragment>{evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}<CollectorWheel key={wheelSpinsLeft} spinsLeft={wheelSpinsLeft} onDone={handleWheelDone} streak={gameResult ? gameResult.winStreak : 5} /></React.Fragment>;
+  if (screen === 'wheel') return <React.Fragment>{evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}<CollectorWheel key={wheelSpinsLeft} spinsLeft={wheelSpinsLeft} house={wheelHouse} onDone={handleWheelDone} streak={gameResult ? gameResult.winStreak : 5} /></React.Fragment>;
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
@@ -11882,7 +11882,7 @@ function CollectorHub({ onHome }) {
       {/* Gold / Rerolls / Daily indicators */}
       <div data-tour="gold-bar" style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
         <div style={{ fontFamily:'Cinzel,serif', color:(save.gold||0) <= 0 ? '#e05555' : 'var(--gold)', fontSize:'0.75rem' }}>🪙 {save.gold||0} Gold</div>
-        <div style={{ fontFamily:'Cinzel,serif', color:'var(--text2)', fontSize:'0.7rem' }}>🎲 {save.rerolls||0} Rerolls</div>
+        <div style={{ fontFamily:'Cinzel,serif', color:(save.rerolls||0) < 0 ? '#e05555' : 'var(--text2)', fontSize:'0.7rem' }}>🎲 {save.rerolls||0} Rerolls</div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           {[{ icon:'🃏', label:'Pull', ms:pullCountdown, color:'#4caf50' },
             { icon:'🪙', label:'Reward', ms:rewardCountdown, color:'var(--gold)' }].map((d,i) => {
