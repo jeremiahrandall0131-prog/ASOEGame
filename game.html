@@ -8887,13 +8887,17 @@ function CollectorStore({ save, onUpdate }) {
     const all = getCollCards();
     const nextCards = all.filter(c => c.charId === card.charId && c.tier === nextTier && !owned.has(c.id));
     if (!nextCards.length) { msg(`No available ${nextTier} cards for ${card.name}!`); return; }
-    setPendingBuy({ label:`Upgrade ${card.name} to a ${nextTier} card for ${cost}G?`, action: () => {
+    setPendingBuy({ label:`Upgrade ${card.name} into a ${nextTier} card for ${cost}G? The original ${card.tier} card is consumed.`, action: () => {
     const nextCard = nextCards[Math.floor(Math.random()*nextCards.length)];
-    const newSave = { ...save, gold:(save.gold||0)-cost, owned:[...(save.owned||[]),nextCard.id] };
+    // Transform the card in place: the original tier is REPLACED (consumed), not kept alongside the new one.
+    const o = [...(save.owned||[])];
+    const idx = o.indexOf(card.id);
+    if (idx >= 0) o[idx] = nextCard.id; else o.push(nextCard.id);
+    const newSave = { ...save, gold:(save.gold||0)-cost, owned:o };
     saveCollSave(newSave);
     onUpdate(newSave);
     setUpgradeSelected(null);
-    msg(`Upgraded to ${nextCard.name}!`);
+    msg(`${card.name} upgraded into ${nextCard.name}!`);
     }});
   }
 
