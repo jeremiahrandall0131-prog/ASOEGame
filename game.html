@@ -11940,34 +11940,42 @@ const FirebaseSync = (() => {
     } catch(e) { console.warn('FirebaseSync pull failed', e); }
   }
 
+  // Store the WHOLE Collector save as ONE JSON string ("blob"). Firestore silently rejects some
+  // raw-object writes (nested arrays / undefined), which was quietly dropping the Collector push;
+  // a single string field always writes cleanly and is read back verbatim on pull.
   async function pushCollector(saveIdArg) {
     if (!_user || !_db) return;
     try {
       const sid = saveIdArg || getActiveSaveId() || 1;
       const raw = localStorage.getItem(sk(sid, 'collector'));
       if (!raw) return;
-      const data = JSON.parse(raw);
-      // Per-save cloud doc so one save's collection never overwrites another's.
-      await _db.collection('collector').doc(_docId(sid)).set({ uid: _user.uid, saveId: sid, updatedAt: Date.now(), ...data }, { merge: true });
+      let updatedAt = Date.now();
+      try { const p = JSON.parse(raw); if (p && p.updatedAt) updatedAt = p.updatedAt; } catch (e) {}
+      await _db.collection('collector').doc(_docId(sid)).set({ uid: _user.uid, saveId: sid, updatedAt, blob: raw });
     } catch(e) { console.warn('FirebaseSync collector push failed', e); }
   }
 
   async function _pullCollector() {
     if (!_user || !_db) return;
-    try {
-      // Pull EVERY save's Collector data (not just the active slot) so all three slots carry across.
-      const snap = await _db.collection('collector').where('uid', '==', _user.uid).get();
-      snap.forEach(doc => {
-        const { uid, saveId, updatedAt, ...data } = doc.data();
-        if (!saveId) return;
-        const localKey = sk(saveId, 'collector');
+    // Fetch each known save's Collector doc BY ID (a direct get, which works even when listing the
+    // collection is restricted by security rules). Covers all slots, not just the active one.
+    const ids = [...new Set(getSaveMeta().map(m => m.id))];
+    for (const sid of ids) {
+      try {
+        const doc = await _db.collection('collector').doc(_docId(sid)).get();
+        if (!doc.exists) continue;
+        const d = doc.data();
+        const localKey = sk(sid, 'collector');
         const local = JSON.parse(localStorage.getItem(localKey) || '{}');
-        // Cloud wins if it has a later updatedAt, otherwise keep local.
-        if (!local.updatedAt || (updatedAt || 0) > (local.updatedAt || 0)) {
-          localStorage.setItem(localKey, JSON.stringify({ ...collDefaultSave(), ...data }));
+        if (local.updatedAt && (d.updatedAt || 0) < local.updatedAt) continue; // keep strictly-newer local
+        if (typeof d.blob === 'string') {
+          localStorage.setItem(localKey, d.blob);                              // new single-blob format
+        } else {
+          const { uid, saveId, updatedAt, ...data } = d;                       // legacy spread format
+          localStorage.setItem(localKey, JSON.stringify({ ...collDefaultSave(), ...data, updatedAt: updatedAt || Date.now() }));
         }
-      });
-    } catch(e) { console.warn('FirebaseSync collector pull failed', e); }
+      } catch (e) { console.warn('collector pull (doc) failed', e); }
+    }
   }
 
   async function pushSave(saveId) {
