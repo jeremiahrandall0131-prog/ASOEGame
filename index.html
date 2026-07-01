@@ -2045,22 +2045,27 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
                 </button>
               );
             }
-            // CONTINUE resumes the most-recent LOADABLE save — Online saves are locked while signed out (#9).
-            const loadable = saves.filter(s => !isSaveOnline(s) || signedIn).sort((a,b) => b.lastPlayed - a.lastPlayed);
-            const lastSave = loadable[0];
+            // Always show the MOST-RECENT save on the menu — even an Online save while signed out — so a
+            // present file is NEVER hidden behind an empty-looking menu (which reads as "my save vanished").
+            // Online saves just can't be LOADED until signed in (#9); then the button shows a locked state
+            // instead of disappearing. Use a LIVE sign-in check, since the cached `signedIn` state can be
+            // stale-false if this screen mounted before auth restored.
+            const signedInLive = signedIn || isSignedInNow();
+            const sorted = saves.slice().sort((a,b) => b.lastPlayed - a.lastPlayed);
+            const lastSave = sorted[0];
+            const lastLoadable = lastSave && (!isSaveOnline(lastSave) || signedInLive);
             return (<>
-              {lastSave ? (
+              {lastSave && (
               <button className="btn btn-gold"
-                style={{ width: '100%', maxWidth: 340, padding: '16px', fontSize: '1.1rem', letterSpacing: '0.14em', fontFamily: 'Cinzel,serif', marginBottom: 10 }}
+                style={{ width: '100%', maxWidth: 340, padding: '16px', fontSize: '1.1rem', letterSpacing: '0.14em', fontFamily: 'Cinzel,serif', marginBottom: 10, opacity: lastLoadable ? 1 : 0.72 }}
                 onClick={() => {
+                  if (!lastLoadable) { setView('load-save'); return; } // online + signed out → go to the list to sign in
                   touchSave(lastSave.id); if (onSaveChange) onSaveChange(lastSave.id);
                   AudioManager.startMenuMusic();
                   setView('modes');
                 }}>
-                ▶ CONTINUE{lastSave.name ? ` — ${lastSave.name}` : ''}
+                {lastLoadable ? `▶ CONTINUE${lastSave.name ? ` — ${lastSave.name}` : ''}` : `🔒 ${lastSave.name || `Save ${lastSave.id}`} — sign in to load`}
               </button>
-              ) : (
-                <div style={{ width: '100%', maxWidth: 340, marginBottom: 10, padding: '12px', textAlign: 'center', fontSize: '0.72rem', color: '#e0a84a', fontFamily: 'Cinzel,serif', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(240,200,74,0.35)', borderRadius: 8, lineHeight: 1.5 }}>🔒 Sign in to load your Online saves.</div>
               )}
               <button
                 style={{ width: '100%', maxWidth: 340, padding: '12px', fontSize: '0.85rem', letterSpacing: '0.1em', fontFamily: 'Cinzel,serif', background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(240,200,74,0.5)', borderRadius: 8, color: '#f0c84a', cursor: 'pointer' }}
@@ -2154,7 +2159,7 @@ function HomeScreen({ onStart, onHistory, onHowToPlay, onCharIndex, onAchievemen
             const isEditing = editingSlot === id;
             const displayName = save?.name || `Save ${id}`;
             const online = save && isSaveOnline(save);
-            const locked = online && !signedIn; // Online save while signed out → can't load (#9)
+            const locked = online && !signedIn && !isSignedInNow(); // Online save while genuinely signed out → can't load (#9)
             return (
               <div key={id} style={{
                 background: save ? (isActive ? 'rgba(240,200,74,0.1)' : 'var(--bg2)') : 'rgba(255,255,255,0.04)',
