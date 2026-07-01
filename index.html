@@ -7066,7 +7066,7 @@ function genCpuDeck(targetOverall, deckSize) {
         const remaining = N - i;
         const ideal = (useTarget - sum) / remaining;
         cands.sort((a, b) => Math.abs((a.overall||0) - ideal) - Math.abs((b.overall||0) - ideal));
-        const K = remaining <= 2 ? 1 : Math.min(cands.length, 10); // lock final picks; vary early ones
+        const K = remaining <= 2 ? 1 : Math.min(cands.length, 16); // lock final picks; vary early ones (wider pool = more distinct decks)
         c = cands[Math.floor(Math.random() * K)];
       }
       deck.push(c); usedKeys.add(keyOf(c)); sum += (c.overall||0);
@@ -7085,6 +7085,25 @@ function genCpuDeck(targetOverall, deckSize) {
     if (!best || err < best.err) best = { deck, err };
   }
   return best ? best.deck : build(targetOverall).deck;
+}
+
+// Per-CPU strength multipliers within the -2%..+2% band. Normally SPREAD across the band (one court
+// lower, one about even, one higher) for varied rivals; ~30% of games the whole field clusters into
+// one narrow slice (all a touch stronger, or all a touch weaker) so difficulty also swings game to
+// game. Returns one multiplier per CPU.
+function collCpuBandMults(n) {
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const out = [];
+  if (n <= 1) { out.push(rnd(0.98, 1.02)); return out; }
+  if (Math.random() < 0.30) {                    // clustered field: shared center anywhere in the band
+    const c = rnd(0.984, 1.016);
+    for (let i = 0; i < n; i++) out.push(Math.max(0.98, Math.min(1.02, c + rnd(-0.004, 0.004))));
+  } else {                                        // spread: one CPU per equal slice of the band, then shuffle
+    const step = 0.04 / n;
+    for (let i = 0; i < n; i++) out.push(rnd(0.98 + i * step, 0.98 + (i + 1) * step));
+    for (let i = out.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = out[i]; out[i] = out[j]; out[j] = t; }
+  }
+  return out;
 }
 
 // ─── Trial of Seven ─────────────────────────────────────────────────────────
@@ -9298,7 +9317,8 @@ function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
         {phase==='place' && drawnCard && (() => { const ct=T[drawnCard.tier]||{color:'#888',bg:'#111'}; return (
           <div className="got-pop">
             <div style={{ fontSize:'0.56rem', color:'var(--text2)', textAlign:'center', marginBottom:5, fontFamily:'Cinzel,serif', letterSpacing:'0.1em' }}>🎴 FATE DREW</div>
-            <div className="card" style={{ borderColor:ct.color, boxShadow:`0 0 16px ${ct.color}`, padding:'10px 12px', display:'flex', alignItems:'center', gap:10 }} onClick={()=>setDetailCard(drawnCard)}>
+            <div className="card" style={{ position:'relative', borderColor:ct.color, boxShadow:`0 0 16px ${ct.color}`, padding:'10px 12px', display:'flex', alignItems:'center', gap:10, cursor:'pointer' }} onClick={()=>setDetailCard(drawnCard)}>
+              <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(drawnCard); }} title="View card" style={{ position:'absolute', top:5, right:7, background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, zIndex:2 }}>ⓘ</button>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.84rem', color:ct.color, fontWeight:800, lineHeight:1.15 }}>{drawnCard.name}</div>
                 <div style={{ fontSize:'0.56rem', color:'var(--text2)', marginTop:2 }}>{drawnCard.identity||drawnCard.name} · {drawnCard.gender==='F'?'♀':'♂'} · Age {drawnCard.age}</div>
@@ -9562,7 +9582,8 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
         {phase==='draw' && <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.1em' }} onClick={drawFate}>🎴 DRAW FATE</button>}
         {phase==='place' && drawnCard && (() => { const ct=T[drawnCard.tier]||{color:'#888'}; return (
           <div className="got-pop">
-            <div className="card" style={{ borderColor:ct.color, boxShadow:`0 0 14px ${ct.color}`, padding:'8px 11px', display:'flex', alignItems:'center', gap:10, cursor:'pointer' }} onClick={()=>setDetailCard(drawnCard)}>
+            <div className="card" style={{ position:'relative', borderColor:ct.color, boxShadow:`0 0 14px ${ct.color}`, padding:'8px 11px', display:'flex', alignItems:'center', gap:10, cursor:'pointer' }} onClick={()=>setDetailCard(drawnCard)}>
+              <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(drawnCard); }} title="View card" style={{ position:'absolute', top:5, right:7, background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, zIndex:2 }}>ⓘ</button>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:ct.color, fontWeight:800, lineHeight:1.15 }}>{drawnCard.name}</div>
                 <div style={{ fontSize:'0.54rem', color:'var(--text2)', marginTop:2 }}>{drawnCard.identity||drawnCard.name} · {drawnCard.gender==='F'?'♀':'♂'} · Age {drawnCard.age} · {(drawnCard.houses||[]).join(', ')}</div>
@@ -9750,8 +9771,18 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
   // drafts/places independently (same logic as the single Traditional CPU). Never shown until end.
   const NCPU = numCpus || 1;
   const [cpuDecks] = React.useState(() => {
-    const cum = (save.owned||[]).reduce((s,id)=>s+((getCollCard(id)||{}).overall||0),0);
-    return Array.from({ length: NCPU }, () => genCpuDeck(cum, (save.owned||[]).length));
+    const owned = save.owned || [];
+    const cum = owned.reduce((s,id)=>s+((getCollCard(id)||{}).overall||0),0);
+    const size = owned.length;
+    // Vary each CPU so the rival courts are genuinely different, not near-identical: a strength target
+    // spread across the -2%..+2% band (see collCpuBandMults) AND a card count of the player's size ±2,
+    // on top of the band. Same total across more cards ⇒ a lower-average court; across fewer ⇒ a
+    // sharper one — so tier makeup and lineups vary a lot even within the band.
+    const mults = collCpuBandMults(NCPU);
+    return Array.from({ length: NCPU }, (_, i) => {
+      const sz = Math.max(10, size + (Math.floor(Math.random()*5) - 2)); // size-2 .. size+2 cards
+      return genCpuDeck(Math.round(cum * mults[i]), sz);
+    });
   });
   const [cpus, setCpus] = React.useState(() => Array.from({ length: NCPU }, () => ({ board:{}, drafted:[], drawn:new Set(), rerolls:GAME_REROLL_LIMIT, last:null })));
   const [phase, setPhase] = React.useState('draw'); // draw | place | done
@@ -10157,7 +10188,10 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
             )}
             {phase === 'place' && drawnCard && (
               <div className="card" style={{ marginBottom:10, borderColor:(T[drawnCard.tier]||{}).color||'var(--gold)' }}>
-                <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:6 }}>{heldDisplaced ? '✋ HOLDING — place this card:' : 'FATE DREW:'}</div>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                  <span style={{ fontSize:'0.6rem', color:'var(--text2)' }}>{heldDisplaced ? '✋ HOLDING — place this card:' : 'FATE DREW:'}</span>
+                  <button onClick={()=>setDetailCard(drawnCard)} title="View card" style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, flexShrink:0 }}>ⓘ</button>
+                </div>
                 <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                   <div style={{ flex:1 }}>
                     <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:(T[drawnCard.tier]||{}).color||'var(--gold)', fontWeight:700 }}>{drawnCard.name}</div>
@@ -10339,6 +10373,7 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
   const shownBoard = boardView === 'mine' ? (result.playerBoard||{}) : cpuBoardSel;
   const [revealDeck, setRevealDeck] = React.useState(false);
   const [deckPage, setDeckPage] = React.useState(0);
+  const [detailCard, setDetailCard] = React.useState(null); // full-card preview (ⓘ) for revealed CPU deck cards
   const gb = result.goldBreakdown;
   const cpuDeck = (cpuDecksArr[oi] || []).slice().sort((a,b) => (b.overall||0) - (a.overall||0)); // highest → lowest overall
   const DECK_PAGE = 12;
@@ -10355,6 +10390,7 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {detailCard && <CollDetailModal card={detailCard} onClose={()=>setDetailCard(null)} />}
       <div className="nav-bar">
         <div className="nav-title">COLLECTOR · RESULTS</div>
       </div>
@@ -10476,8 +10512,9 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
                 <div style={{ fontSize:'0.55rem', color:'var(--text2)', marginBottom:8, fontStyle:'italic' }}>Every card {isTourney ? `CPU ${oi+1}` : 'the CPU'} brought this game — drawn or not, highest Overall first.</div>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
                   {cpuDeck.slice(deckPage*DECK_PAGE, deckPage*DECK_PAGE+DECK_PAGE).map((card,i) => { const ct=T[card.tier]||{color:'#888',bg:'#111'}; return (
-                    <div key={i} style={{ border:`1px solid ${ct.color}`, borderRadius:6, padding:'6px 8px', background:ct.bg }}>
-                      <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{card.name}</div>
+                    <div key={i} style={{ position:'relative', border:`1px solid ${ct.color}`, borderRadius:6, padding:'6px 8px', background:ct.bg }}>
+                      <button onClick={()=>setDetailCard(card)} title="View card" style={{ position:'absolute', top:4, right:5, background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, zIndex:2 }}>ⓘ</button>
+                      <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:14 }}>{card.name}</div>
                       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
                         <CollTierBadge tier={card.tier} />
                         <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.7rem' }}>{card.overall}</span>
