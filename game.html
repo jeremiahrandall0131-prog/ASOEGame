@@ -7265,7 +7265,8 @@ function genFeaturedHouse() {
 }
 
 function collDefaultSave() {
-  return { gold:100, rerolls:10, owned:[], lastDailyPull:null, lastDailyReward:null,
+  return { gold:500, rerolls:10, owned:[], lastDailyPull:null, lastDailyReward:null, lastDailySpin:null,
+           freeRepairs:0, freeSpins:{}, // Daily Spin rewards: banked free Blacksmith repairs + free Lottery spins (by tier)
            storeRefresh:null, storeShowcase:[], featuredHouse:null, featuredHouseCards:{}, tutorialSeen:false,
            storeClosedUntil:null, gotPending:null, // The Game of Thrones: store-closed timer + pending loss-choice marker
            cardStats:{}, // per-card record (keyed by base variant id): { placements, wins, points } for cards ever PLACED on a board
@@ -7523,6 +7524,7 @@ const GOT_WIN_CARDS = [
   { id:'cardStarter',   name:'Starter Card',   kind:'randomCard', tier:'starter',   icon:'🃏', desc:'Receive a random Starter card.' },
   { id:'evolve',     name:'Evolve Card',    kind:'evolveChoose',  icon:'✦', desc:'Evolve a card of your choosing one tier up.' },
   { id:'massEvolve', name:'Mass Evolve',    kind:'massEvolve',    icon:'🌟', desc:'EVERY card in your deck levels up one tier.' },
+  { id:'massUpgrade', name:'Mass Upgrade',  kind:'massUpgrade',   icon:'✨', desc:'+1 to all position scores of every card (+10 Overall each).' },
   { id:'identity',   name:'Identity Pull',  kind:'identityPull',  icon:'🔮', desc:'Search a character and claim a variant at your deck strength.' },
   { id:'upgrade',    name:'Upgrade Card',   kind:'upgradeChoose', icon:'⚒️', desc:'+3 to every position score of a card you choose.' },
   { id:'spin',       name:'Spin the Wheel', kind:'spinWheel',     icon:'🎡', desc:'Spin the wheel for a bonus card.' },
@@ -7541,7 +7543,7 @@ const GOT_LOSS_CARDS = [
   { id:'devolveChoose',name:'Devolve Card',      kind:'devolveChoose',icon:'⬇️', desc:'Drop a card of your choosing one tier.' },
   { id:'massDevolve',  name:'Mass Devolve',      kind:'massDevolve',  icon:'⏬', desc:'EVERY card drops one tier (Starters safe).' },
   { id:'degradeBest',  name:'Degrade Best Card', kind:'degradeBest',  icon:'📉', desc:'−3 to all position scores of your best card.' },
-  { id:'massDegrade',  name:'Mass Degrade',      kind:'massDegrade',  icon:'🩸', desc:'−3 to all position scores of every card.' },
+  { id:'massDegrade',  name:'Mass Degrade',      kind:'massDegrade',  icon:'🩸', desc:'−1 to all position scores of every card (−10 Overall each).' },
   { id:'degradeChoose',name:'Degrade Card',      kind:'degradeChoose',icon:'➖', desc:'−3 to all position scores of a chosen card.' },
   { id:'storeClosed',  name:'Store Closed',      kind:'storeClosed',  icon:'🔒', desc:'The store closes for 23h 59m.' },
   { id:'dailyWait',    name:'Daily Wait',        kind:'dailyWait',    icon:'⏳', desc:'Your Daily Pull timer resets to 23h 59m.' },
@@ -7560,7 +7562,8 @@ function genGotBoard() {
 function gotRandomTierCard(tier) { const pool = getCollCards().filter(c => c.tier === tier); return pool.length ? pool[Math.floor(Math.random()*pool.length)] : null; }
 function gotMassEvolve(owned) { return (owned||[]).map(id => { const c=getCollCard(id); const t=c&&collEvolveTargetId(c,owned); return t||id; }); }
 function gotMassDevolve(owned) { return (owned||[]).map(id => { const c=getCollCard(id); const t=c&&collDevolveTargetId(c); return t||id; }); }
-function gotMassDegrade(owned) { return (owned||[]).map(id => collApplyMod(id, -3)); }
+function gotMassUpgrade(owned) { return (owned||[]).map(id => collApplyMod(id, 1)); }  // +1 to every position of every card (+10 Overall)
+function gotMassDegrade(owned) { return (owned||[]).map(id => collApplyMod(id, -1)); } // −1 to every position of every card (−10 Overall)
 function gotHighestIndex(owned) { let bi=-1, bo=-Infinity; (owned||[]).forEach((id,i) => { const c=getCollCard(id); const o=c?(c.overall||0):-Infinity; if (o>bo){ bo=o; bi=i; } }); return bi; }
 function gotEligibleHouses(owned) { const set=new Set(); (owned||[]).forEach(id => { const c=getCollCard(id); ((c&&c.houses)||[]).forEach(h => set.add(h)); }); return [...set]; }
 // Wipe one random House from the deck; if that would drop below 20 cards, remove only the
@@ -7793,7 +7796,7 @@ const TUTORIAL_STEPS = [
   { title:'Card Tiers', tab:'deck', target:'[data-tour="deck-composition"]', body:'Tiers run Starter (green) · Uncommon (blue) · Rare (orange) · Hero (purple) · Legendary (silver) · Mythic (red) — and the radiant God tier above them all. Higher tiers are rarer and trend toward higher Overalls.' },
   { title:'Card Index', tab:'index', target:'[data-tour="hub-content"]', body:'The Index lets you browse every character and variant in the game — owned or not — so you can plan what to chase next.' },
   { title:'The Stats Tab', tab:'stats', target:'[data-tour="hub-content"]', body:'Stats has two views. OVERVIEW shows your record for every game mode — Traditional, Tourney, House Wars, The Game of Thrones, Trial of Seven and Seven Kingdoms — each with the numbers that matter to it. The CARD STATS sub-tab tracks how every individual card has performed: games placed, win %, and points per game.' },
-  { title:'Daily Rewards', tab:'daily', target:'[data-tour="daily-pull"]', body:'Come back every 24 hours for a free Daily Card Pull and a Gold reward — steady progress just for showing up.' },
+  { title:'Daily Rewards', tab:'daily', target:'[data-tour="daily-pull"]', body:'Come back every 24 hours for three free rewards: a Daily Card Pull, a Gold reward, and the Daily Spin — a 30-space fortune wheel that can land you a card, Gold, Rerolls, free Blacksmith repairs, free Lottery spins, or a free Evolve or Upgrade. Steady progress just for showing up.' },
   { title:'Gold & Rerolls', tab:'deck', target:'[data-tour="gold-bar"]', body:'Your Gold and in-game Rerolls show here, along with countdowns to your next free Daily pull and reward.' },
   { title:'Music Volume', tab:'deck', target:'[data-tour="volume"]', body:'The volume control (top-right) sets the music level — tap to mute or slide to taste. Collector Mode always plays its own theme.' },
   // ── The Store ──
@@ -8490,6 +8493,35 @@ const DAILY_REWARD_TABLE = [
   { gold:500, prob:.03 },  // actually .03 but user said 3%
 ];
 
+// ── Daily Spin: a 30-space fortune wheel on the same 24h cadence as the pull & gold reward. The
+// layout is FIXED and interleaved so equal-reward groups sit spread around the ring. Card spaces
+// roll a random card of their tier when landed; banked rewards (free Blacksmith repairs / free
+// Lottery spins) are spent later in those tabs.
+function dailySpinRawSpaces() {
+  const T = window.COLLECTOR_TIERS || {};
+  const lbl = t => (T[t] || {}).label || t;
+  const col = t => (T[t] || {}).color || '#888';
+  const S = [];
+  ['starter','uncommon','rare','hero','legendary','mythic'].forEach(t => S.push({ group:'card', kind:'card', tier:t, label:`${lbl(t)} Card`, color:col(t) }));           // 6
+  [50,100,150,200,250,300].forEach(a => S.push({ group:'gold', kind:'gold', amount:a, label:`+${a} Gold`, color:'#f0c84a' }));                                              // 6
+  [3,5,10,20,50].forEach(a => S.push({ group:'rerolls', kind:'rerolls', amount:a, label:`+${a} Rerolls`, color:'#3aa0ff' }));                                                // 5
+  [1,3,5,10,20].forEach(a => S.push({ group:'repairs', kind:'repairs', amount:a, label:`${a} Free Repair${a>1?'s':''}`, color:'#3ec97a' }));                                 // 5
+  S.push({ group:'evolve', kind:'evolve', label:'Free Evolve', color:'#c77dff' });                                                                                          // 1
+  S.push({ group:'upgrade', kind:'upgrade', label:'Free Upgrade', color:'#ffd54a' });                                                                                       // 1
+  [['hero',1],['legendary',1],['mythic',1],['hero',2],['legendary',2],['mythic',2]].forEach(([t,n]) => S.push({ group:'lottery', kind:'lottery', tier:t, count:n, label:`${n}× ${lbl(t)} Spin`, color:'#ff6fae' })); // 6
+  return S; // 30 total
+}
+function dailySpinLayout() {
+  const byGroup = {};
+  dailySpinRawSpaces().forEach(s => { (byGroup[s.group] = byGroup[s.group] || []).push(s); });
+  const groups = Object.keys(byGroup).map(k => byGroup[k]).sort((a, b) => b.length - a.length);
+  const out = []; let any = true;
+  while (any) { any = false; for (const g of groups) { if (g.length) { out.push(g.shift()); any = true; } } } // round-robin → spread groups out
+  return out;
+}
+let _dailySpinLayout = null;
+function getDailySpinLayout() { if (!_dailySpinLayout) _dailySpinLayout = dailySpinLayout(); return _dailySpinLayout; }
+
 function timeUntil24h(ts) {
   if (!ts) return 0;
   const diff = 86400000 - (Date.now() - ts);
@@ -8512,6 +8544,51 @@ function formatCountdownShort(ms) {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+// The Daily Spin fortune wheel (30 fixed, interleaved reward spaces). Spins, lands on a random
+// space, and hands it back via onDone. Looks like the Spin-the-Wheel reward.
+function CollectorDailyWheel({ onDone, onCancel }) {
+  const spaces = getDailySpinLayout();
+  const n = spaces.length || 30;
+  const seg = 360 / n;
+  const [rotation, setRotation] = React.useState(0);
+  const [spinning, setSpinning] = React.useState(false);
+  const [won, setWon] = React.useState(null);
+  const grad = 'conic-gradient(from 0deg, ' + spaces.map((s, i) => `${s.color} ${(i*seg).toFixed(3)}deg ${((i+1)*seg).toFixed(3)}deg`).join(', ') + ')';
+  function spin() {
+    if (spinning || won) return;
+    setSpinning(true);
+    const idx = Math.floor(Math.random() * n);
+    const target = rotation + 360*6 + (360 - ((rotation + idx*seg + seg/2) % 360));
+    setRotation(target);
+    setTimeout(() => { setWon(spaces[idx]); setSpinning(false); }, 4300);
+  }
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.93)', zIndex:340, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, textAlign:'center' }}>
+      <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.25rem', color:'var(--gold)', fontWeight:700 }}>🎡 Daily Spin</div>
+      <div style={{ fontSize:'0.66rem', color:'var(--text2)', marginTop:4, marginBottom:16 }}>30 rewards · one free spin every 24 hours</div>
+      <div style={{ position:'relative', width:288, height:288, marginBottom:16 }}>
+        <div style={{ position:'absolute', top:-4, left:'50%', transform:'translateX(-50%)', width:0, height:0, borderLeft:'12px solid transparent', borderRight:'12px solid transparent', borderTop:'22px solid var(--gold2,#f0c84a)', zIndex:5, filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.85))' }} />
+        <div style={{ width:'100%', height:'100%', borderRadius:'50%', background:grad, border:'4px solid #2a2008', boxShadow:'0 0 30px rgba(0,0,0,0.7), inset 0 0 22px rgba(0,0,0,0.55)', transform:`rotate(${rotation}deg)`, transition: spinning ? 'transform 4.2s cubic-bezier(0.15,0.85,0.25,1)' : 'none' }} />
+        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', width:48, height:48, borderRadius:'50%', background:'#120d06', border:'3px solid var(--gold)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1.1rem', zIndex:4 }}>🎁</div>
+      </div>
+      {!won ? (
+        <>
+          <button className="btn btn-gold" style={{ padding:'12px 40px', fontSize:'0.95rem', letterSpacing:'0.12em' }} disabled={spinning} onClick={spin}>{spinning ? 'SPINNING…' : 'SPIN'}</button>
+          {onCancel && !spinning && <button className="btn btn-ghost btn-sm" style={{ marginTop:10 }} onClick={onCancel}>Cancel</button>}
+        </>
+      ) : (
+        <div className="fade-in" style={{ width:'100%', maxWidth:320 }}>
+          <div style={{ fontSize:'0.66rem', color:'var(--text2)', marginBottom:6 }}>You landed on:</div>
+          <div className="card" style={{ borderColor:won.color, marginBottom:14, boxShadow:`0 0 22px ${won.color}` }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.05rem', color:won.color, fontWeight:700 }}>{won.label}</div>
+          </div>
+          <button className="btn btn-gold" style={{ width:'100%' }} onClick={() => onDone(won)}>Claim ✓</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CollectorDailySection({ save, onUpdate }) {
   const [pullReady, setPullReady] = React.useState(timeUntil24h(save.lastDailyPull) === 0);
   const [rewardReady, setRewardReady] = React.useState(timeUntil24h(save.lastDailyReward) === 0);
@@ -8520,16 +8597,23 @@ function CollectorDailySection({ save, onUpdate }) {
   const [pulledCard, setPulledCard] = React.useState(null);
   const [rewardGold, setRewardGold] = React.useState(null);
   const [evolveAnim, setEvolveAnim] = React.useState(null); // { from, to } when a daily pull merges
+  const [spinReady, setSpinReady] = React.useState(timeUntil24h(save.lastDailySpin) === 0);
+  const [spinCountdown, setSpinCountdown] = React.useState(timeUntil24h(save.lastDailySpin));
+  const [spinOpen, setSpinOpen] = React.useState(false);      // the wheel overlay is up
+  const [spinChooser, setSpinChooser] = React.useState(null); // { kind:'evolve'|'upgrade', space } — pick a card
+  const [spinResult, setSpinResult] = React.useState(null);   // { text, card } shown after a spin resolves
 
   React.useEffect(() => {
     const iv = setInterval(() => {
       const pc = timeUntil24h(save.lastDailyPull);
       const rc = timeUntil24h(save.lastDailyReward);
+      const sc = timeUntil24h(save.lastDailySpin);
       setPullCountdown(pc); setPullReady(pc === 0);
       setRewardCountdown(rc); setRewardReady(rc === 0);
+      setSpinCountdown(sc); setSpinReady(sc === 0);
     }, 1000);
     return () => clearInterval(iv);
-  }, [save.lastDailyPull, save.lastDailyReward]);
+  }, [save.lastDailyPull, save.lastDailyReward, save.lastDailySpin]);
 
   function doDailyPull() {
     const all = getCollCards();
@@ -8552,6 +8636,34 @@ function CollectorDailySection({ save, onUpdate }) {
     onUpdate(newSave);
     setRewardGold(gold);
     setRewardReady(false);
+  }
+
+  // Apply the landed Daily Spin space. Free Evolve/Upgrade need a card choice → open the picker
+  // (the daily is only consumed once a card is picked); everything else resolves immediately.
+  function resolveSpin(space) {
+    if (space.kind === 'evolve' || space.kind === 'upgrade') { setSpinOpen(false); setSpinChooser({ kind: space.kind, space }); return; }
+    let ns = { ...save, lastDailySpin: Date.now() };
+    let result = { text: space.label, card: null };
+    if (space.kind === 'card') {
+      const card = gotRandomTierCard(space.tier);
+      if (card) { const res = collAcquire(ns.owned || [], card.id); ns.owned = res.owned; if (res.evolved) setEvolveAnim({ from: res.from, to: res.card }); result.card = res.evolved ? res.card : card; result.text = res.evolved ? 'Duplicate — it Evolved!' : `${(T[space.tier]||{}).label || space.tier} card won!`; }
+    }
+    else if (space.kind === 'gold')    { ns.gold = (ns.gold || 0) + space.amount; }
+    else if (space.kind === 'rerolls') { ns.rerolls = (ns.rerolls || 0) + space.amount; }
+    else if (space.kind === 'repairs') { ns.freeRepairs = (ns.freeRepairs || 0) + space.amount; result.text = `${space.amount} free Blacksmith repair${space.amount > 1 ? 's' : ''} banked!`; }
+    else if (space.kind === 'lottery') { const fs = { ...(ns.freeSpins || {}) }; fs[space.tier] = (fs[space.tier] || 0) + space.count; ns.freeSpins = fs; result.text = `${space.count}× free ${(T[space.tier]||{}).label || space.tier} Lottery spin${space.count > 1 ? 's' : ''} banked!`; }
+    saveCollSave(ns); onUpdate(ns);
+    setSpinOpen(false); setSpinReady(false); setSpinResult(result);
+  }
+  function chooseSpinCard(idx) {
+    const kind = spinChooser.kind;
+    const o = [...(save.owned || [])]; const cc = getCollCard(o[idx]);
+    let text;
+    if (kind === 'evolve') { const t = collEvolveTargetId(cc, save.owned); if (t) { o[idx] = t; setEvolveAnim({ from: cc, to: getCollCard(t) }); text = `${cc ? cc.name : 'Card'} Evolved!`; } else text = 'That card is already at the top tier.'; }
+    else { o[idx] = collApplyMod(o[idx], 1); text = `+1 to every position of ${cc ? cc.name : 'your card'}.`; }
+    const ns = { ...save, owned: o, lastDailySpin: Date.now() };
+    saveCollSave(ns); onUpdate(ns);
+    setSpinChooser(null); setSpinReady(false); setSpinResult({ text, card: null });
   }
 
   const T = window.COLLECTOR_TIERS || {};
@@ -8601,6 +8713,54 @@ function CollectorDailySection({ save, onUpdate }) {
           </div>
         )}
       </div>
+
+      <div className="card" style={{ marginTop:12, borderColor: spinReady ? '#c77dff' : 'var(--border)' }}>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)', marginBottom:6 }}>🎡 DAILY SPIN</div>
+        <div style={{ fontSize:'0.65rem', color:'var(--text2)', marginBottom:10, lineHeight:1.5 }}>
+          Once every 24 hours. Spin a 30-space wheel for a card, Gold, Rerolls, free Blacksmith repairs, free Lottery spins, or a free Evolve / Upgrade.
+        </div>
+        {spinResult ? (
+          <div style={{ textAlign:'center' }}>
+            {spinResult.card && <CollCardDisplay card={spinResult.card} isOwned={true} />}
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.92rem', color:'var(--gold)', margin:'8px 0' }}>{spinResult.text}</div>
+            <button className="btn btn-ghost btn-sm" style={{ width:'100%' }} onClick={() => setSpinResult(null)}>Dismiss</button>
+          </div>
+        ) : spinReady ? (
+          <button className="btn btn-gold" style={{ width:'100%' }} onClick={() => setSpinOpen(true)}>Spin Now</button>
+        ) : (
+          <div style={{ textAlign:'center', fontFamily:'Cinzel,serif', color:'var(--text2)', fontSize:'0.75rem' }}>
+            Next spin in: {formatCountdown(spinCountdown)}
+          </div>
+        )}
+      </div>
+
+      {spinOpen && <CollectorDailyWheel onDone={resolveSpin} onCancel={() => setSpinOpen(false)} />}
+      {spinChooser && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.9)', zIndex:345, display:'flex', flexDirection:'column', padding:16 }}>
+          <div style={{ textAlign:'center', marginBottom:8 }}>
+            <div style={{ fontFamily:'Cinzel,serif', color:'var(--gold)', fontSize:'0.95rem', fontWeight:700 }}>{spinChooser.kind === 'evolve' ? '✦ Free Evolve' : '✨ Free Upgrade'}</div>
+            <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginTop:2 }}>{spinChooser.kind === 'evolve' ? 'Choose a card to Evolve one tier (Mythic → God).' : 'Choose a card — +1 to every position (+10 Overall).'}</div>
+          </div>
+          <div className="scroll" style={{ flex:1 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:6 }}>
+              {(save.owned || []).map((id, i) => ({ id, i, card: getCollCard(id) })).filter(e => e.card).sort((a, b) => (b.card.overall || 0) - (a.card.overall || 0)).map(e => {
+                const c = e.card; const ct = T[c.tier] || { color:'#888', bg:'#111' };
+                const disabled = spinChooser.kind === 'evolve' && !collEvolveTargetId(c, save.owned); // already God / can't evolve
+                return (
+                  <div key={e.i} onClick={() => { if (!disabled) chooseSpinCard(e.i); }} style={{ border:`2px solid ${ct.color}`, borderRadius:6, padding:'7px 9px', background:ct.bg, cursor:disabled ? 'not-allowed' : 'pointer', opacity:disabled ? 0.4 : 1 }}>
+                    <div style={{ fontSize:'0.66rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
+                      <CollTierBadge tier={c.tier} />
+                      <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.72rem' }}>{c.overall}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-sm" style={{ marginTop:8 }} onClick={() => setSpinChooser(null)}>Cancel — keep your daily spin</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -8699,16 +8859,19 @@ function CollectorStore({ save, onUpdate }) {
   };
 
   function doLotterySpin() {
-    const cost = COLL_LOTTERY_COST[lotteryType];
-    if ((save.gold||0) < cost) { msg(`Need ${cost}G for this spin!`); return; }
-    setPendingBuy({ label:`Spin the ${lotteryType} lottery for ${cost}G?`, action: () => {
+    const freeLeft = (save.freeSpins||{})[lotteryType] || 0; // spend a Daily-Spin free spin before Gold
+    const free = freeLeft > 0;
+    const cost = free ? 0 : COLL_LOTTERY_COST[lotteryType];
+    if (!free && (save.gold||0) < cost) { msg(`Need ${cost}G for this spin!`); return; }
+    setPendingBuy({ label: free ? `Use a FREE ${lotteryType} spin? (${freeLeft} left)` : `Spin the ${lotteryType} lottery for ${cost}G?`, action: () => {
     setLotterySpinning(true);
     setTimeout(() => {
       const all = getCollCards();
       const probs = LOTTERY_PROBS[lotteryType];
       const card = weightedDraw(all, probs, new Set(), 'lottery'+Date.now());
-      if (card) applyAcquire(card.id, { gold:(save.gold||0)-cost });
-      else { const ns = { ...save, gold:(save.gold||0)-cost }; saveCollSave(ns); onUpdate(ns); }
+      const patch = free ? { freeSpins: { ...(save.freeSpins||{}), [lotteryType]: freeLeft - 1 } } : { gold:(save.gold||0)-cost };
+      if (card) applyAcquire(card.id, patch);
+      else { const ns = { ...save, ...patch }; saveCollSave(ns); onUpdate(ns); }
       setLotteryResult(card);
       setLotterySpinning(false);
     }, 1500);
@@ -8784,13 +8947,14 @@ function CollectorStore({ save, onUpdate }) {
     const owned = save.owned || [];
     const card = getCollCard(owned[index]);
     if (!card || !collCanRepair(card)) return;
-    const cost = COLL_REPAIR_GOLD[card.tier] || 0;
-    if ((save.gold||0) < cost) { msg(`You need ${cost}G to repair ${card.name}.`); return; }
-    setPendingBuy({ label:`Repair ${card.name} for ${cost}G? Its negative effects are mended.`, action: () => {
+    const free = (save.freeRepairs || 0) > 0; // spend a Daily-Spin free repair before charging Gold
+    const cost = free ? 0 : (COLL_REPAIR_GOLD[card.tier] || 0);
+    if (!free && (save.gold||0) < cost) { msg(`You need ${cost}G to repair ${card.name}.`); return; }
+    setPendingBuy({ label: free ? `Use a FREE repair on ${card.name}? (${save.freeRepairs||0} free left)` : `Repair ${card.name} for ${cost}G? Its negative effects are mended.`, action: () => {
       const o = [...(save.owned||[])]; o[index] = collRepairCard(card);
-      const newSave = { ...save, gold:(save.gold||0)-cost, owned:o };
+      const newSave = { ...save, owned:o, gold: free ? (save.gold||0) : (save.gold||0)-cost, freeRepairs: free ? (save.freeRepairs||0)-1 : (save.freeRepairs||0) };
       saveCollSave(newSave); onUpdate(newSave); setBlacksmithSelected(null);
-      msg(`${card.name} reforged at the Blacksmith!`);
+      msg(free ? `${card.name} reforged — free repair used (${(save.freeRepairs||0)-1} left).` : `${card.name} reforged at the Blacksmith!`);
     }});
   }
 
@@ -8934,12 +9098,12 @@ function CollectorStore({ save, onUpdate }) {
                 ['legendary',300,'Legendary Spin','60% Legendary · 20% Hero · 8% Rare · 12% Lower'],
                 ['mythic',500,'Mythic Spin','60% Mythic · 20% Legendary · 20% Lower']].map(([type,cost,label,desc])=>(
                 <button key={type} className={`btn btn-${lotteryType===type?'gold':'ghost'} btn-sm`} style={{ flex:1, fontSize:'0.6rem' }} onClick={()=>{setLotteryType(type);setLotteryResult(null);}}>
-                  {label}<br/><span style={{fontSize:'0.55rem'}}>{cost}G</span>
+                  {label}<br/><span style={{fontSize:'0.55rem', color:((save.freeSpins||{})[type]||0)>0?'#3ec97a':undefined}}>{((save.freeSpins||{})[type]||0)>0 ? `🎁 ${(save.freeSpins||{})[type]} free` : `${cost}G`}</span>
                 </button>
               ))}
             </div>
             <div className="card" style={{ textAlign:'center', marginBottom:12 }}>
-              <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:'var(--gold)', marginBottom:4 }}>{lotteryType.toUpperCase()} SPIN · {COLL_LOTTERY_COST[lotteryType]}G</div>
+              <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:'var(--gold)', marginBottom:4 }}>{lotteryType.toUpperCase()} SPIN · {((save.freeSpins||{})[lotteryType]||0)>0 ? `🎁 FREE (${(save.freeSpins||{})[lotteryType]} left)` : `${COLL_LOTTERY_COST[lotteryType]}G`}</div>
               {lotterySpinning ? (
                 <div style={{ fontSize:'2rem', animation:'spin 0.3s linear infinite' }}>🃏</div>
               ) : lotteryResult ? (
@@ -8956,7 +9120,7 @@ function CollectorStore({ save, onUpdate }) {
                     {lotteryType === 'mythic' && '60% Mythic · 20% Legendary · 5% Hero · 5% Rare · 5% Uncommon · 5% Starter'}
                   </div>
                   <button className="btn btn-gold" style={{ width:'100%' }} onClick={doLotterySpin}>
-                    Spin for {COLL_LOTTERY_COST[lotteryType]}G
+                    {((save.freeSpins||{})[lotteryType]||0)>0 ? `Spin FREE (${(save.freeSpins||{})[lotteryType]} left)` : `Spin for ${COLL_LOTTERY_COST[lotteryType]}G`}
                   </button>
                 </div>
               )}
@@ -9094,6 +9258,7 @@ function CollectorStore({ save, onUpdate }) {
             <div style={{ fontSize:'0.6rem', color:'var(--text2)', marginBottom:8, lineHeight:1.5 }}>
               ⚒️ The Blacksmith reforges cards struck by a <span style={{color:'#e05555'}}>Devolve</span> or <span style={{color:'#e05555'}}>Degrade</span> effect. Cost rises with the card's tier. <span style={{fontStyle:'italic'}}>A God knocked down to Mythic can mend a Degrade but can never be restored to God.</span>
             </div>
+            {(save.freeRepairs||0) > 0 && <div style={{ fontSize:'0.62rem', color:'#3ec97a', fontWeight:700, marginBottom:8, textAlign:'center' }}>🎁 {save.freeRepairs} free repair{save.freeRepairs>1?'s':''} available (Daily Spin) — used before Gold.</div>}
             {entries.length === 0 ? (
               <div style={{ fontSize:'0.7rem', color:'var(--text2)', textAlign:'center', marginTop:24, fontStyle:'italic' }}>No cards need repair — your deck is in perfect condition. ⚒️</div>
             ) : (
@@ -9111,11 +9276,11 @@ function CollectorStore({ save, onUpdate }) {
               </div>
             )}
             {selCard && (
-              selRepairable ? (
-                <button className={`btn btn-${(save.gold||0)>=selCost?'gold':'ghost'} btn-sm`} style={{ width:'100%', marginTop:10 }} disabled={(save.gold||0)<selCost} onClick={()=>doRepair(blacksmithSelected)}>
-                  {(save.gold||0)<selCost ? `Need ${selCost}G to repair` : `⚒️ Repair ${selCard.name} — ${selCost}G`}
+              selRepairable ? (() => { const hasFree = (save.freeRepairs||0) > 0; const canPay = hasFree || (save.gold||0) >= selCost; return (
+                <button className={`btn btn-${canPay?'gold':'ghost'} btn-sm`} style={{ width:'100%', marginTop:10 }} disabled={!canPay} onClick={()=>doRepair(blacksmithSelected)}>
+                  {hasFree ? `⚒️ Repair ${selCard.name} — FREE (${save.freeRepairs} left)` : ((save.gold||0)<selCost ? `Need ${selCost}G to repair` : `⚒️ Repair ${selCard.name} — ${selCost}G`)}
                 </button>
-              ) : (
+              ); })() : (
                 <div style={{ fontSize:'0.62rem', color:'var(--text2)', textAlign:'center', marginTop:10, fontStyle:'italic' }}>A fallen God cannot be reforged back to God.</div>
               )
             )}
@@ -9482,7 +9647,9 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
   const [helpIdx, setHelpIdx] = React.useState(null);
   const [detailCard, setDetailCard] = React.useState(null);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
+  const [showDeckView, setShowDeckView] = React.useState(false);
   const [result, setResult] = React.useState(null);
+  const deckCards = React.useMemo(() => (save.owned||[]).map(getCollCard).filter(Boolean), [save.owned]);
 
   const filledCount = placed.filter(Boolean).length;
   const eligible = (i) => phase==='place' && !!drawnCard && !placed[i] && skMatch(board[i], drawnCard);
@@ -9531,6 +9698,7 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
       {detailCard && <CollDetailModal card={detailCard} onClose={()=>setDetailCard(null)} />}
+      {showDeckView && <CollectorDeckViewer cards={deckCards} title="Your Deck" onClose={()=>setShowDeckView(false)} />}
       {helpIdx != null && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setHelpIdx(null)}>
           <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:300, width:'100%', borderColor:'var(--gold)', textAlign:'center' }}>
@@ -9559,7 +9727,7 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
           <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)' }}>🏰 SEVEN KINGDOMS</div>
           <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>Turn {Math.min(turn+1,25)}/25 · {filledCount} filled · {skCountBingos(placed)} bingo{skCountBingos(placed)!==1?'s':''}</div>
         </div>
-        <div style={{ width:30, flexShrink:0 }} />
+        <button onClick={()=>setShowDeckView(true)} title="View your deck" style={{ width:30, height:30, flexShrink:0, borderRadius:6, background:'var(--bg3)', border:'1px solid var(--border)', color:'var(--gold)', cursor:'pointer', fontSize:'0.9rem' }}>📖</button>
       </div>
       {/* Board */}
       <div className="scroll" style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', padding:'10px 8px' }}>
@@ -11061,8 +11229,9 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
     else if (k === 'rerolls') { commit({ ...save, rerolls: (save.rerolls||0) + c.amount }); setSummary(`${c.amount>=0?'+':''}${c.amount} Rerolls`); } // NOT clamped — balance can go negative
     else if (k === 'randomCard') { const got = gotRandomTierCard(c.tier); if (got) { const res = collAcquire(save.owned||[], got.id); commit({ ...save, owned: res.owned }); setReward(res.evolved?res.card:got); setRewardEvolved(res.evolved); } }
     else if (k === 'massEvolve') { commit({ ...save, owned: gotMassEvolve(save.owned) }); setSummary('Every card in your deck leveled up a tier!'); }
+    else if (k === 'massUpgrade') { commit({ ...save, owned: gotMassUpgrade(save.owned) }); setSummary('+1 to every position score, on every card.'); }
     else if (k === 'massDevolve') { commit({ ...save, owned: gotMassDevolve(save.owned) }); setSummary('Every card dropped a tier (Starters spared).'); }
-    else if (k === 'massDegrade') { commit({ ...save, owned: gotMassDegrade(save.owned) }); setSummary('−3 to every position score, on every card.'); }
+    else if (k === 'massDegrade') { commit({ ...save, owned: gotMassDegrade(save.owned) }); setSummary('−1 to every position score, on every card.'); }
     else if (k === 'loseBest') { const bi=gotHighestIndex(save.owned); const o=[...(save.owned||[])]; const lost=bi>=0?getCollCard(o[bi]):null; if(bi>=0)o.splice(bi,1); commit({ ...save, owned:o }); if(lost)setReward(lost); setSummary(lost?`Lost ${lost.name}.`:'—'); }
     else if (k === 'bestDevolve') { const bi=gotHighestIndex(save.owned); const o=[...(save.owned||[])]; const cc=bi>=0?getCollCard(o[bi]):null; const t=cc&&collDevolveTargetId(cc); if(t)o[bi]=t; commit({ ...save, owned:o }); if(cc)setReward(getCollCard(t)||cc); setSummary(cc?(t?`${cc.name} devolved a tier.`:`${cc.name} is a Starter — spared.`):'—'); }
     else if (k === 'degradeBest') { const bi=gotHighestIndex(save.owned); const o=[...(save.owned||[])]; const cc=bi>=0?getCollCard(o[bi]):null; if(bi>=0)o[bi]=collApplyMod(o[bi],-3); if(bi>=0)setReward(getCollCard(o[bi])); setSummary(cc?`−3 to every position of ${cc.name}.`:'—'); }
