@@ -11199,6 +11199,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
   const [idQuery, setIdQuery] = React.useState('');
   const [idChar, setIdChar] = React.useState(null);
   const [detailCard, setDetailCard] = React.useState(null);
+  const [showDeckView, setShowDeckView] = React.useState(false);
   const cardObj = picked != null ? board[picked] : null;
 
   function commit(ns) { saveCollSave(ns); onUpdate(ns); }
@@ -11277,6 +11278,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
   const wrap = (children) => (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
       {detailCard && <CollDetailModal card={detailCard} onClose={()=>setDetailCard(null)} />}
+      {showDeckView && <CollectorDeckViewer cards={(save.owned||[]).map(getCollCard).filter(Boolean)} title="Your Deck" onClose={()=>setShowDeckView(false)} />}
       <div className="nav-bar"><div style={{ flex:1, textAlign:'center' }}>
         <div className="nav-title" style={{ fontSize:'0.85rem' }}>👑 THE GAME OF THRONES ⚔️</div>
         <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontFamily:'Cinzel,serif' }}>Win or Die</div>
@@ -11358,6 +11360,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
         </div>
         <div style={{ maxWidth:300, margin:'16px auto 8px' }}>
           <button className="btn btn-gold" style={{ width:'100%', padding:'13px', letterSpacing:'0.08em' }} onClick={()=>setStage('pick')}>Enter the Game →</button>
+          <button className="btn btn-ghost btn-sm" style={{ width:'100%', marginTop:8 }} onClick={()=>onDone()}>← Back to Hub</button>
         </div>
       </div>
     );
@@ -11462,15 +11465,17 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
       const seen = new Set(); const ids = [];
       getCollCards().forEach(c => { if (seen.has(c.charId)) return; const label = c.identity || c.name; if (!q || label.toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q)) { seen.add(c.charId); ids.push({ charId:c.charId, label }); } });
       return wrap(
-        <div style={{ flex:1, display:'flex', flexDirection:'column' }}>
+        <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
           {header}
-          <div style={{ padding:'4px 16px' }}>
-            <input autoFocus value={idQuery} onChange={e=>setIdQuery(e.target.value)} placeholder="Search a character…" style={{ width:'100%', fontSize:'0.72rem', padding:'7px 10px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:6 }} />
+          <div style={{ padding:'4px 16px', display:'flex', gap:6, alignItems:'center' }}>
+            <input autoFocus value={idQuery} onChange={e=>setIdQuery(e.target.value)} placeholder="Search a character…" style={{ flex:1, minWidth:0, fontSize:'0.72rem', padding:'7px 10px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:6 }} />
+            <button onClick={()=>setShowDeckView(true)} title="View your deck" style={{ flexShrink:0, background:'var(--bg3)', border:'1px solid var(--border)', color:'var(--gold)', borderRadius:6, padding:'6px 9px', fontSize:'0.66rem', cursor:'pointer', whiteSpace:'nowrap' }}>📖 Deck</button>
           </div>
-          <div className="scroll" style={{ flex:1, padding:'4px 16px' }}>
-            {ids.slice(0,40).map(x => (
+          <div className="scroll" style={{ flex:1, minHeight:0, overflowY:'auto', padding:'4px 16px' }}>
+            {ids.slice(0,80).map(x => (
               <div key={x.charId} onClick={()=>setIdChar(x.charId)} style={{ padding:'8px 10px', borderBottom:'1px solid var(--border)', cursor:'pointer', fontSize:'0.72rem', color:'var(--text)' }}>{x.label}</div>
             ))}
+            {ids.length > 80 && <div style={{ fontSize:'0.6rem', color:'var(--text2)', padding:8, textAlign:'center', fontStyle:'italic' }}>Showing 80 of {ids.length} — type to narrow the search.</div>}
             {ids.length===0 && <div style={{ fontSize:'0.65rem', color:'var(--text2)', padding:8 }}>No characters match.</div>}
           </div>
         </div>
@@ -11479,11 +11484,14 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
     const variants = getCollCards().filter(c => c.charId === idChar && collTierRank(c.tier) <= deckRank);
     const ownedSet = new Set(save.owned||[]);
     return wrap(
-      <div style={{ flex:1, display:'flex', flexDirection:'column' }}>
+      <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
         {header}
         <div style={{ fontSize:'0.64rem', color:'var(--gold)', textAlign:'center', padding:'2px 16px' }}>Claim a variant at your deck strength (≤ {deckTierLabel(save.owned)}). Owned ones will <b>Evolve</b>.</div>
-        <button className="btn btn-ghost btn-sm" style={{ alignSelf:'flex-start', margin:'4px 16px', fontSize:'0.58rem' }} onClick={()=>setIdChar(null)}>← Search again</button>
-        <div className="scroll" style={{ flex:1, padding:'0 16px' }}>
+        <div style={{ display:'flex', gap:6, margin:'4px 16px' }}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.58rem' }} onClick={()=>setIdChar(null)}>← Search again</button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.58rem' }} onClick={()=>setShowDeckView(true)}>📖 View Deck</button>
+        </div>
+        <div className="scroll" style={{ flex:1, minHeight:0, overflowY:'auto', padding:'0 16px' }}>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:6 }}>
             {variants.sort((a,b)=>collTierRank(b.tier)-collTierRank(a.tier)||b.overall-a.overall).map(c => { const ct=T[c.tier]||{color:'#888',bg:'#111'}; const own=ownedSet.has(c.id); return (
               <div key={c.id} onClick={()=>doIdentityClaim(c.id)} style={{ border:`2px solid ${ct.color}`, borderRadius:6, padding:'7px 9px', background:ct.bg, cursor:'pointer', position:'relative' }}>
