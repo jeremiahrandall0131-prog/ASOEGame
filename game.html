@@ -11916,11 +11916,12 @@ const FirebaseSync = (() => {
     try {
       const cloudIds = new Set();
       const collectorPushUp = new Set();
+      const detail = []; // per-slot diagnostic of what the cloud returned + the decision made
       const snap = await _db.collection('saves').where('uid', '==', _user.uid).get();
       snap.forEach(doc => {
         const data = doc.data();
         const saveId = data.saveId;
-        if (!saveId) return;
+        if (!saveId) { detail.push('(session/no-id doc)'); return; }
         cloudIds.add(saveId);
         if (data.deleted === true) {
           // A tombstone normally means the save was deleted on another device → drop it locally.
@@ -11930,13 +11931,17 @@ const FirebaseSync = (() => {
           // the upload loop below skips any slot already in cloudIds, so the new file could never heal.
           // Resurrect it instead: keep the local save and free the slot so the upload loop re-pushes it.
           const lm = getSaveMeta().find(s => s.id === saveId);
+          const lc = lm ? (lm.created || 0) : -1;
           if (lm && (lm.created || 0) > (data.deletedAt || 0)) {
+            detail.push(`#${saveId} DEL dAt=${data.deletedAt || 0} localCr=${lc} →RESURRECT`);
             cloudIds.delete(saveId); // let the local-only upload loop re-push (resurrect) it, overwriting the dead tombstone
             return;
           }
+          detail.push(`#${saveId} DEL dAt=${data.deletedAt || 0} localCr=${lc} →REMOVE`);
           removeLocalSaveData(saveId); return; // genuine remote deletion → drop locally
         }
         found++; names.push(data.saveName || `Save ${saveId}`);
+        detail.push(`#${saveId} LIVE cr=${data.createdAt || 0} up=${data.updatedAt || 0} coll=${typeof data.collectorBlob === 'string' ? 'Y' : 'N'}`);
         // Ensure the slot exists locally, keep its NAME in sync from the cloud, and mark it Online.
         const meta = getSaveMeta();
         const existingIdx = meta.findIndex(s => s.id === saveId);
@@ -11979,13 +11984,14 @@ const FirebaseSync = (() => {
       // Upload any LOCAL-only saves (created offline, or legacy saves that predate cloud sync) so
       // signing in carries them UP to the account as well as pulling everything down.
       for (const m of getSaveMeta()) {
-        if (!cloudIds.has(m.id)) { try { await pushSave(m.id); await pushCollector(m.id); } catch (e) {} }
+        if (!cloudIds.has(m.id)) { detail.push(`#${m.id} UPLOAD(local-only) cr=${m.created || 0}`); try { await pushSave(m.id); await pushCollector(m.id); } catch (e) {} }
       }
-      _lastPull = { ok: true, found, names, email: (_user && _user.email) || '', uid: (_user && _user.uid) || '', error: null, at: Date.now() };
+      _lastPull = { ok: true, found, names, detail, email: (_user && _user.email) || '', uid: (_user && _user.uid) || '', error: null, at: Date.now() };
       console.log(`[Sync] pulled ${found} cloud file(s) [${names.join(', ')}] for ${_user.email || _user.uid} (uid ${_user.uid})`);
+      console.log('[Sync] detail:', detail);
       window.dispatchEvent(new CustomEvent('asoe-cloud-sync', { detail: _lastPull }));
     } catch(e) {
-      _lastPull = { ok: false, found, names, email: (_user && _user.email) || '', uid: (_user && _user.uid) || '', error: (e && (e.code || e.message)) || 'unknown', at: Date.now() };
+      _lastPull = { ok: false, found, names, detail, email: (_user && _user.email) || '', uid: (_user && _user.uid) || '', error: (e && (e.code || e.message)) || 'unknown', at: Date.now() };
       console.warn('[Sync] pull FAILED:', e);
       window.dispatchEvent(new CustomEvent('asoe-cloud-sync', { detail: _lastPull }));
     }
@@ -12097,6 +12103,15 @@ function AccountScreen({ onBack, startup, onContinue }) {
 
   useEffect(() => {
     FirebaseSync.onAuthChange(u => setUser(u));
+    // Surface the diagnostic from EVERY pull (incl. the automatic one on reopen), so the failing
+    // login's cloud state is always visible here without needing to tap Sign in / Sync Now.
+    const onSync = e => {
+      const lp = e && e.detail; if (!lp) return;
+      const dt = (lp.detail && lp.detail.length) ? `\n⟨${lp.detail.join(' | ')}⟩` : '';
+      setStatus(`${lp.ok ? '☁' : '⚠'} found ${lp.found || 0}: ${(lp.names && lp.names.join(', ')) || '—'}${dt}`);
+    };
+    window.addEventListener('asoe-cloud-sync', onSync);
+    return () => window.removeEventListener('asoe-cloud-sync', onSync);
   }, []);
 
   // Don't leave the login screen until a signed-in account has fully synced to this device.
@@ -12112,8 +12127,9 @@ function AccountScreen({ onBack, startup, onContinue }) {
       // (_pullAll fires 'asoe-cloud-sync', which re-renders the save-dependent screens.)
       await FirebaseSync.signIn();
       const lp = FirebaseSync.getLastPull && FirebaseSync.getLastPull();
-      if (lp && lp.ok) setStatus(`☁ ${lp.email} — found ${lp.found} file(s): ${(lp.names && lp.names.join(', ')) || '—'}`);
-      else if (lp && !lp.ok) setStatus(`⚠ Sync problem (${lp.email}): ${lp.error}`);
+      const dt = (lp && lp.detail && lp.detail.length) ? `\n⟨${lp.detail.join(' | ')}⟩` : '';
+      if (lp && lp.ok) setStatus(`☁ ${lp.email} — found ${lp.found} file(s): ${(lp.names && lp.names.join(', ')) || '—'}${dt}`);
+      else if (lp && !lp.ok) setStatus(`⚠ Sync problem (${lp.email}): ${lp.error}${dt}`);
       else setStatus('Signed in — syncing…');
     }
     catch(e) { setStatus(`Error: ${e.code || e.message || 'unknown'}`); }
@@ -12169,8 +12185,9 @@ function AccountScreen({ onBack, startup, onContinue }) {
               try {
                 await FirebaseSync.syncNow();
                 const lp = FirebaseSync.getLastPull && FirebaseSync.getLastPull();
-                if (lp && lp.ok) setStatus(`☁ ${lp.email} — found ${lp.found} file(s): ${(lp.names && lp.names.join(', ')) || '—'}`);
-                else if (lp && !lp.ok) setStatus(`⚠ Sync problem: ${lp.error}`);
+                const dt = (lp && lp.detail && lp.detail.length) ? `\n⟨${lp.detail.join(' | ')}⟩` : '';
+                if (lp && lp.ok) setStatus(`☁ ${lp.email} — found ${lp.found} file(s): ${(lp.names && lp.names.join(', ')) || '—'}${dt}`);
+                else if (lp && !lp.ok) setStatus(`⚠ Sync problem: ${lp.error}${dt}`);
                 else setStatus('Synced.');
               } finally { setLoading(false); }
             }}>{loading ? '☁ Syncing…' : '☁ Sync Now'}</button>
@@ -12190,7 +12207,7 @@ function AccountScreen({ onBack, startup, onContinue }) {
             </button>
           </>
         )}
-        {status && <div style={{ fontSize: '0.72rem', color: 'var(--gold)', textAlign: 'center', marginTop: 4 }}>{status}</div>}
+        {status && <div style={{ fontSize: '0.72rem', color: 'var(--gold)', textAlign: 'center', marginTop: 4, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxWidth: 340 }}>{status}</div>}
         {startup && (
           <button
             className={user ? 'btn btn-gold' : 'btn btn-ghost'}
