@@ -752,46 +752,46 @@ window.ACHIEVEMENTS = [
   const A = window.ACHIEVEMENTS;
   const fmt = n => n.toLocaleString('en-US');
   const rar = t => t >= 250 ? 'legendary' : t >= 50 ? 'epic' : t >= 10 ? 'rare' : t >= 5 ? 'uncommon' : 'common';
-  // [prefix, icon, nameLabel, descA, descB, thresholds]
+  // [prefix, icon, names[] (one per threshold, escalating), descA, descB, thresholds]
   const FAM = [
-    ['deck','🗃️','Collection','Own','cards in your deck.',[25,40,60,80,100,125,150,200,250,300,400,500,750,1000,1500,2000]],
-    ['gold','💰','Treasury','Hold','Gold at once.',[100,250,500,1000,2500,5000,7500,10000,15000,25000,50000,100000,250000,500000,750000,1000000]],
-    ['unc','🔵','Uncommon Cache','Own','Uncommon cards.',[5,10,25,50,75,100]],
-    ['rare','🟠','Rare Cache','Own','Rare cards.',[5,10,25,50,75]],
-    ['hero','🟣','Hero Cache','Own','Hero cards.',[3,5,10,25,50]],
-    ['leg','⚪','Legendary Cache','Own','Legendary cards.',[1,3,5,10,25]],
-    ['myth','🔴','Mythic Cache','Own','Mythic cards.',[1,3,5,10,15,25]],
-    ['god','✨','Divinity','Own','God-tier cards.',[1,2,3,5]],
-    ['tradg','🃏','Traditional Player','Play','Traditional games.',[1,5,10,25,50,100,200,350,500,750,1000]],
-    ['tradw','⚔️','Traditional Victor','Win','Traditional games.',[1,5,10,25,50,100,150,250,500]],
-    ['trads','🔥','Traditional Streak','Hit a','win streak in Traditional.',[3,5,10,15,20,25]],
-    ['tourg','🏆','Tourney Entrant','Play','Tourney games.',[1,5,10,25,50,100]],
-    ['tourw','🏆','Tourney Winner','Win','Tourney games (1st place).',[1,5,10,25,50]],
-    ['tours','🏆','Tourney Streak','Hit a','win streak in Tourney.',[3,5,10]],
-    ['hwg','🏰','House Wars Soldier','Play','House Wars games.',[1,5,10,25,50,100]],
-    ['hww','🏰','House Wars Victor','Win','House Wars games.',[1,5,10,25,50]],
-    ['hws','🏰','House Wars Streak','Hit a','win streak in House Wars.',[3,5,10]],
-    ['gotp','👑','Player of the Game','Play','rounds of The Game of Thrones.',[1,5,10,25,50,100]],
-    ['gotw','👑','Crowned','Draw','Win cards in The Game of Thrones.',[1,5,10,25,50]],
-    ['gotl','💀','Survivor of the Game','Draw','Loss cards in The Game of Thrones.',[1,5,10,25]],
-    ['trialg','⚔️','Trial Aspirant','Play','Trial of Seven games.',[1,5,10,25,50]],
-    ['trialw','⚔️','Trial Champion','Win','Trial of Seven games.',[1,5,10,25]],
-    ['trials','⚔️','Trial Streak','Hit a','win streak in Trial of Seven.',[3,5,10]],
-    ['skg','🧩','Bingo Caller','Play','Seven Kingdoms games.',[1,5,10,25,50]],
-    ['skb','🎯','Line Maker','Complete','Bingo lines in Seven Kingdoms (lifetime).',[1,5,10,25,50,100,250,500]],
-    ['skbl','🌟','Blackout','Score','full blackouts in Seven Kingdoms.',[1,3,5,10]],
-    ['skf','📐','Board Filler','Fill','squares (of 25) in one Seven Kingdoms game.',[10,15,20,22,24,25]],
-    ['place','📋','Field Marshal','Place','cards on a board across all games.',[10,50,100,250,500,1000,2500,5000]],
-    ['chars','🎭','Roster','Own variants of','distinct characters.',[10,25,50,100,150,200,300,390]],
-    ['houses','⚜️','Houses United','Own cards from','distinct Houses.',[3,5,10,15,19]],
-    ['allg','🎲','All-Rounder','Play','games across all Collector modes.',[10,25,50,100,250,500,1000,2000]],
-    ['allw','🏅','Conqueror','Win','games across all Collector modes.',[10,25,50,100,250,500]],
+    ['deck','🗃️',['A Modest Muster','The Growing Retinue','A Gathered Court','Keeper of Cards','The Full Hundred','A Sprawling Roster','The Assembled Host','Master of Many','The Vast Muster','Curator of Courts','The Great Archive','Hoarder of Legends','The Endless Vault','A Thousand Faces','The Living Chronicle','Lord of All Cards'],'Own','cards in your deck.',[25,40,60,80,100,125,150,200,250,300,400,500,750,1000,1500,2000]],
+    ['gold','💰',['First Coppers','A Jingling Purse','A Heavy Purse','A Chest of Coin','The Merchant\'s Favor','The Moneylender','Master of Coin','A Lord\'s Fortune','The Golden Hoard','The Overflowing Vault','Rich as a Lannister','The Iron Bank\'s Rival','Wealth of the Reach','The Golden Crown','Richer than the Crown','A Dragon\'s Hoard'],'Hold','Gold at once.',[100,250,500,1000,2500,5000,7500,10000,15000,25000,50000,100000,250000,500000,750000,1000000]],
+    ['unc','🔵',['Uncommon Beginnings','A Blue Streak','Uncommon Fortune','The Blue Collection','Uncommon Devotion','Master of the Uncommon'],'Own','Uncommon cards.',[5,10,25,50,75,100]],
+    ['rare','🟠',['A Rare Find','Growing Rarer','The Rare Few','Collector of Rarities','Master of the Rare'],'Own','Rare cards.',[5,10,25,50,75]],
+    ['hero','🟣',['A Gathering of Heroes','Heroic Company','The Hall of Heroes','A Legion of Heroes','Master of Heroes'],'Own','Hero cards.',[3,5,10,25,50]],
+    ['leg','⚪',['A Living Legend','Legends Assemble','The Legendary Few','Hall of Legends','Master of Legends'],'Own','Legendary cards.',[1,3,5,10,25]],
+    ['myth','🔴',['The First Myth','Myths Made Real','A Mythic Trove','The Mythic Court','Keeper of Myths','Master of Myths'],'Own','Mythic cards.',[1,3,5,10,15,25]],
+    ['god','✨',['Touched by the Gods','Twice Divine','A Pantheon Rising','The God-Maker'],'Own','God-tier cards.',[1,2,3,5]],
+    ['tradg','🃏',['The First Court','Finding Your Footing','A Steady Hand','The Practiced Player','Court Regular','The Hundred Courts','The Seasoned Strategist','A Lifetime of Games','Master of the Court','The Tireless Contender','Ten Hundred Courts'],'Play','Traditional games.',[1,5,10,25,50,100,200,350,500,750,1000]],
+    ['tradw','⚔️',['First Blood','A Taste of Victory','The Winning Way','Proven in Play','The Court Champion','A Hundred Triumphs','The Undoubted Victor','Conqueror of Courts','The Peerless Champion'],'Win','Traditional games.',[1,5,10,25,50,100,150,250,500]],
+    ['trads','🔥',['Three in a Row','A Winning Streak','Unbroken','The Relentless','A Reign of Wins','Untouchable'],'Hit a','win streak in Traditional.',[3,5,10,15,20,25]],
+    ['tourg','🏆',['Enter the Lists','The Tourney Regular','A Seasoned Entrant','The Circuit Rider','Veteran of the Lists','Master of the Tourney'],'Play','Tourney games.',[1,5,10,25,50,100]],
+    ['tourw','🏆',['First of the Field','The Tourney Victor','Champion of the Lists','The Grand Champion','Lord of the Tourney'],'Win','Tourney games (1st place).',[1,5,10,25,50]],
+    ['tours','🏆',['A Tourney Streak','The Reigning Victor','Undefeated Champion'],'Hit a','win streak in Tourney.',[3,5,10]],
+    ['hwg','🏰',['To War','The Seasoned Soldier','A Veteran Campaigner','War-Hardened','The Old Soldier','Master of War'],'Play','House Wars games.',[1,5,10,25,50,100]],
+    ['hww','🏰',['First Conquest','The Warlord','Scourge of Houses','The Conqueror','Warden of Victories'],'Win','House Wars games.',[1,5,10,25,50]],
+    ['hws','🏰',['A War Streak','Unbeaten in War','The Undying Banner'],'Hit a','win streak in House Wars.',[3,5,10]],
+    ['gotp','👑',['You Win or You Die','Tempting Fate','The Gambler','A Player of the Game','Fate\'s Regular','Master of the Game'],'Play','rounds of The Game of Thrones.',[1,5,10,25,50,100]],
+    ['gotw','👑',['A Kind Fate','The Winning Hand','Blessed by Fate','Fortune\'s Champion','The Chosen'],'Draw','Win cards in The Game of Thrones.',[1,5,10,25,50]],
+    ['gotl','💀',['A Bitter Draw','Scarred but Standing','The Survivor','Death\'s Regular'],'Draw','Loss cards in The Game of Thrones.',[1,5,10,25]],
+    ['trialg','⚔️',['The First Trial','Trial-Tested','A Sworn Contender','Veteran of the Seven','Master of the Trial'],'Play','Trial of Seven games.',[1,5,10,25,50]],
+    ['trialw','⚔️',['A Trial Won','Champion of the Seven','The Trial Victor','Lord of the Seven'],'Win','Trial of Seven games.',[1,5,10,25]],
+    ['trials','⚔️',['A Trial Streak','The Unbeaten Seven','Undefeated of the Trial'],'Hit a','win streak in Trial of Seven.',[3,5,10]],
+    ['skg','🧩',['The First Board','Bingo Beginner','A Steady Caller','The Board Veteran','Master of the Kingdoms'],'Play','Seven Kingdoms games.',[1,5,10,25,50]],
+    ['skb','🎯',['First Line','Marking Lines','The Line-Maker','Line Master','A Century of Lines','The Grand Line-Maker','Lines Beyond Count','Lord of Lines'],'Complete','Bingo lines in Seven Kingdoms (lifetime).',[1,5,10,25,50,100,250,500]],
+    ['skbl','🌟',['Blackout!','Twice Blacked Out','The Blackout Artist','Master of the Blackout'],'Score','full blackouts in Seven Kingdoms.',[1,3,5,10]],
+    ['skf','📐',['Half a Board','Filling In','A Near-Full Board','So Very Close','One Square Short','The Perfect Board'],'Fill','squares (of 25) in one Seven Kingdoms game.',[10,15,20,22,24,25]],
+    ['place','📋',['The First Placements','Fielding Cards','A Practiced Placer','The Field Commander','Master of Placement','A Thousand Placements','The Grand Marshal','Placer of Legend'],'Place','cards on a board across all games.',[10,50,100,250,500,1000,2500,5000]],
+    ['chars','🎭',['A Cast of Ten','Faces of Westeros','The Growing Cast','A Hundred Faces','The Great Ensemble','Two Hundred Strong','The Full Cast','Every Face in the Realm'],'Own variants of','distinct characters.',[10,25,50,100,150,200,300,390]],
+    ['houses','⚜️',['A Few Banners','Many Banners','Ten Banners Flying','The House Collector','All the Great Houses'],'Own cards from','distinct Houses.',[3,5,10,15,19]],
+    ['allg','🎲',['The All-Rounder','Jack of All Modes','The Versatile','A Hundred Games','The Devoted Player','Five Hundred Strong','The Thousand-Game Veteran','Master of Every Mode'],'Play','games across all Collector modes.',[10,25,50,100,250,500,1000,2000]],
+    ['allw','🏅',['A Winner\'s Start','Proven Victor','The Repeat Champion','A Hundred Wins','The Consummate Victor','Conqueror of All Modes'],'Win','games across all Collector modes.',[10,25,50,100,250,500]],
   ];
   const seen = new Set(A.map(a => a.id));
-  FAM.forEach(([prefix,icon,label,da,db,ths]) => ths.forEach(t => {
+  FAM.forEach(([prefix,icon,names,da,db,ths]) => ths.forEach((t,i) => {
     const id = `ach_cm_${prefix}_${t}`;
     if (seen.has(id)) return;
-    A.push({ id, name:`${label} ${fmt(t)}`, icon, rarity:rar(t), desc:`${da} ${fmt(t)} ${db}`, cat:'Collector' });
+    A.push({ id, name: names[i] || `${prefix} ${fmt(t)}`, icon, rarity:rar(t), desc:`${da} ${fmt(t)} ${db}`, cat:'Collector' });
   }));
 })();
 
