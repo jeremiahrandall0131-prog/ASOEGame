@@ -11424,7 +11424,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
     const entries = (save.owned||[]).map((id,i)=>({ id, i, card:getCollCard(id) })).filter(e=>e.card)
       .sort((a,b)=>(b.card.overall||0)-(a.card.overall||0));
     return (
-      <div className="scroll" style={{ flex:1, overflowY:'auto', marginTop:8 }}>
+      <div className="scroll" style={{ flex:1, minHeight:0, overflowY:'auto', marginTop:8 }}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:6 }}>
           {entries.map(e => { const c=e.card; const ct=T[c.tier]||{color:'#888',bg:'#111'}; const disabled=disableFn&&disableFn(c); return (
             <div key={e.i} onClick={()=>{ if(!disabled) onPickCard(e.i); }} style={{ border:`2px solid ${ct.color}`, borderRadius:6, padding:'7px 9px', background:ct.bg, cursor:disabled?'not-allowed':'pointer', opacity:disabled?0.4:1 }}>
@@ -11510,7 +11510,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
       </div>
     ); };
     return wrap(
-      <div className="scroll" style={{ flex:1, overflowY:'auto', padding:'10px 16px 4px' }}>
+      <div className="scroll" style={{ flex:1, minHeight:0, overflowY:'auto', padding:'10px 16px 4px' }}>
         <div style={{ textAlign:'center', fontSize:'0.66rem', color:'var(--text2)', lineHeight:1.5, maxWidth:540, margin:'0 auto 12px' }}>
           Ten cards will be laid face-down — <b style={{ color:'var(--gold2,#f0c84a)' }}>5 Win</b> and <b style={{ color:'#e05555' }}>5 Loss</b>, drawn from the pools below and shuffled. You pick <b>one</b>; its fate is sealed the instant you touch it. Here is everything that could befall you:
         </div>
@@ -11535,7 +11535,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
   // ── PICK SCREEN ──
   if (stage === 'pick') {
     return wrap(
-      <div className="scroll" style={{ flex:1, display:'flex', flexDirection:'column', padding:'14px 16px' }}>
+      <div className="scroll" style={{ flex:1, minHeight:0, display:'flex', flexDirection:'column', padding:'14px 16px' }}>
         <div style={{ textAlign:'center', fontSize:'0.7rem', color:'var(--text2)', marginBottom:4 }}>5 Win cards · 5 Loss cards, hidden &amp; shuffled.</div>
         <div style={{ textAlign:'center', fontSize:'0.6rem', color:'#e0a84a', marginBottom:14 }}>Choose one. Its fate is sealed the instant you touch it — no take-backs.</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:8, maxWidth:560, margin:'0 auto', width:'100%' }}>
@@ -11592,9 +11592,9 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
 
   if (stage === 'done') {
     return wrap(
-      <div style={{ flex:1, display:'flex', flexDirection:'column' }}>
+      <div style={{ flex:1, minHeight:0, display:'flex', flexDirection:'column' }}>
         {header}
-        <div className="scroll" style={{ flex:1, padding:'6px 16px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
+        <div className="scroll" style={{ flex:1, minHeight:0, padding:'6px 16px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
           {reward && <div className="got-pop" style={{ width:228, height:340, flexShrink:0 }}>{characterFace(reward, rewardEvolved)}</div>}
           {summary && <div style={{ fontSize:'0.85rem', color:isWin?'var(--gold)':'#e05555', fontFamily:'Cinzel,serif', marginTop:reward?14:10, textAlign:'center' }}>{summary}</div>}
         </div>
@@ -11615,7 +11615,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
 
   if (pickFn) {
     return wrap(
-      <div style={{ flex:1, display:'flex', flexDirection:'column' }}>
+      <div style={{ flex:1, minHeight:0, display:'flex', flexDirection:'column' }}>
         {header}
         <div style={{ fontSize:'0.66rem', color:isLossChoice?'#e05555':'var(--gold)', textAlign:'center', padding:'2px 16px' }}>{instruction}{isLossChoice && ' (required)'}</div>
         <div style={{ flex:1, minHeight:0, padding:'0 16px', display:'flex', flexDirection:'column' }}>{ownedGrid(pickFn, disableFn)}</div>
