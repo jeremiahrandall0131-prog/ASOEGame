@@ -7179,7 +7179,7 @@ function genTrialCpuDeck(target) {
   return best ? best.deck : build(target).deck;
 }
 const COLL_TIER_ORDER = ['starter','uncommon','rare','hero','legendary','mythic'];
-const COLL_AUCTION_GOLD  = { starter:15, uncommon:25, rare:40, hero:75, legendary:150, mythic:300 };
+const COLL_AUCTION_GOLD  = { starter:15, uncommon:25, rare:40, hero:75, legendary:150, mythic:300, god:1000 };
 // Blacksmith: cost to repair a card's negative (Devolve/Degrade) effects, by its CURRENT tier.
 // God can only have its Degrade repaired (a devolved God is no longer God) — never restored to God.
 const COLL_REPAIR_GOLD   = { starter:50, uncommon:100, rare:150, hero:200, legendary:250, mythic:300, god:500 };
