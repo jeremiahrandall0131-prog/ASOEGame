@@ -7870,14 +7870,14 @@ const TUTORIAL_STEPS = [
   { title:'Court Rules', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'Your court must be legal: the Ruler and Consort must be OPPOSITE genders, and the Heir must be younger than BOTH. Break a rule and Confirm locks, with a hint naming exactly how to fix it.' },
   { title:'The CPU & Scoring', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'The CPU builds its own court each round and always fields its strongest lineup — and it scales up as your collection grows, so it\'s always a real fight. Each of the 10 positions is compared head-to-head; win the most to take the game.' },
   { title:'Win Pulls & the Wheel', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'Win and you earn a Win Pull — the 10 cards the CPU played become random variants; choose ONE for free. Stack a 5-win streak and you also earn a Spin the Wheel: 30 cards, 5 of every tier, for a bonus pull.' },
-  { title:'Gold & Wagers', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'Finishing any game pays +5 Gold; winning pays more (by 5+ or 10+ adds bonuses), plus a Score Bonus for how well your court fits — up to +100 once your court reaches 100 points. You can also Wager up to 100 Gold per game.' },
+  { title:'Gold & Wagers', screen:'modeChoice', target:'[data-tour="mode-traditional"]', body:'Finishing a game pays a flat +20 Gold (win or lose); winning pays more (by 5+ or 10+ adds bonuses), plus a Score Bonus for how well your court fits — up to +100 once your court reaches 100 points. You can also Wager up to 100 Gold per game.' },
   // ── Modes 2–6 ──
   { title:'② Tourney', screen:'modeChoice', target:'[data-tour="mode-tourney"]', body:'The same court as Traditional, but you face THREE CPUs at once. Everyone matches your wager into a single pot — finish 1st to claim it all, and earn a Win Pull from every opponent you outplaced.' },
   { title:'③ House Wars', screen:'modeChoice', target:'[data-tour="mode-houseWars"]', body:'Pledge to a single Great House. You and the CPU each field a 5-seat lineup drawn only from that House\'s cards (you need 10+ of one House to enter). The stakes are real: win and you Spin the Wheel for a card from the enemy\'s House — and a 5-win streak lets you spin it FIVE times. Lose and you SURRENDER one of your own.' },
   { title:'④ The Game of Thrones', screen:'modeChoice', target:'[data-tour="mode-got"]', body:'Pure fate. Ten cards lie face-down — five Win, five Loss. Pick ONE and its effect fires instantly and permanently: a Gold windfall, a free Evolve, a wheel spin… or a Devolve, a Degrade, or worse. Win or die.' },
   { title:'Devolve & Degrade', screen:'modeChoice', target:'[data-tour="mode-got"]', body:'That\'s the risk in The Game of Thrones (and in House Wars stakes): a card can be DEVOLVED — knocked down a full tier — or DEGRADED, losing points across every position. Wounded cards show a red ⚠ in your deck. Reforge them at the Blacksmith, or Evolve the card to cleanse the damage entirely.' },
   { title:'⑤ Trial of Seven', screen:'modeChoice', target:'[data-tour="mode-trial"]', body:'A duel of champions where ONLY the Kingsguard score counts. Pick a 15-card lineup and the CPU fields a closely-matched roster. You alternate drawing fate into seven Kingsguard seats — highest total wins, with the same optional wager and a Win Pull from the CPU\'s seven.' },
-  { title:'⑥ Seven Kingdoms', screen:'modeChoice', target:'[data-tour="mode-sevenK"]', body:'A solo 5×5 bingo board (25+ cards to play). Every square demands a card meeting a random requirement — a House, a tier, an age, a position, a letter, an Overall band — around a free center. Draw fate 25 times and place each where it fits; a card that fits nowhere is discarded. Each completed line pays 20 Gold, a full blackout pays 2,000, and filling 20+ squares earns a Spin the Wheel.' },
+  { title:'⑥ Seven Kingdoms', screen:'modeChoice', target:'[data-tour="mode-sevenK"]', body:'A solo 5×5 bingo board (25+ cards to play). Every square demands a card meeting a random requirement — a House, a tier, an age, a position, a letter, an Overall band — around a free center. Draw fate 25 times and place each where it fits; a card that fits nowhere is discarded. Every square you fill pays +2 Gold, each completed line pays 20 Gold, a full blackout pays 2,000, and filling 20+ squares earns a Spin the Wheel.' },
   // ── Close ──
   { title:'Go Build Your Dynasty!', body:'That\'s the full tour. Tap the red ? in the hub any time to replay it. Now go forge the finest court in all the realm!' },
 ];
@@ -9584,7 +9584,7 @@ function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
 // ─── Trial of Seven: result scorecard ───────────────────────────────────────
 function CollectorTrialResult({ result, onWinPull, onHome }) {
   const T = window.COLLECTOR_TIERS || {};
-  const { isWin, playerScore, cpuScore, playerBoard, cpuBoard, wager, wagerDelta } = result || {};
+  const { isWin, playerScore, cpuScore, playerBoard, cpuBoard, wager, wagerDelta, completionGold } = result || {};
   const [tab, setTab] = React.useState('mine');
   const board = tab==='mine' ? (playerBoard||{}) : (cpuBoard||{});
   return (
@@ -9594,6 +9594,7 @@ function CollectorTrialResult({ result, onWinPull, onHome }) {
         <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.82rem', marginTop:6 }}>
           <span style={{ color:'var(--gold)' }}>You ⚔ {Math.round((playerScore||0)*10)/10}</span> <span style={{ color:'var(--text2)' }}>·</span> <span style={{ color:'#e05555' }}>CPU ⚔ {Math.round((cpuScore||0)*10)/10}</span>
         </div>
+        {completionGold > 0 && <div style={{ fontSize:'0.7rem', marginTop:4, color:'var(--gold)', fontFamily:'Cinzel,serif' }}>🪙 Completion: +{completionGold} Gold</div>}
         {wager > 0 && <div style={{ fontSize:'0.7rem', marginTop:4, color: wagerDelta>=0?'#4caf50':'#e05555', fontFamily:'Cinzel,serif' }}>🎲 Wager: {wagerDelta>=0?'+':''}{wagerDelta} Gold</div>}
       </div>
       <div style={{ display:'flex', borderBottom:'1px solid var(--border)' }}>
@@ -9619,8 +9620,9 @@ function CollectorTrialResult({ result, onWinPull, onHome }) {
 // ─── Seven Kingdoms (bingo board) ───────────────────────────────────────────
 // Solo 5x5 board. Each square is a random requirement (House / Tier / House+Tier / Max-Age /
 // Min-Age / Position / Identity / Letter / Overall) + a center FREE space (any card). 25 turns:
-// draw fate, the squares it qualifies for light up, place it in one. Each completed line = 20G,
-// a full blackout = 2,000G, and filling >=20 squares earns a Spin the Wheel. No rerolls.
+// draw fate, the squares it qualifies for light up, place it in one. Every filled square = +2G,
+// each completed line = 20G, a full blackout = 2,000G, and filling >=20 squares earns a Spin the
+// Wheel. No rerolls.
 const SK_TIERS = ['starter','uncommon','rare','hero','legendary','mythic','god'];
 const SK_LINES = [
   [0,1,2,3,4],[5,6,7,8,9],[10,11,12,13,14],[15,16,17,18,19],[20,21,22,23,24], // rows
@@ -9718,6 +9720,8 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
   const [confirmQuit, setConfirmQuit] = React.useState(false);
   const [showDeckView, setShowDeckView] = React.useState(false);
   const [result, setResult] = React.useState(null);
+  const [rerollsLeft, setRerollsLeft] = React.useState(Math.min(save.rerolls||0, GAME_REROLL_LIMIT)); // up to 3/game, from your balance
+  const [rerollsUsed, setRerollsUsed] = React.useState(0);
   const deckCards = React.useMemo(() => (save.owned||[]).map(getCollCard).filter(Boolean), [save.owned]);
 
   const filledCount = placed.filter(Boolean).length;
@@ -9736,6 +9740,15 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
     advance(np, new Set([...usedIds, drawnCard.id]));
   }
   function discard() { if (phase!=='place' || !drawnCard) return; advance(placed, new Set([...usedIds, drawnCard.id])); }
+  // A card that fits no open square can be rerolled (up to 3/game, drawn from your reroll balance) for
+  // a fresh draw instead of discarding — optional; once rerolls run out the card is simply discarded.
+  function doReroll() {
+    if (rerollsLeft <= 0 || phase !== 'place' || !drawnCard) return;
+    const avail = (save.owned||[]).map(getCollCard).filter(c => c && !usedIds.has(c.id) && c.id !== drawnCard.id);
+    if (!avail.length) return;
+    setDrawnCard(avail[Math.floor(Math.random()*avail.length)]);
+    setRerollsLeft(r=>r-1); setRerollsUsed(u=>u+1);
+  }
   function advance(np, nu) {
     setPlaced(np); setUsedIds(nu); setDrawnCard(null);
     const t = turn + 1; setTurn(t);
@@ -9746,8 +9759,9 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
     const fc = np.filter(Boolean).length;
     const bingos = skCountBingos(np);
     const blackout = fc >= 25;
-    const gold = bingos*20 + (blackout ? 2000 : 0);
-    const ns = { ...save, gold: (save.gold||0) + gold, modeStats: collRecordMode(save.modeStats, 'sevenK', { bingos, blackout, filled: fc }) };
+    const fillGold = fc * 2; // +2 Gold for every filled square, on top of any bingo/blackout bonus
+    const gold = fillGold + bingos*20 + (blackout ? 2000 : 0);
+    const ns = { ...save, gold: (save.gold||0) + gold, rerolls: (save.rerolls||0) - rerollsUsed, modeStats: collRecordMode(save.modeStats, 'sevenK', { bingos, blackout, filled: fc }) };
     saveCollSave(ns); onUpdate(ns);
     setResult({ filledCount: fc, bingos, gold, blackout, wheel: fc >= 20 });
     setPhase('done');
@@ -9756,11 +9770,11 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
   // A drawn card that fits NO open square is auto-discarded (gone for good) and the turn ends —
   // briefly revealed first so the player sees what they drew.
   React.useEffect(() => {
-    if (phase === 'place' && drawnCard && !anyEligible) {
-      const t = setTimeout(() => discard(), 4400); // ~3s longer reveal before it's discarded
+    if (phase === 'place' && drawnCard && !anyEligible && rerollsLeft <= 0) {
+      const t = setTimeout(() => discard(), 4400); // out of rerolls → reveal briefly, then discard
       return () => clearTimeout(t);
     }
-  }, [phase, drawnCard, anyEligible]);
+  }, [phase, drawnCard, anyEligible, rerollsLeft]);
 
   const lineCells = new Set(); SK_LINES.forEach(l => { if (l.every(i=>placed[i])) l.forEach(i=>lineCells.add(i)); });
 
@@ -9794,7 +9808,7 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
         <button onClick={()=>setConfirmQuit(true)} title="Leave" style={{ width:30, height:30, borderRadius:'50%', background:'#7a1010', border:'1px solid #b01a1a', color:'#fff', cursor:'pointer', fontWeight:900, flexShrink:0 }}>✕</button>
         <div style={{ flex:1, textAlign:'center' }}>
           <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.75rem', color:'var(--gold)' }}>🏰 SEVEN KINGDOMS</div>
-          <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>Turn {Math.min(turn+1,25)}/25 · {filledCount} filled · {skCountBingos(placed)} bingo{skCountBingos(placed)!==1?'s':''}</div>
+          <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>Turn {Math.min(turn+1,25)}/25 · {filledCount} filled · {skCountBingos(placed)} bingo{skCountBingos(placed)!==1?'s':''} · 🎲 {rerollsLeft}</div>
         </div>
         <button onClick={()=>setShowDeckView(true)} title="View your deck" style={{ width:30, height:30, flexShrink:0, borderRadius:6, background:'var(--bg3)', border:'1px solid var(--border)', color:'var(--gold)', cursor:'pointer', fontSize:'0.9rem' }}>📖</button>
       </div>
@@ -9842,9 +9856,19 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
               <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(drawnCard); }} title="View card" style={{ flexShrink:0, background:'none', border:'none', color:'var(--gold)', fontSize:'1.1rem', cursor:'pointer', padding:'0 2px', lineHeight:1 }}>ⓘ</button>
             </div>
             <div style={{ textAlign:'center', marginTop:7 }}>
-              {anyEligible
-                ? <div style={{ fontSize:'0.66rem', color:'var(--gold)', fontFamily:'Cinzel,serif' }}>Tap a glowing square to place it.</div>
-                : <div style={{ fontSize:'0.66rem', color:'#e05555', fontFamily:'Cinzel,serif' }}>✕ No open square fits — discarded, turn ends…</div>}
+              {anyEligible ? (
+                <div style={{ fontSize:'0.66rem', color:'var(--gold)', fontFamily:'Cinzel,serif' }}>Tap a glowing square to place it.</div>
+              ) : rerollsLeft > 0 ? (
+                <>
+                  <div style={{ fontSize:'0.66rem', color:'#e05555', fontFamily:'Cinzel,serif', marginBottom:6 }}>✕ No open square fits this card — reroll it, or discard.</div>
+                  <div style={{ display:'flex', gap:8, justifyContent:'center' }}>
+                    <button className="btn btn-gold btn-sm" style={{ flex:1, maxWidth:150 }} onClick={doReroll}>🎲 Reroll ({rerollsLeft})</button>
+                    <button className="btn btn-ghost btn-sm" style={{ flex:1, maxWidth:150, color:'#e05555', borderColor:'#e05555' }} onClick={discard}>🗑 Discard</button>
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize:'0.66rem', color:'#e05555', fontFamily:'Cinzel,serif' }}>✕ No open square fits — discarded, turn ends…</div>
+              )}
             </div>
           </div>
         ); })()}
@@ -9854,6 +9878,7 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.92)', zIndex:380, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center' }}>
           <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.4rem', fontWeight:800, color:'var(--gold)' }}>🏰 SEVEN KINGDOMS</div>
           <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.9rem', color:'var(--text2)', marginTop:10 }}>{result.filledCount} / 25 squares filled</div>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color:'#4caf50', marginTop:6 }}>{result.filledCount} square{result.filledCount!==1?'s':''} × 2 → +{result.filledCount*2}G</div>
           <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color:'#4caf50', marginTop:6 }}>{result.bingos} Bingo{result.bingos!==1?'s':''} → +{result.bingos*20}G</div>
           {result.blackout && <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color:'#ffd700', marginTop:6 }}>★ BLACKOUT! +2,000G</div>}
           <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.25rem', color:'var(--gold)', fontWeight:800, marginTop:14 }}>🪙 +{result.gold} Gold</div>
@@ -9944,54 +9969,64 @@ function VolumeBar() {
 function CollectorDeckViewer({ cards, title, positions, defaultMode, onClose }) {
   const T = window.COLLECTOR_TIERS || {};
   const POS = positions || COLL_POS; // House Wars passes its 5 seats; other modes use all 10
-  const [mode, setMode] = React.useState(defaultMode || 'overall'); // overall | name | identity | position
-  const [query, setQuery] = React.useState('');
-  const [posId, setPosId] = React.useState(POS[0].id);
+  // Full filter/search stack — Tier + House + Gender + text Search + Sort — the SAME engine My Deck,
+  // Card Index and the Store use (collFilterAndSort), so any deck can be searched the same way here.
+  const [f, setF] = React.useState({ filterTier:'all', filterHouse:'all', filterGender:'all', search:'', sort: defaultMode || 'overall', posId: POS[0].id });
+  const upd = patch => setF(s => ({ ...s, ...patch }));
   const [detail, setDetail] = React.useState(null);
-  let list = (cards || []).slice();
-  if (mode === 'identity' && query) { const q = query.toLowerCase(); list = list.filter(c => (c.identity||'').toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q) || (c.houses||[]).some(h=>h.toLowerCase().includes(q))); }
-  if (mode === 'name') list.sort((a,b) => (a.name||'').localeCompare(b.name||''));
-  else if (mode === 'position') list.sort((a,b) => (((b.scores&&b.scores[posId])||0) - ((a.scores&&a.scores[posId])||0)) || (b.overall-a.overall));
-  else list.sort((a,b) => b.overall - a.overall); // overall (also the order for identity search)
-  const posLabel = (POS.find(p => p.id === posId) || {}).label;
+  const sel = { fontSize:'0.6rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:4 };
+  const list = collFilterAndSort(cards || [], f);
+  const posLabel = (POS.find(p => p.id === f.posId) || {}).label;
   return (
     <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.9)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
       {detail && <CollDetailModal card={detail} onClose={()=>setDetail(null)} />}
       <div onClick={e=>e.stopPropagation()} style={{ width:'100%', maxWidth:460, maxHeight:'88%', display:'flex', flexDirection:'column', background:'var(--bg)', border:'1px solid var(--gold)', borderRadius:10, padding:14 }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
-          <div style={{ fontFamily:'Cinzel,serif', color:'var(--gold)', fontSize:'0.85rem', fontWeight:700 }}>{title||'Your Deck'} <span style={{ color:'var(--text2)', fontSize:'0.6rem' }}>· {(cards||[]).length} cards</span></div>
+          <div style={{ fontFamily:'Cinzel,serif', color:'var(--gold)', fontSize:'0.85rem', fontWeight:700 }}>{title||'Your Deck'} <span style={{ color:'var(--text2)', fontSize:'0.6rem' }}>· {list.length}/{(cards||[]).length} cards</span></div>
           <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'1.1rem', cursor:'pointer', lineHeight:1 }}>✕</button>
         </div>
-        <div style={{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' }}>
-          {[['overall','Overall'],['name','A-Z'],['identity','Identity'],['position','Position']].map(([m,lbl]) => (
-            <button key={m} className={`btn btn-${mode===m?'gold':'ghost'} btn-sm`} style={{ fontSize:'0.58rem', flex:1 }} onClick={()=>setMode(m)}>{lbl}</button>
-          ))}
-        </div>
-        {mode==='identity' && <input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search a character or identity…" style={{ width:'100%', fontSize:'0.66rem', padding:'5px 8px', background:'var(--bg2)', border:'1px solid var(--gold)', color:'var(--text)', borderRadius:5, marginBottom:8 }} />}
-        {mode==='position' && (
-          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
-            <span style={{ fontSize:'0.6rem', color:'var(--text2)' }}>Best at:</span>
-            <select value={posId} onChange={e=>setPosId(e.target.value)} style={{ flex:1, fontSize:'0.64rem', padding:'4px 6px', background:'var(--bg2)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:5 }}>
+        <div style={{ display:'flex', gap:5, marginBottom:8, flexWrap:'wrap', alignItems:'center' }}>
+          <input style={{ flex:'1 1 130px', minWidth:108, ...sel }} placeholder="Search name / identity / house…" value={f.search} onChange={e=>upd({ search:e.target.value })} />
+          <select style={sel} value={f.filterTier} onChange={e=>upd({ filterTier:e.target.value })}>
+            <option value="all">All Tiers</option>
+            {COLL_TIER_ORDER.map(t => <option key={t} value={t}>{(T[t]||{}).label||t}</option>)}
+          </select>
+          <select style={sel} value={f.filterHouse} onChange={e=>upd({ filterHouse:e.target.value })}>
+            <option value="all">All Houses</option>
+            {collHouseOptions().map(h => <option key={h} value={h}>{h}</option>)}
+          </select>
+          <select style={sel} value={f.filterGender} onChange={e=>upd({ filterGender:e.target.value })}>
+            <option value="all">Any ⚥</option><option value="M">♂ Male</option><option value="F">♀ Female</option>
+          </select>
+          <select style={sel} value={f.sort} onChange={e=>upd({ sort:e.target.value })}>
+            <option value="overall">Sort: Overall</option>
+            <option value="tier">Sort: Tier</option>
+            <option value="name">Sort: A–Z</option>
+            <option value="house">Sort: House</option>
+            <option value="position">Sort: Position</option>
+          </select>
+          {f.sort==='position' && (
+            <select style={{ ...sel, borderColor:'var(--gold)' }} value={f.posId} onChange={e=>upd({ posId:e.target.value })}>
               {POS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
             </select>
-          </div>
-        )}
+          )}
+        </div>
         <div className="scroll" style={{ flex:1, overflowY:'auto' }}>
-          {list.length===0 ? <div style={{ fontSize:'0.65rem', color:'var(--text2)', textAlign:'center', padding:16 }}>No cards.</div> :
-            list.map((c,i) => { const ct=T[c.tier]||{color:'#888'}; const ps=(c.scores&&c.scores[posId])||0; return (
+          {list.length===0 ? <div style={{ fontSize:'0.65rem', color:'var(--text2)', textAlign:'center', padding:16 }}>No cards match.</div> :
+            list.map((c,i) => { const ct=T[c.tier]||{color:'#888'}; const ps=(c.scores&&c.scores[f.posId])||0; return (
               <div key={c.id+'_'+i} onClick={()=>setDetail(c)} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 8px', borderBottom:'1px solid var(--border)', cursor:'pointer' }}>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:'0.66rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
                   <div style={{ fontSize:'0.52rem', color:'var(--text2)' }}>{c.identity||''}{c.houses&&c.houses[0]?(' · '+c.houses[0]):''}</div>
                 </div>
                 <CollTierBadge tier={c.tier} />
-                {mode==='position'
+                {f.sort==='position'
                   ? <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: collScoreColor(ps), fontSize:'0.82rem', width:42, textAlign:'right' }}>{Math.round(ps*10)/10}</span>
                   : <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.82rem', width:42, textAlign:'right' }}>{c.overall}</span>}
               </div>
             ); })}
         </div>
-        {mode==='position' && <div style={{ fontSize:'0.54rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>Ranked by {posLabel} score, highest first.</div>}
+        {f.sort==='position' && <div style={{ fontSize:'0.54rem', color:'var(--text2)', textAlign:'center', marginTop:6 }}>Ranked by {posLabel} score, highest first.</div>}
       </div>
     </div>
   );
@@ -10280,19 +10315,20 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
     const isWin = playerScore > topCpuScore;  // Tourney: must outscore ALL opponents
     const margin = playerScore - cpuScore;
     // Gold breakdown — every line below is itemised on the scorecard.
-    const baseGold = isWin ? (margin >= 10 ? 30 : margin >= 5 ? 15 : 10) : 5; // win-by-margin, else completion
-    const baseLabel = isWin ? (margin >= 10 ? 'Decisive win' : margin >= 5 ? 'Solid win' : 'Win') : 'Completion';
+    const completionGold = 20; // flat bonus just for completing a game — win OR lose
+    const winBonus = isWin ? (margin >= 10 ? 30 : margin >= 5 ? 15 : 10) : 0; // extra for winning, by margin
+    const winLabel = margin >= 10 ? 'Decisive win' : margin >= 5 ? 'Solid win' : 'Win';
     // Graduated score bonus — rewards how well your cards fit their positions
     // (a typical board is ~45-70; a strong court can reach 100+).
     const scoreBonus = playerScore >= 100 ? 100 : playerScore >= 90 ? 60 : playerScore >= 80 ? 35 : playerScore >= 70 ? 20 : playerScore >= 60 ? 10 : 0;
-    const goldEarned = baseGold + scoreBonus;
+    const goldEarned = completionGold + winBonus + scoreBonus;
     // Tourney: each of the N CPUs matches the wager, so a win takes the whole pot (+N×wager);
     // a loss still costs only your own wager. Traditional (N=1) is unchanged (+wager / −wager).
     const wagerDelta = wager > 0 ? (isWin ? wager * NCPU : -wager) : 0;
     const pot = wager > 0 ? wager * (NCPU + 1) : 0;
     const netGold = goldEarned + wagerDelta;
     const finalGold = Math.max(0, (save.gold||0) + netGold);
-    const goldBreakdown = { baseGold, baseLabel, scoreBonus, wager, wagerDelta, pot, goldEarned, netGold, startGold: (save.gold||0), finalGold };
+    const goldBreakdown = { completionGold, winBonus, winLabel, scoreBonus, wager, wagerDelta, pot, goldEarned, netGold, startGold: (save.gold||0), finalGold };
 
     // Update stats
     const cardPlays = { ...(save.stats?.cardPlays||{}) };
@@ -10726,7 +10762,8 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
           )}
           {gb ? (
             <div style={{ maxWidth:268, margin:'0 auto', fontSize:'0.62rem' }}>
-              <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', marginBottom:2 }}><span>{gb.baseLabel}</span><span style={{ color:'var(--gold)' }}>+{gb.baseGold}G</span></div>
+              <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', marginBottom:2 }}><span>Completion</span><span style={{ color:'var(--gold)' }}>+{gb.completionGold}G</span></div>
+              {gb.winBonus > 0 && <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', marginBottom:2 }}><span>{gb.winLabel}</span><span style={{ color:'var(--gold)' }}>+{gb.winBonus}G</span></div>}
               {gb.scoreBonus > 0 && <div style={{ display:'flex', justifyContent:'space-between', color:'var(--text2)', marginBottom:2 }}><span>Court bonus (score {playerScore})</span><span style={{ color:'var(--gold)' }}>+{gb.scoreBonus}G</span></div>}
               {gb.wager > 0 && <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}><span style={{ color:'var(--text2)' }}>{result.numCpus > 1 ? (isWin ? `Pot won (${gb.pot}G)` : 'Wager lost') : `Wager ${isWin ? 'won' : 'lost'}`}</span><span style={{ color: isWin ? '#4caf50' : '#e05555' }}>{gb.wagerDelta >= 0 ? '+' : ''}{gb.wagerDelta}G</span></div>}
               <div style={{ display:'flex', justifyContent:'space-between', borderTop:'1px solid var(--border)', marginTop:4, paddingTop:4, fontFamily:'Cinzel,serif' }}><span style={{ color:'var(--text)' }}>Net this game</span><span style={{ color: gb.netGold >= 0 ? 'var(--gold)' : '#e05555', fontWeight:700 }}>{gb.netGold >= 0 ? '+' : ''}{gb.netGold}G</span></div>
@@ -11234,7 +11271,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
 
 // ─── House Wars: scorecard → reward spawn (win) / card surrender (loss) ──────
 function CollectorHouseWarsResult({ result, onClaim, onDiscard }) {
-  const { isWin, playerScore, cpuScore, playerBoard, cpuBoard, userHouse, cpuHouse } = result;
+  const { isWin, playerScore, cpuScore, playerBoard, cpuBoard, userHouse, cpuHouse, completionGold } = result;
   const [stage, setStage] = React.useState('score'); // score | reward | discard
   const [discardSel, setDiscardSel] = React.useState(null);
   const [detailCard, setDetailCard] = React.useState(null);
@@ -11257,6 +11294,7 @@ function CollectorHouseWarsResult({ result, onClaim, onDiscard }) {
               <div style={{ alignSelf:'center', color:'var(--text2)' }}>vs</div>
               <div><div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>CPU</div><div style={{ fontFamily:'Cinzel,serif', fontSize:'1.5rem', fontWeight:700, color:'var(--p2,#e05555)' }}>{Math.round(cpuScore*10)/10}</div></div>
             </div>
+            {completionGold > 0 && <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.72rem', color:'var(--gold)', marginTop:8 }}>🪙 Completion bonus: +{completionGold} Gold</div>}
           </div>
           <div className="scroll" style={{ flex:1, padding:'4px 12px' }}>
             {HW_POS.map(p => {
@@ -11874,11 +11912,11 @@ function CollectorHub({ onHome }) {
     }
     const wagerDelta = wager > 0 ? (result.isWin ? wager : -wager) : 0; // win returns it doubled (+wager net); loss loses it
     const placedIds = Object.values(result.cpuBoard || {}).filter(Boolean).map(c => c.id); // the CPU's 7 fielded cards
-    const ns = { ...save, gold: Math.max(0, (save.gold||0) + wagerDelta), cardStats: collRecordCardStats(save.cardStats, result.playerBoard, result.isWin, 'kingsguard'),
+    const ns = { ...save, gold: Math.max(0, (save.gold||0) + wagerDelta + 20), cardStats: collRecordCardStats(save.cardStats, result.playerBoard, result.isWin, 'kingsguard'), // +20 completion bonus
       modeStats: collRecordMode(save.modeStats, 'trial', { win:result.isWin, score:result.playerScore }) };
     if (result.isWin) ns.pendingWinPull = { cards: placedIds }; // auto-award (from the 7 placed) if they bail (#6)
     saveCollSave(ns); setSave(ns);
-    setTrialResult({ ...result, wager, wagerDelta }); setScreen('trialResult');
+    setTrialResult({ ...result, wager, wagerDelta, completionGold: 20 }); setScreen('trialResult');
   }
   function handleTrialWinPull() {
     const placed = Object.values((trialResult && trialResult.cpuBoard) || {}).filter(Boolean);
@@ -11942,10 +11980,10 @@ function CollectorHub({ onHome }) {
     const newHw = { ...hw, games:(hw.games||0)+1, wins:(hw.wins||0)+(isWin?1:0), streak,
                     maxStreak: Math.max(hw.maxStreak||0, streak), byHouse, recentHouse: house, recentRun,
                     active: isWin ? null : { userHouse: house, cpuHouse: hwCpuHouse, lineupIds: placedIds, phase:'lossPending' } };
-    const newSave = { ...save, hw: newHw, cardStats: collRecordCardStats(save.cardStats, result.playerBoard, isWin) }; // per-card record (#3)
+    const newSave = { ...save, gold: (save.gold||0) + 20, hw: newHw, cardStats: collRecordCardStats(save.cardStats, result.playerBoard, isWin) }; // +20 completion bonus + per-card record (#3)
     saveCollSave(newSave); setSave(newSave);
     setHwReward(null); // spoils are now paid via the wheel (handleHwClaim), not a single pre-rolled card
-    setHwResult({ ...result, wheelEarned });
+    setHwResult({ ...result, wheelEarned, completionGold: 20 });
     setScreen('hwResult');
   }
   function handleHwClaim() { // win: spin the enemy House's spoils wheel — 5 spins on a 5-win streak, else 1
@@ -12085,12 +12123,30 @@ function CollectorHub({ onHome }) {
     const hwElig = hwEligibleHouses(save.owned);
     const hwLocked = !enough || hwElig.length === 0;
     const MODES = [
-      { id:'traditional', label:'Traditional', icon:'⚔', col:'#d4a830', start:startTraditional, locked:false, how:'Draft a 10-seat court against 1 CPU. Each turn you draw fate and place a card into one of the ten positions (Ruler, Hand, Kingsguard, and more), with an optional Gold wager. Outscore the CPU to win a card from their court.' },
-      { id:'tourney', label:'Tourney', icon:'🏆', col:'#3aa0ff', start:startTourney, locked:false, how:'Just like Traditional, but you face 3 CPUs at once. Each rival matches your wager for a 4× pot — place 1st to take it all, and pull a card from every court you outplaced.' },
-      { id:'houseWars', label:'House Wars', icon:'🏰', col:'#e05555', start:startHouseWars, locked:hwLocked, lockMsg:(!enough?'Need 21+ cards':'Need 10 in one House'), how:'A House is spun for you and the CPU. Field 10 cards of your House across a 5-seat court (no rerolls). Win and you Spin the Wheel for a card from their House — a 5-win streak spins it 5 times; lose and you surrender one of yours. Needs 10+ cards in a single House.' },
-      { id:'got', label:'The Game of Thrones', icon:'👑', col:'#a04ad0', start:startGameOfThrones, locked:!enough, lockMsg:'Need 21+ cards', how:'Pick 1 of 10 face-down cards — 5 Win and 5 Loss. The effect (gold, evolve, devolve, genocide, store-closed…) is applied INSTANTLY and can\'t be undone. Win or die. Needs 21+ cards.' },
-      { id:'trial', label:'Trial of Seven', icon:'7️⃣', col:'#2bb3b3', start:startTrial, locked:!trialEnough, lockMsg:'Need 15+ cards', how:'Only the Kingsguard score matters. Pick 15 cards and the CPU fields a closely-matched roster. Alternate drawing fate into seven Kingsguard seats — highest total wins, and a win pulls a card from the CPU\'s seven.' },
-      { id:'sevenK', label:'Seven Kingdoms', icon:'🗺️', col:'#3ec97a', start:startSevenKingdoms, locked:!sevenEnough, lockMsg:'Need 25+ cards', how:'A 5×5 bingo board where every square is a random card requirement. Over 25 draws, place each card where it fits (a card that fits nowhere is discarded). Each completed line = 20 Gold, a full blackout = 2,000, and filling 20+ squares earns a wheel spin.' },
+      { id:'traditional', label:'Traditional', icon:'⚔', col:'#d4a830', start:startTraditional, locked:false,
+        rules:'Draft a 10-seat court against 1 CPU over 10 turns. Draw fate each turn and place a card into an open seat (Ruler, Consort, Heir, Hand, Kingsguard and more). Ruler & Consort must be opposite genders and the Heir no older than either. Up to 3 rerolls. Optional Gold wager (max 100).',
+        rewards:'A flat +20 Gold just for finishing (win OR lose), plus a Score Bonus for how well your court fits — up to +100 Gold at 100+ points. A win adds +10–30 Gold by margin, returns your wager DOUBLED, and grants a Win Pull — one card from the CPU’s court.',
+        risks:'Lose and you forfeit your wager. No cards are lost.' },
+      { id:'tourney', label:'Tourney', icon:'🏆', col:'#3aa0ff', start:startTourney, locked:false,
+        rules:'Traditional, but against 3 CPUs at once. Same 10-seat draft and up to 3 rerolls; each rival matches your wager.',
+        rewards:'Same flat +20 Gold completion and Score Bonus (up to +100, win OR lose) as Traditional. Place 1st to take the whole 4× pot and pull a card from every court you outplaced (up to 3 cards).',
+        risks:'Place anywhere but 1st and you lose your own wager. No cards are lost.' },
+      { id:'houseWars', label:'House Wars', icon:'🏰', col:'#e05555', start:startHouseWars, locked:hwLocked, lockMsg:(!enough?'Need 21+ cards':'Need 10 in one House'),
+        rules:'A single House is spun for you and the CPU. Field 10 cards of that House across a 5-seat court — no rerolls. Needs 10+ cards in one House.',
+        rewards:'A flat +20 Gold just for finishing (win or lose). A win also Spins the Wheel for a card from the CPU’s House; a 5-win streak spins it 5 times.',
+        risks:'Lose and you surrender one of your own cards.' },
+      { id:'got', label:'The Game of Thrones', icon:'👑', col:'#a04ad0', start:startGameOfThrones, locked:!enough, lockMsg:'Need 21+ cards',
+        rules:'Pick 1 of 10 face-down cards — 5 Win and 5 Loss, shuffled. The effect fires the instant you touch it and can NEVER be undone. Needs 21+ cards.',
+        rewards:'Win cards grant Gold, Rerolls, a free card, an Evolve or Upgrade, an Identity Pull, or a wheel spin.',
+        risks:'Loss cards can lose, devolve or degrade a card, purge a whole House, close your store, or drain Gold. Win or die.' },
+      { id:'trial', label:'Trial of Seven', icon:'7️⃣', col:'#2bb3b3', start:startTrial, locked:!trialEnough, lockMsg:'Need 15+ cards',
+        rules:'Only the Kingsguard score counts. Pick 15 cards; the CPU fields a closely-matched roster. Alternate drawing fate into seven Kingsguard seats — no rerolls. Optional Gold wager. Needs 15+ cards.',
+        rewards:'A flat +20 Gold just for finishing (win or lose). Highest total Kingsguard also wins your wager back DOUBLED, plus a Win Pull from the CPU’s seven.',
+        risks:'Lose and you forfeit your wager. No cards are lost.' },
+      { id:'sevenK', label:'Seven Kingdoms', icon:'🗺️', col:'#3ec97a', start:startSevenKingdoms, locked:!sevenEnough, lockMsg:'Need 25+ cards',
+        rules:'A solo 5×5 bingo board with a free center. Every square demands a card meeting a random requirement (House, tier, age, position, first letter, or Overall band). Over 25 draws, place each card where it fits; a card that fits nowhere is discarded. No rerolls. Needs 25+ cards.',
+        rewards:'+2 Gold for every square you fill, +20 Gold for each completed line, +2,000 Gold for a full blackout, and a Spin the Wheel for filling 20+ squares.',
+        risks:'None — solo play, no wager and no cards at stake; a card that fits no open square is simply discarded.' },
     ];
     const sel = MODES.find(m => m.id === selectedMode);
     const renderBtn = (m) => (
@@ -12112,7 +12168,14 @@ function CollectorHub({ onHome }) {
           <div onClick={()=>setHelpMode(null)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.82)', zIndex:380, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
             <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:330, width:'100%', borderColor:m.col, textAlign:'center' }}>
               <div style={{ fontFamily:'Cinzel,serif', color:m.col, fontSize:'0.92rem', fontWeight:700, marginBottom:8 }}>{m.icon} {m.label}</div>
-              <div style={{ fontSize:'0.72rem', color:'var(--text2)', lineHeight:1.55, marginBottom:12, textAlign:'left' }}>{m.how}</div>
+              <div style={{ textAlign:'left', marginBottom:12 }}>
+                {[['Rules', m.rules, 'var(--text2)'], ['Rewards', m.rewards, '#4caf50'], ['Risks', m.risks, '#e05555']].map(([lbl, txt, col]) => (
+                  <div key={lbl} style={{ marginBottom:9 }}>
+                    <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', fontWeight:700, color:col, letterSpacing:'0.08em', marginBottom:3 }}>{lbl.toUpperCase()}</div>
+                    <div style={{ fontSize:'0.68rem', color:'var(--text)', lineHeight:1.5 }}>{txt}</div>
+                  </div>
+                ))}
+              </div>
               <button className="btn btn-gold btn-sm" style={{ width:'100%' }} onClick={()=>setHelpMode(null)}>Got it</button>
             </div>
           </div>
