@@ -8366,8 +8366,14 @@ function CollectorCardStats({ save }) {
 
   // ── Per-card record (#3): every card ever PLACED on a board, by variant ──
   const cardStats = save.cardStats || {};
+  // Stats are keyed by stripped base id (temporary __m/__d mods folded away). A Mythic evolved to
+  // God is stored under its Mythic base, so a God card would otherwise show as Mythic here. Resolve
+  // each row to the God variant the player actually owns when there is one.
+  const ownedGodByBase = {};
+  (save.owned || []).forEach(oid => { const p = collParseId(oid); if (p.god) ownedGodByBase[p.baseId] = oid; });
   let cardRows = Object.keys(cardStats).map(id => {
-    const card = getCollCard(id), st = cardStats[id] || {};
+    const ownedGod = ownedGodByBase[collParseId(id).baseId];
+    const card = getCollCard(ownedGod || id), st = cardStats[id] || {};
     if (!card || !(st.placements > 0)) return null; // must have been placed to qualify
     const winRate = st.placements ? Math.round((st.wins||0) / st.placements * 100) : 0;
     const ppg = st.placements ? Math.round((st.points||0) / st.placements * 10) / 10 : 0;
