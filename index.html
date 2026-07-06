@@ -1301,10 +1301,25 @@ function scoreColor(n) {
 }
 // Collector position scores span a huge range (a single seat can top 50), so this uses a
 // SIX-band scale — Collector ONLY; Classic keeps scoreColor's four bands. Gold is reserved
-// for genuinely elite scores so high-tier cards feel more valuable in their strong seats
-// (starter tops out ~white, uncommon ~blue, rare ~green, hero+ reach gold). High → low:
-// Gold ≥30 · Green ≥22 · Blue ≥15 · White ≥9 · Orange ≥4 · Red <4.
-function collScoreColor(n) {
+// for genuinely elite scores so high-tier cards feel more valuable in their strong seats.
+//   Absolute (no posId): Gold ≥30 · Green ≥22 · Blue ≥15 · White ≥9 · Orange ≥4 · Red <4.
+//   Per-position (posId given): the SAME six bands, but as fractions of THAT seat's own
+//   ceiling (best card in the Card Index for that position via skPosCeil). So the top
+//   Consort (17) shows gold at Consort, while a 17 at Ruler (ceiling ~30) is only mid-scale
+//   — the color makes it obvious how a card performs relative to that seat's best.
+function collScoreColor(n, posId) {
+  if (posId) {
+    const ceil = skPosCeil(posId);
+    if (ceil > 0) {
+      const r = n / ceil;                      // fraction of this seat's ceiling
+      if (r >= 30/30) return 'var(--gold2)';   // Gold — matches/exceeds the best card here
+      if (r >= 22/30) return '#4caf50';        // Green
+      if (r >= 15/30) return '#3aa0ff';        // Blue
+      if (r >= 9/30)  return 'var(--text)';    // White
+      if (r >= 4/30)  return '#ee8b30';        // Orange
+      return '#e05555';                        // Red
+    }
+  }
   if (n >= 30) return 'var(--gold2)';  // Gold
   if (n >= 22) return '#4caf50';        // Green
   if (n >= 15) return '#3aa0ff';        // Blue
@@ -7341,6 +7356,8 @@ function loadCollSave() {
   if (!s.modeStats.traditional && s.stats && (s.stats.games||0) > 0) {
     s.modeStats.traditional = { games:s.stats.games||0, wins:s.stats.wins||0, totalScore:s.stats.totalScore||0, streak:s.stats.winStreak||0, maxStreak:s.stats.maxWinStreak||0 };
   }
+  // Repair any pre-existing clone collisions (identical id strings) from before instance tags existed.
+  if (Array.isArray(s.owned)) s.owned = collDedupeInstances(s.owned);
   return s;
 }
 // Fold one game result into a mode's record. Mode-aware: got = win/loss cards, sevenK = bingo tally, others = win/score/streak.
@@ -7358,6 +7375,9 @@ function collRecordMode(prev, mode, data) {
   return ms;
 }
 function saveCollSave(s) {
+  // Normalise owned[] so identical id strings become individual instances (__i tags) BEFORE the
+  // caller hands the same object to onUpdate/setSave — keeps localStorage, cloud and UI in step.
+  if (s && Array.isArray(s.owned)) s.owned = collDedupeInstances(s.owned);
   const stamped = { ...s, updatedAt: Date.now() };
   localStorage.setItem(collKey(), JSON.stringify(stamped));
   FirebaseSync.pushCollector();
@@ -7370,20 +7390,43 @@ function getCollCards() { return window.COLLECTOR_CARDS || []; }
 //   "<id>__m<delta>" → stat mod: +delta to EVERY position score (Upgrade +3 / Degrade -3);
 //                      delta may be negative and scores may go below 0.
 // Both can combine, e.g. "<id>__god__m3". Overall is recomputed as the sum of scores.
-// Card-id grammar: "<baseId>__god?__d<origRank>?__m<delta>?" (suffixes in that order).
+// Card-id grammar: "<baseId>__god?__d<origRank>?__m<delta>?__i<n>?" (suffixes in that order).
 //   __god        → God tier (all position scores x2; only via Evolving a Mythic)
 //   __d<origRank>→ Devolve marker: the collTierRank this card held BEFORE being knocked down,
 //                  so the Blacksmith knows it's damaged and what tier to restore it to.
 //   __m<delta>   → stat mod: +delta to every position score (Upgrade +3 / Degrade -3; may be negative)
+//   __i<n>       → instance tag: INERT metadata (no effect on tier/scores/name). Lets two otherwise
+//                  identical owned cards coexist as SEPARATE, individually-auctionable copies —
+//                  the only way to hold "2 of the same card" (a Blacksmith restore collapsing two
+//                  former-Mythics onto the same variant). collStripId drops it, so dup-detection,
+//                  stats and house lookups treat "X" and "X__i2" as the same variant.
 function collParseId(id) {
-  let s = String(id), mod = 0, dev = 0, god = false;
+  let s = String(id), mod = 0, dev = 0, god = false, inst = 0;
+  const iM = s.match(/__i(\d+)$/);  if (iM) { inst = parseInt(iM[1], 10) || 0; s = s.slice(0, iM.index); }
   const m = s.match(/__m(-?\d+)$/); if (m) { mod = parseInt(m[1], 10) || 0; s = s.slice(0, m.index); }
   const d = s.match(/__d(\d+)$/);   if (d) { dev = parseInt(d[1], 10) || 0; s = s.slice(0, d.index); }
   if (s.slice(-5) === '__god') { god = true; s = s.slice(0, -5); }
-  return { baseId: s, god, dev, mod };
+  return { baseId: s, god, dev, mod, inst };
 }
-function collBuildId({ baseId, god, dev, mod }) {
-  return baseId + (god ? '__god' : '') + (dev ? '__d' + dev : '') + (mod ? '__m' + mod : '');
+function collBuildId({ baseId, god, dev, mod, inst }) {
+  return baseId + (god ? '__god' : '') + (dev ? '__d' + dev : '') + (mod ? '__m' + mod : '') + (inst ? '__i' + inst : '');
+}
+// Keep duplicate owned cards INDIVIDUAL. Identical id strings are indistinguishable (sell one and
+// you can lose both), so any repeat of an id in owned[] gets a unique instance tag (__i<n>). This is
+// the ONLY place "2 of the same card" is allowed — a Blacksmith restore that rebuilds two different
+// devolved Mythics onto the same variant. Acquiring a duplicate still Evolves (collAcquire); this
+// only disambiguates collisions produced by in-place transforms (Devolve/Repair).
+function collDedupeInstances(owned) {
+  if (!Array.isArray(owned)) return owned;
+  const seen = new Set(), out = [];
+  for (const id of owned) {
+    if (typeof id !== 'string') { out.push(id); continue; }
+    if (!seen.has(id)) { seen.add(id); out.push(id); continue; }
+    const p = collParseId(id); let n = 2, cand;
+    do { cand = collBuildId({ ...p, inst: n }); n++; } while (seen.has(cand));
+    seen.add(cand); out.push(cand);
+  }
+  return out;
 }
 function collStripId(id) { return typeof id === 'string' ? collParseId(id).baseId : id; }
 function getCollCard(id) {
@@ -7391,7 +7434,7 @@ function getCollCard(id) {
   const p = collParseId(id);
   const base = getCollCards().find(c => c.id === p.baseId);
   if (!base) return undefined;
-  if (!p.god && !p.mod && !p.dev) return base; // truly plain — return the pool object unchanged
+  if (!p.god && !p.mod && !p.dev && !p.inst) return base; // truly plain — return the pool object unchanged
   // `scores` carries the 10 court-position keys (plus an embedded 'overall'); only the
   // positions get x2 (god) and +delta (mod). Overall is derived from base.overall. The
   // devolve marker (__d) is metadata only — the lower tier is already baked into baseId.
@@ -7402,7 +7445,7 @@ function getCollCard(id) {
   // Tier tracks the card's VARIANT, not its live Overall: a Degrade/Upgrade changes the scores but
   // not what the card IS, so a degraded Mythic is still tracked, sorted and badged as a Mythic. A
   // Devolve already baked the lower tier into baseId, so base.tier is exact. God stays God.
-  return { ...base, id, tier: p.god ? 'god' : base.tier, scores, overall, _god: p.god, _mod: p.mod, _devOrig: p.dev };
+  return { ...base, id, tier: p.god ? 'god' : base.tier, scores, overall, _god: p.god, _mod: p.mod, _devOrig: p.dev, _inst: p.inst };
 }
 // Map an Overall to its tier using the generator's non-overlapping bands (clean cards already sit
 // inside their own band, so this is a no-op for them and only reclassifies Upgraded/Degraded cards).
@@ -7463,7 +7506,7 @@ function collDevolveTargetId(card) {
     if (!pool.length) return null;
     newBase = pool[Math.floor(Math.random() * pool.length)].id;
   }
-  return collBuildId({ baseId: newBase, god: newGod, dev: orig, mod: p.mod });
+  return collBuildId({ baseId: newBase, god: newGod, dev: orig, mod: p.mod, inst: p.inst });
 }
 
 // ── Negative-effect inspection + Blacksmith repair ──
@@ -7508,7 +7551,7 @@ function collRepairCard(card) {
       if (variants.length) { newBase = variants[Math.floor(Math.random() * variants.length)].id; newDev = 0; }
     }
   }
-  return collBuildId({ baseId: newBase, god: newGod, dev: newDev, mod: newMod });
+  return collBuildId({ baseId: newBase, god: newGod, dev: newDev, mod: newMod, inst: p.inst });
 }
 
 // Add a card to an owned[] list. Owning a card no longer blocks it from pools;
@@ -7839,7 +7882,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
           return (
             <div key={p.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:'0.55rem' }}>
               <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-              <span style={{ color: collScoreColor(sc), fontWeight:700 }}>
+              <span style={{ color: collScoreColor(sc, p.id), fontWeight:700 }}>
                 {Math.round(sc*10)/10}
               </span>
             </div>
@@ -9992,7 +10035,7 @@ function CollectorDeckViewer({ cards, title, positions, defaultMode, onClose }) 
   const posLabel = (POS.find(p => p.id === f.posId) || {}).label;
   return (
     <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.9)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
-      {detail && <CollDetailModal card={detail} onClose={()=>setDetail(null)} />}
+      {detail && <CollDetailModal card={detail} positions={positions} onClose={()=>setDetail(null)} />}
       <div onClick={e=>e.stopPropagation()} style={{ width:'100%', maxWidth:460, maxHeight:'88%', display:'flex', flexDirection:'column', background:'var(--bg)', border:'1px solid var(--gold)', borderRadius:10, padding:14 }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
           <div style={{ fontFamily:'Cinzel,serif', color:'var(--gold)', fontSize:'0.85rem', fontWeight:700 }}>{title||'Your Deck'} <span style={{ color:'var(--text2)', fontSize:'0.6rem' }}>· {list.length}/{(cards||[]).length} cards</span></div>
@@ -10034,7 +10077,7 @@ function CollectorDeckViewer({ cards, title, positions, defaultMode, onClose }) 
                 </div>
                 <CollTierBadge tier={c.tier} />
                 {f.sort==='position'
-                  ? <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: collScoreColor(ps), fontSize:'0.82rem', width:42, textAlign:'right' }}>{Math.round(ps*10)/10}</span>
+                  ? <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: collScoreColor(ps, f.posId), fontSize:'0.82rem', width:42, textAlign:'right' }}>{Math.round(ps*10)/10}</span>
                   : <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.82rem', width:42, textAlign:'right' }}>{c.overall}</span>}
               </div>
             ); })}
@@ -10432,7 +10475,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
               {COLL_POS.map(p => { const sc = dc.scores?.[p.id]||0; return (
                 <div key={p.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'0.58rem' }}>
                   <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-                  <span style={{ color: collScoreColor(sc), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+                  <span style={{ color: collScoreColor(sc, p.id), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
                 </div>
               ); })}
             </div>
@@ -10564,7 +10607,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
                           <div key={p.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:'0.55rem',
                             background:isBest?'rgba(212,168,48,0.14)':'transparent', borderRadius:3, padding:'1px 4px' }}>
                             <span style={{ color:isBest?'var(--gold)':'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-                            <span style={{ color: collScoreColor(sc), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+                            <span style={{ color: collScoreColor(sc, p.id), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
                           </div>
                         );
                       })}
@@ -10617,14 +10660,14 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
                         </div>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
                           <CollTierBadge tier={placed.tier} />
-                          <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor(score) }}>{Math.floor(score*10)/10}</span>
+                          <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor(score, pos.id) }}>{Math.floor(score*10)/10}</span>
                         </div>
                       </>
                     ) : canPlace ? (
                       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
                         <span style={{ fontSize:'0.6rem', color:'var(--gold)', fontStyle:'italic' }}>← Place</span>
                         <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, fontSize:'0.95rem',
-                          color: collScoreColor(drawnCard.scores?.[pos.id]||0) }}>
+                          color: collScoreColor(drawnCard.scores?.[pos.id]||0, pos.id) }}>
                           {Math.floor((drawnCard.scores?.[pos.id]||0)*10)/10}
                         </span>
                       </div>
@@ -10838,7 +10881,7 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
                       <div style={{ fontSize:'0.62rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{card.name}</div>
                       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
                         <CollTierBadge tier={card.tier} />
-                        <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor(sc) }}>{sc}</span>
+                        <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor(sc, pos.id) }}>{sc}</span>
                       </div>
                     </>
                   ) : (
@@ -10936,9 +10979,10 @@ function genHwWheelCards(house) {
 }
 
 // Reusable card-stats popup (full 10-position profile + gender/age).
-function CollDetailModal({ card, onClose, owned }) {
+function CollDetailModal({ card, onClose, owned, positions }) {
   const T = window.COLLECTOR_TIERS || {};
   if (!card) return null;
+  const POS = positions || COLL_POS; // House Wars passes its 5 seats; other modes show all 10
   const ct = T[card.tier] || { color:'#888' };
   const _neg = collNegatives(card);
   const _negLabel = [
@@ -10964,10 +11008,10 @@ function CollDetailModal({ card, onClose, owned }) {
         {_negLabel && <div style={{ fontSize:'0.6rem', color:'#e05555', fontWeight:700, marginTop:8, border:'1px solid #e05555', background:'rgba(224,85,85,0.12)', borderRadius:4, padding:'4px 7px' }}>⚠ {_negLabel}</div>}
         {card.desc && <div style={{ fontSize:'0.62rem', color:'var(--text2)', marginTop:8, lineHeight:1.5, fontStyle:'italic' }}>{card.desc}</div>}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:'2px 10px', marginTop:10, paddingTop:8, borderTop:'1px solid var(--border)' }}>
-          {COLL_POS.map(p => { const sc = (card.scores&&card.scores[p.id])||0; return (
+          {POS.map(p => { const sc = (card.scores&&card.scores[p.id])||0; return (
             <div key={p.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'0.58rem' }}>
               <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-              <span style={{ color: collScoreColor(sc), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+              <span style={{ color: collScoreColor(sc, p.id), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
             </div>
           ); })}
         </div>
@@ -11065,7 +11109,7 @@ function CollectorHouseWarsLineup({ save, userHouse, cpuHouse, onConfirm, onBack
   const sorted = deck.map((e,i)=>({ e, i })).sort((a,b)=>(b.e.card.overall||0)-(a.e.card.overall||0));
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
-      {detailCard && <CollDetailModal card={detailCard} onClose={() => setDetailCard(null)} />}
+      {detailCard && <CollDetailModal card={detailCard} positions={HW_POS} onClose={() => setDetailCard(null)} />}
       {confirmBack && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmBack(false)}>
           <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
@@ -11173,25 +11217,28 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
 
   function cpuTurn() {
     const avail = cpuCards.map((c,i)=>({c,i})).filter(x => !cpuUsed.has(x.i));
-    if (!avail.length) return;
+    if (!avail.length) return cpuBoard;
     const pick = avail[Math.floor(Math.random()*avail.length)];
     const drafted = [...cpuDrafted, pick.c];
     setCpuUsed(new Set([...cpuUsed, pick.i]));
     setCpuDrafted(drafted);
-    setCpuBoard(hwOptimalAssign(drafted));
+    const nb = hwOptimalAssign(drafted);
+    setCpuBoard(nb);
+    return nb; // return the fresh board so the finish handler doesn't read a stale closure
   }
 
   function confirmTurn() {
     if (phase !== 'arrange') return;
-    cpuTurn();
-    if (round + 1 >= 5) { setPhase('done'); setTimeout(handleFinish, 0); return; }
+    const cpuNext = cpuTurn(); // 5th-turn draft must reach the scorecard, so thread it through
+    if (round + 1 >= 5) { setPhase('done'); setTimeout(() => handleFinish(cpuNext), 0); return; }
     setRound(r => r + 1); setDrawnCard(null); setSelectedPos(null); setPhase('draw');
   }
 
-  function handleFinish() {
-    const pScore = hwScore(playerBoard), cScore = hwScore(cpuBoard);
+  function handleFinish(finalCpuBoard) {
+    const cb = finalCpuBoard || cpuBoard;
+    const pScore = hwScore(playerBoard), cScore = hwScore(cb);
     onEnd({ isWin: pScore > cScore, playerScore: pScore, cpuScore: cScore, margin: pScore - cScore,
-            playerBoard, cpuBoard, cpuCards, userHouse, cpuHouse });
+            playerBoard, cpuBoard: cb, cpuCards, userHouse, cpuHouse });
   }
 
   const board = showCpu ? cpuBoard : playerBoard;
@@ -11199,7 +11246,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
-      {detailCard && <CollDetailModal card={detailCard} onClose={() => setDetailCard(null)} />}
+      {detailCard && <CollDetailModal card={detailCard} positions={HW_POS} onClose={() => setDetailCard(null)} />}
       {confirmQuit && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmQuit(false)}>
           <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
@@ -11247,7 +11294,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
                     <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{card.name}</div>
                     <div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} /></div>
                   </div>
-                  <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor((card.scores&&card.scores[p.id])||0), fontSize:'0.95rem' }}>{Math.round(((card.scores&&card.scores[p.id])||0)*10)/10}</span>
+                  <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor((card.scores&&card.scores[p.id])||0, p.id), fontSize:'0.95rem' }}>{Math.round(((card.scores&&card.scores[p.id])||0)*10)/10}</span>
                   <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(card); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, flexShrink:0 }}>ⓘ</button>
                 </>
               ) : (
@@ -11295,7 +11342,7 @@ function CollectorHouseWarsResult({ result, onClaim, onDiscard }) {
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
-      {detailCard && <CollDetailModal card={detailCard} onClose={() => setDetailCard(null)} />}
+      {detailCard && <CollDetailModal card={detailCard} positions={HW_POS} onClose={() => setDetailCard(null)} />}
 
       {stage === 'score' && (
         <>
@@ -11503,7 +11550,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
           {COLL_POS.map(p => { const sc=(card.scores&&card.scores[p.id])||0; return (
             <div key={p.id} style={{ display:'flex', justifyContent:'space-between', fontSize:'0.5rem' }}>
               <span style={{ color:'var(--text2)', fontFamily:'Cinzel,serif' }}>{p.label}</span>
-              <span style={{ color: collScoreColor(sc), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
+              <span style={{ color: collScoreColor(sc, p.id), fontWeight:700 }}>{Math.round(sc*10)/10}</span>
             </div>
           ); })}
         </div>
@@ -11699,6 +11746,7 @@ function CollectorWheel({ onDone, streak, spinsLeft, house }) {
   const [rotation, setRotation] = React.useState(0);
   const [spinning, setSpinning] = React.useState(false);
   const [won, setWon] = React.useState(null);
+  const [detail, setDetail] = React.useState(false);
 
   const grad = 'conic-gradient(from 0deg, ' + wheel.map((c,i) => {
     const col = (T[c.tier]||{}).color || '#888';
@@ -11716,6 +11764,7 @@ function CollectorWheel({ onDone, streak, spinsLeft, house }) {
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, textAlign:'center' }}>
+      {detail && won && <CollDetailModal card={won} owned={true} positions={house ? HW_POS : undefined} onClose={()=>setDetail(false)} />}
       <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.25rem', color:'var(--gold)', fontWeight:700 }}>🎡 Spin the Wheel!</div>
       <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginTop:4, marginBottom:18 }}>{house ? `${house} spoils · 30 cards` : `${streak||5}-win streak reward · 30 cards · 5 per tier`}{spinsLeft > 1 ? ` · ${spinsLeft} spins left` : ''}</div>
       <div style={{ position:'relative', width:280, height:280, marginBottom:18 }}>
@@ -11731,7 +11780,10 @@ function CollectorWheel({ onDone, streak, spinsLeft, house }) {
         <div className="fade-in" style={{ width:'100%', maxWidth:320 }}>
           <div style={{ fontSize:'0.7rem', color:'var(--text2)', marginBottom:6 }}>You won:</div>
           <div className="card" style={{ borderColor:(T[won.tier]||{}).color||'var(--gold)', marginBottom:14 }}>
-            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:(T[won.tier]||{}).color||'var(--gold)', fontWeight:700 }}>{won.name}</div>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+              <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.95rem', color:(T[won.tier]||{}).color||'var(--gold)', fontWeight:700 }}>{won.name}</div>
+              <button onClick={()=>setDetail(true)} title="Preview card" style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.9rem', cursor:'pointer', padding:0, lineHeight:1, flexShrink:0 }}>ⓘ</button>
+            </div>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:6 }}>
               <CollTierBadge tier={won.tier} />
               <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:(T[won.tier]||{}).color||'var(--gold)' }}>{won.overall}</span>

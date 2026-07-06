@@ -238,7 +238,7 @@ window.CHARACTERS = [
   {id:'qhorin-nw',name:'Qhorin Halfhand',houses:["Night's Watch"],gender:'M',birth:244,age:56,scores:S(1.0,5.2,1.0,8.5,9.5,8.5,4.2,1.0,7.2,1.0),isNW:true,notes:'Legendary ranger; sacrificed himself to plant Jon Snow as a mole among the Free Folk.'},
   {id:'tormund',name:'Tormund Giantsbane',houses:["Beyond the Wall"],gender:'M',birth:255,age:45,scores:S(6.2,5.2,4.2,8.2,8.5,7.5,5.2,2.2,7.2,5.2),notes:'Fearsome personal warrior.'},
   {id:'wun-wun',name:'Wun Wun (Giant)',houses:["Beyond the Wall"],gender:'M',birth:250,age:50,scores:S(1.2,1.2,1.2,3.5,10.0,9.5,1.2,1.2,8.2,1.2),notes:'Last giant in Westeros.'},
-  {id:'gendry',name:'Gendry',houses:['Other'],gender:'M',birth:286,age:14,scores:S(5.2,3.2,5.2,4.2,6.5,5.5,3.2,2.2,4.2,5.2),notes:'Robert\'s bastard.'},
+  {id:'gendry',name:'Gendry',houses:['Baratheon'],gender:'M',birth:286,age:14,scores:S(5.2,3.2,5.2,4.2,6.5,5.5,3.2,2.2,4.2,5.2),notes:'Robert\'s bastard.'},
   {id:'bronn',name:'Bronn',houses:['Other'],gender:'M',birth:265,age:35,scores:S(3.2,4.2,2.2,5.5,8.5,6.5,4.2,4.2,5.2,3.2),notes:'Elite sellsword.'},
   {id:'white-worm',name:'The White Worm',houses:['Essos'],gender:'F',birth:274,age:26,scores:S(2.2,6.5,1.2,2.2,1.2,1.2,8.2,5.2,6.2,4.2),notes:'Mysaria; rose from slave to spymaster in the Street of Silk; ran a web of informants across King\'s Landing; wielded intelligence as her only weapon.'},
   {id:'nymeria-ny-sar',name:'Nymeria of Ny Sar (Warrior Queen)',houses:['Essos'],gender:'F',birth:-700,age:87,scores:S(9.2,8.2,7.5,10.0,4.2,3.5,8.2,6.2,10.0,8.2),notes:'Led 10,000 ships from Essos to Dorne; burned her fleet to commit her people; co-founded House Martell. commanded her armies from the field.'},
