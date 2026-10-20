@@ -7336,13 +7336,15 @@ function genFeaturedHouse() {
 }
 
 // ─── Deckmaster ──────────────────────────────────────────────────────────────
-// A 1-v-1 race to 50 points over up to 30 rounds. Each round spins THREE wheels for a
+// A 1-v-1 race to 30 points over up to 30 rounds. Each round spins THREE wheels for a
 // (House|Identity) × (Gender|Tier) × (Age|Position) requirement, and each side scores +1 for
 // every one of its still-UNUSED cards that satisfies ALL THREE. The CPU gets a deck of the same
 // size within ±2% of your total Overall. Each side has up to 3 rerolls to VOID a spin (yours come
-// from your real reroll bank). First to 50 wins; else most points after 30 rounds. The winner spins
+// from your real reroll bank, and a reroll is always available — even on round 30 or on a spin that
+// would reach the target, so a reroll can undo a game-ending round). First to 30 wins; else most
+// points after 30 rounds (an exact tie pays the win Gold but neither side steals). The winner spins
 // to STEAL cards from the loser's deck — one, plus one more per 5-point win margin.
-const DM_TARGET = 50;
+const DM_TARGET = 30;
 const DM_MAX_ROUNDS = 30;
 const DM_PIVOT = 25;                 // Age & Position use a STRICT 25 pivot (exactly 25 = neither under nor over)
 const DM_TIERS = ['god','mythic','legendary','hero','rare','uncommon','starter'];
@@ -7447,7 +7449,7 @@ function dmCpuWantsReroll(userPts, cpuPts, st) {
   if (st.userScore + userPts >= DM_TARGET) return true; // never let the user walk into the win
   let thresh = 3;
   if (st.cpuScore < st.userScore) thresh -= 1;          // behind — fight harder
-  if (st.userScore >= 40) thresh -= 1;                  // user threatening to close out
+  if (st.userScore >= DM_TARGET - 10) thresh -= 1;      // user threatening to close out (scales with the target)
   if (DM_MAX_ROUNDS - st.round <= 5) thresh -= 1;       // endgame — spend them
   return net >= Math.max(1, thresh);
 }
@@ -11995,6 +11997,10 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
     setPhase('done');
     onEnd({ userScore: uScore, cpuScore: cScore, cpuCards: cpuDeck, rerollsUsed: startCap - rerollsLeft });
   }
+  function concede() { // quitting CONCEDES → handled as a loss (CPU raids your deck)
+    setPhase('done');
+    onEnd({ conceded: true, userScore, cpuScore, cpuCards: cpuDeck, rerollsUsed: startCap - userRerolls });
+  }
   function finalizeRound() {
     if (phase !== 'select') return;
     if (dmCpuWantsReroll(userPts, cpuPts, { userScore, cpuScore, round, cpuRerollsLeft: cpuRerolls })) {
@@ -12025,10 +12031,10 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmQuit(false)}>
           <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
             <div style={{ fontFamily:'Cinzel,serif', color:'#e05555', fontSize:'0.95rem', marginBottom:8 }}>Leave Deckmaster?</div>
-            <div style={{ fontSize:'0.72rem', color:'var(--text2)', marginBottom:14 }}>You'll forfeit this match — no Gold and no steal, but no cards are lost either.</div>
+            <div style={{ fontSize:'0.72rem', color:'var(--text2)', marginBottom:14 }}>Quitting counts as a <b>LOSS</b> — the CPU raids your deck for a card (plus one per 5-point deficit), and you only get the +20 completion Gold.</div>
             <div style={{ display:'flex', gap:8 }}>
               <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={()=>setConfirmQuit(false)}>Keep Playing</button>
-              <button className="btn btn-sm" style={{ flex:1, background:'#7a1010', color:'#fff', border:'1px solid #b01a1a' }} onClick={()=>onEnd(null)}>Leave</button>
+              <button className="btn btn-sm" style={{ flex:1, background:'#7a1010', color:'#fff', border:'1px solid #b01a1a' }} onClick={concede}>Forfeit</button>
             </div>
           </div>
         </div>
@@ -12412,12 +12418,15 @@ function CollectorHub({ onHome }) {
     setShowModeChoice(false); setScreen('deckmasterGame');
   }
   function handleDeckmasterEnd(result) {
-    if (!result) { setDmCpuDeck(null); setScreen('hub'); return; } // quit — no reward, no penalty
-    const { userScore, cpuScore, cpuCards, rerollsUsed } = result;
-    const winner = userScore > cpuScore ? 'user' : cpuScore > userScore ? 'cpu' : 'tie';
-    const margin = Math.abs(userScore - cpuScore);
-    const spins = winner === 'tie' ? 0 : 1 + Math.floor(margin / 5); // +1 steal spin per 5-point margin
-    const goldGain = winner === 'user' ? (50 + margin * 5) : 20;      // win = 50 + 5×margin; else +20 completion
+    if (!result) { setDmCpuDeck(null); setScreen('hub'); return; } // safety (quit now concedes a loss instead)
+    const { userScore, cpuScore, cpuCards, rerollsUsed, conceded } = result;
+    // Quitting CONCEDES → treated as a loss (the CPU "wins" and raids your deck).
+    const winner = conceded ? 'cpu' : (userScore > cpuScore ? 'user' : cpuScore > userScore ? 'cpu' : 'tie');
+    const margin = conceded ? Math.max(0, cpuScore - userScore) : Math.abs(userScore - cpuScore);
+    const spins = winner === 'tie' ? 0 : 1 + Math.floor(margin / 5); // +1 steal spin per 5-point margin (none on a tie)
+    const goldGain = winner === 'user' ? (50 + margin * 5)           // win = 50 + 5×margin
+                   : winner === 'tie' ? 50                            // exact tie = the win Gold, but no steal
+                   : 20;                                              // loss / concede = +20 completion
     const ns = { ...save };
     ns.rerolls = Math.max(0, (ns.rerolls || 0) - (rerollsUsed || 0)); // your real rerolls were spent
     ns.gold = (ns.gold || 0) + goldGain;
@@ -12665,9 +12674,9 @@ function CollectorHub({ onHome }) {
         rewards:'+2 Gold for every square you fill, +20 Gold for each completed line, +2,000 Gold for a full blackout, and a Spin the Wheel for filling 20+ squares.',
         risks:'None — solo play, no wager and no cards at stake; a card that fits no open square is simply discarded.' },
       { id:'deckmaster', label:'Deckmaster', icon:'🂠', col:'#c77dff', start:startDeckmaster, locked:false,
-        rules:'A 1-v-1 race to 50 points over up to 30 rounds. Each round spins THREE wheels — House/Identity, Gender/Tier, and Age/Position (a strict 25 pivot) — and you score +1 for every one of your still-unused cards that matches ALL THREE (each card fields only once per game). The CPU fields a deck your exact size, within ±2% of your total Overall. You each get up to 3 rerolls to VOID a spin (yours come from your reroll bank). First to 50 wins; otherwise the highest score after 30 rounds.',
-        rewards:'A flat +20 Gold for finishing. A win instead pays 50 Gold + 5 Gold for every point of your winning margin, and lets you SPIN to steal a card from the CPU’s deck — plus one more steal for every 5-point margin (a tier wheel, then a card wheel).',
-        risks:'Lose and the CPU raids YOUR deck the same way — one card, plus one per 5-point margin — though it never drops you below a 10-card deck.' },
+        rules:'A 1-v-1 race to 30 points over up to 30 rounds. Each round spins THREE wheels — House/Identity, Gender/Tier, and Age/Position (a strict 25 pivot) — and you score +1 for every one of your still-unused cards that matches ALL THREE (each card fields only once per game). The CPU fields a deck your exact size, within ±2% of your total Overall. You each get up to 3 rerolls to VOID a spin (yours come from your reroll bank, usable even on the deciding spin). First to 30 wins; otherwise the highest score after 30 rounds.',
+        rewards:'A flat +20 Gold for finishing. A win instead pays 50 Gold + 5 Gold for every point of your winning margin, and lets you SPIN to steal a card from the CPU’s deck — plus one more steal for every 5-point margin (a tier wheel, then a card wheel). An exact tie pays the 50-Gold win reward, but neither side steals.',
+        risks:'Lose and the CPU raids YOUR deck the same way — one card, plus one per 5-point margin — though it never drops you below a 10-card deck. Quitting counts as a loss, so you forfeit a card too.' },
     ];
     const sel = MODES.find(m => m.id === selectedMode);
     const renderBtn = (m) => (
