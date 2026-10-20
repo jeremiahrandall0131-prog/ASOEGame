@@ -7086,9 +7086,11 @@ function canFieldDrawn(board, card) {
 function collCpuPool() {
   const base = (typeof getCollCards === 'function' ? getCollCards() : (window.COLLECTOR_CARDS||[]));
   if (window.__collCpuPool && window.__collCpuPool._base === base.length) return window.__collCpuPool;
-  const gods = base.filter(c => c.tier === 'mythic')
-                   .map(c => (typeof getCollCard === 'function' ? getCollCard(c.id + '__god') : null))
-                   .filter(Boolean);
+  // Include God, God Tier 2 and God Tier 3 variants so these extremely-rare high cards can appear in
+  // a CPU deck when the player's own Overall is high enough to warrant them (same ±2% matching rule).
+  const myths = base.filter(c => c.tier === 'mythic');
+  const gods = [];
+  ['__god', '__god2', '__god3'].forEach(sfx => myths.forEach(c => { const g = (typeof getCollCard === 'function' ? getCollCard(c.id + sfx) : null); if (g) gods.push(g); }));
   const aug = base.concat(gods); aug._base = base.length;
   window.__collCpuPool = aug;
   return aug;
@@ -7558,7 +7560,8 @@ function saveCollSave(s) {
 // All collector cards (generated)
 function getCollCards() { return window.COLLECTOR_CARDS || []; }
 // Synthetic-id suffixes layered onto a base card id:
-//   "<id>__god"      → God tier: ALL position scores x2 (only via Evolving a Mythic)
+//   "<id>__god[N]"   → God tier level N (×2^N to ALL position scores): __god=God (×2), __god2=God
+//                      Tier 2 (×4), __god3 (×8)… Reached by Evolving two of the same God level.
 //   "<id>__m<delta>" → stat mod: +delta to EVERY position score (Upgrade +3 / Degrade -3);
 //                      delta may be negative and scores may go below 0.
 // Both can combine, e.g. "<id>__god__m3". Overall is recomputed as the sum of scores.
@@ -7573,15 +7576,16 @@ function getCollCards() { return window.COLLECTOR_CARDS || []; }
 //                  former-Mythics onto the same variant). collStripId drops it, so dup-detection,
 //                  stats and house lookups treat "X" and "X__i2" as the same variant.
 function collParseId(id) {
-  let s = String(id), mod = 0, dev = 0, god = false, inst = 0;
+  let s = String(id), mod = 0, dev = 0, god = 0, inst = 0;
   const iM = s.match(/__i(\d+)$/);  if (iM) { inst = parseInt(iM[1], 10) || 0; s = s.slice(0, iM.index); }
   const m = s.match(/__m(-?\d+)$/); if (m) { mod = parseInt(m[1], 10) || 0; s = s.slice(0, m.index); }
   const d = s.match(/__d(\d+)$/);   if (d) { dev = parseInt(d[1], 10) || 0; s = s.slice(0, d.index); }
-  if (s.slice(-5) === '__god') { god = true; s = s.slice(0, -5); }
+  const g = s.match(/__god(\d*)$/); if (g) { god = g[1] ? (parseInt(g[1], 10) || 1) : 1; s = s.slice(0, g.index); }
+  // `god` is the GOD TIER LEVEL: 0 = none (Mythic or below), 1 = God (×2), 2 = God Tier 2 (×4), … (×2^level).
   return { baseId: s, god, dev, mod, inst };
 }
 function collBuildId({ baseId, god, dev, mod, inst }) {
-  return baseId + (god ? '__god' : '') + (dev ? '__d' + dev : '') + (mod ? '__m' + mod : '') + (inst ? '__i' + inst : '');
+  return baseId + (god ? (god >= 2 ? '__god' + god : '__god') : '') + (dev ? '__d' + dev : '') + (mod ? '__m' + mod : '') + (inst ? '__i' + inst : '');
 }
 // Keep duplicate owned cards INDIVIDUAL. Identical id strings are indistinguishable (sell one and
 // you can lose both), so any repeat of an id in owned[] gets a unique instance tag (__i<n>). This is
@@ -7607,17 +7611,18 @@ function getCollCard(id) {
   const base = getCollCards().find(c => c.id === p.baseId);
   if (!base) return undefined;
   if (!p.god && !p.mod && !p.dev && !p.inst) return base; // truly plain — return the pool object unchanged
-  // `scores` carries the 10 court-position keys (plus an embedded 'overall'); only the
-  // positions get x2 (god) and +delta (mod). Overall is derived from base.overall. The
-  // devolve marker (__d) is metadata only — the lower tier is already baked into baseId.
+  // `scores` carries the 10 court-position keys (plus an embedded 'overall'); the positions get
+  // ×2^godLevel (God ×2, God Tier 2 ×4, …) and +delta (mod). Overall is derived from base.overall.
+  // The devolve marker (__d) is metadata only — the lower tier is already baked into baseId.
+  const mult = p.god ? Math.pow(2, p.god) : 1;
   const scores = { ...base.scores };
-  COLL_POS.forEach(q => { scores[q.id] = Math.round(((base.scores[q.id] || 0) * (p.god ? 2 : 1) + p.mod) * 10) / 10; });
-  const overall = Math.round(((base.overall || 0) * (p.god ? 2 : 1) + p.mod * COLL_POS.length) * 10) / 10;
+  COLL_POS.forEach(q => { scores[q.id] = Math.round(((base.scores[q.id] || 0) * mult + p.mod) * 10) / 10; });
+  const overall = Math.round(((base.overall || 0) * mult + p.mod * COLL_POS.length) * 10) / 10;
   scores.overall = overall;
   // Tier tracks the card's VARIANT, not its live Overall: a Degrade/Upgrade changes the scores but
   // not what the card IS, so a degraded Mythic is still tracked, sorted and badged as a Mythic. A
-  // Devolve already baked the lower tier into baseId, so base.tier is exact. God stays God.
-  return { ...base, id, tier: p.god ? 'god' : base.tier, scores, overall, _god: p.god, _mod: p.mod, _devOrig: p.dev, _inst: p.inst };
+  // Devolve already baked the lower tier into baseId, so base.tier is exact. Every God level is tier 'god'.
+  return { ...base, id, tier: p.god ? 'god' : base.tier, scores, overall, _god: !!p.god, _godLevel: p.god, _mod: p.mod, _devOrig: p.dev, _inst: p.inst };
 }
 // Map an Overall to its tier using the generator's non-overlapping bands (clean cards already sit
 // inside their own band, so this is a no-op for them and only reclassifies Upgraded/Degraded cards).
@@ -7646,10 +7651,10 @@ function collTierName(rank) { return rank === COLL_TIER_ORDER.length ? 'god' : C
 // so e.g. a degraded Mythic → God is x2 the CLEAN Mythic stats (the card's ceiling). null = already top.
 function collEvolveTargetId(card, owned) {
   const p = collParseId(card.id);
-  if (p.god) return null;                          // already the top tier
   const base = getCollCards().find(c => c.id === p.baseId);
   if (!base) return null;
-  if (base.tier === 'mythic') return p.baseId + '__god'; // clean God = x2 the base Mythic
+  if (p.god) return collBuildId({ baseId: p.baseId, god: p.god + 1 }); // God LN → God L(N+1), cleansed (×2 again)
+  if (base.tier === 'mythic') return collBuildId({ baseId: p.baseId, god: 1 }); // Mythic → God (×2 the base Mythic)
   const nextTier = COLL_TIER_ORDER[collTierRank(base.tier) + 1];
   if (!nextTier) return null;
   const pool = getCollCards().filter(c => c.charId === base.charId && c.tier === nextTier);
@@ -7667,9 +7672,10 @@ function collDevolveTargetId(card) {
   if (!base) return null;
   const curRank = p.god ? collTierRank('god') : collTierRank(base.tier);
   const orig = p.dev || curRank;                   // remember the highest tier held (origin)
-  let newBase, newGod = false;
+  let newBase, newGod = 0;
   if (p.god) {
-    newBase = p.baseId;                            // God → the underlying Mythic
+    newBase = p.baseId;
+    newGod = p.god - 1;                            // God LN → God L(N-1); God L1 → its Mythic (newGod 0)
   } else {
     if (base.tier === 'starter') return null;      // Starters can't devolve
     const prevTier = COLL_TIER_ORDER[curRank - 1];
@@ -7751,22 +7757,23 @@ function collAcquire(owned, cardId) {
   owned = owned || [];
   const card = getCollCard(cardId);
   if (!card) return { owned: owned.slice(), evolved: false, card: null };
-  // Evolve triggers on the SAME VARIANT (same name), regardless of either copy's mods or current
-  // displayed tier (#2). The result is the tier ABOVE the higher of the two copies' tiers.
-  const baseId = collStripId(cardId);
-  const matchIdx = owned.findIndex(id => collStripId(id) === baseId);
+  // Evolve merges two of the SAME VARIANT *and* the SAME God level (mods ignored). So a God and a
+  // Mythic of the same card COEXIST (different levels); two Mythics make a God, two Gods make God
+  // Tier 2, two God Tier 2s make God Tier 3, and so on — each step a fresh ×2, cleansed of any mods.
+  const p = collParseId(cardId);
+  const lvl = p.god || 0;
+  const matchIdx = owned.findIndex(id => { const q = collParseId(id); return q.baseId === p.baseId && (q.god || 0) === lvl; });
   if (matchIdx < 0) {
     return { owned: [...owned, cardId], evolved: false, card };
   }
   const existing = getCollCard(owned[matchIdx]) || card;
-  const hiTier = collTierRank(existing.tier) >= collTierRank(card.tier) ? existing.tier : card.tier;
-  const targetId = collEvolveToTierAbove(card.charId, hiTier, owned);
+  const targetId = collEvolveTargetId(card, owned); // one tier / God level up (cleansed)
   if (!targetId) {
-    return { owned: owned.slice(), evolved: false, card: existing }; // at the ceiling — dup absorbed
+    return { owned: owned.slice(), evolved: false, card: existing }; // no higher form exists — dup absorbed
   }
   const newOwned = owned.slice();
   newOwned.splice(matchIdx, 1); // consume the existing copy
-  newOwned.push(targetId);      // add the evolved card (clean, tier above the higher copy)
+  newOwned.push(targetId);      // add the evolved card
   return { owned: newOwned, evolved: true, card: getCollCard(targetId), from: existing };
 }
 
@@ -7962,13 +7969,14 @@ function genWinPullCards(cpuCards, save) {
 
 // ─── Components ────────────────────────────────────────────────────────────
 
-function CollTierBadge({ tier, size='sm' }) {
+function CollTierBadge({ tier, size='sm', level }) {
   const t = (window.COLLECTOR_TIERS||{})[tier] || { label: tier, color:'#888', bg:'#111' };
   const fs = size === 'lg' ? '0.8rem' : '0.55rem';
+  const label = (tier === 'god' && level >= 2) ? ('GOD ' + level) : t.label.toUpperCase(); // God Tier 2, 3, …
   return (
     <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, fontSize:fs, padding:'2px 7px',
       borderRadius:3, background:t.bg, color:t.color, border:`1px solid ${t.color}`, letterSpacing:'0.08em' }}>
-      {t.label.toUpperCase()}
+      {label}
     </span>
   );
 }
@@ -8018,7 +8026,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
         </div>
         <div style={{ fontSize:'0.55rem', color:'var(--text2)', marginBottom:4 }}>{card.houses?.[0]} · Age {card.age}</div>
         {hasNeg && <div title={negLabel} style={{ fontSize:'0.5rem', color:'#e05555', fontWeight:700, marginBottom:4 }}>⚠ {negWord}</div>}
-        <CollTierBadge tier={card.tier} />
+        <CollTierBadge tier={card.tier} level={card._godLevel} />
         <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, fontSize:'1rem', color:T.color, marginTop:4, textAlign:'right' }}>
           {card.overall}
         </div>
@@ -8035,7 +8043,7 @@ function CollCardDisplay({ card, onClick, compact, showOwned, isOwned }) {
           {card.identity && <div style={{ fontSize:'0.58rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginTop:3 }}>Identity: <span style={{ color:'var(--gold)' }}>{card.identity}</span>{card.gender && <span> · {card.gender==='F'?'♀ Female':'♂ Male'}</span>}</div>}
         </div>
         <div style={{ textAlign:'right', marginLeft:8 }}>
-          <CollTierBadge tier={card.tier} />
+          <CollTierBadge tier={card.tier} level={card._godLevel} />
           <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, fontSize:'1.4rem', color:T.color, lineHeight:1.1 }}>{card.overall}</div>
           <div style={{ fontSize:'0.5rem', color:'var(--text2)' }}>OVERALL</div>
         </div>
@@ -8077,7 +8085,7 @@ const TUTORIAL_STEPS = [
   { title:'Sort & Filter', tab:'deck', target:'[data-tour="deck-controls"]', body:'Stack as many filters as you like — Tier, House, Gender and a text search all narrow at once — then sort by Overall, name, or a specific position\'s score. The same controls power the Card Index and the Buy Cards store.' },
   { title:'Card Tiers', tab:'deck', target:'[data-tour="deck-composition"]', body:'Tiers run Starter (green) · Uncommon (blue) · Rare (orange) · Hero (purple) · Legendary (silver) · Mythic (red) — and the radiant God tier above them all. Higher tiers are rarer and trend toward higher Overalls.' },
   { title:'Card Index', tab:'index', target:'[data-tour="hub-content"]', body:'The Index lets you browse every character and variant in the game — owned or not — so you can plan what to chase next.' },
-  { title:'The Stats Tab', tab:'stats', target:'[data-tour="hub-content"]', body:'Stats has two views. OVERVIEW shows your record for every game mode — Traditional, Tourney, House Wars, The Game of Thrones, Trial of Seven and Seven Kingdoms — each with the numbers that matter to it. The CARD STATS sub-tab tracks how every individual card has performed: games placed, win %, and points per game.' },
+  { title:'The Stats Tab', tab:'stats', target:'[data-tour="hub-content"]', body:'Stats has two views. OVERVIEW shows your record for every game mode — Traditional, Tourney, House Wars, The Game of Thrones, Trial of Seven, Seven Kingdoms and Deckmaster — each with the numbers that matter to it. The CARD STATS sub-tab tracks how every individual card has performed: games placed, win %, and points per game.' },
   { title:'Daily Rewards', tab:'daily', target:'[data-tour="daily-pull"]', body:'Come back every 24 hours for three free rewards: a Daily Card Pull, a Gold reward, and the Daily Spin — a 30-space fortune wheel that can land you a card, Gold, Rerolls, free Blacksmith repairs, free Lottery spins, or a free Evolve or Upgrade. Steady progress just for showing up.' },
   { title:'Gold & Rerolls', tab:'deck', target:'[data-tour="gold-bar"]', body:'Your Gold and in-game Rerolls show here, along with countdowns to your next free Daily pull and reward.' },
   { title:'Music Volume', tab:'deck', target:'[data-tour="volume"]', body:'The volume control (top-right) sets the music level — tap to mute or slide to taste. Collector Mode always plays its own theme.' },
@@ -8264,7 +8272,7 @@ function CollectorStartingPull({ onDone }) {
                 {isRev && <>
                   <div style={{ fontSize:'0.6rem', fontFamily:'Cinzel,serif', color:ct.color, fontWeight:700, marginBottom:2 }}>{card.name}</div>
                   <div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>{card.houses?.[0]}</div>
-                  <CollTierBadge tier={card.tier} />
+                  <CollTierBadge tier={card.tier} level={card._godLevel} />
                   <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, textAlign:'right', fontSize:'1rem', marginTop:4 }}>{card.overall}</div>
                 </>}
               </div>
@@ -8586,7 +8594,7 @@ function CollectorCardStats({ save }) {
   const hw = save.hw || {};
   const eligibleH = hwEligibleHouses(save.owned);
   const GOLD='var(--gold)', GRN='#4caf50', RED='#e05555', YEL='#ffd700';
-  const STAT_MODES = [['traditional','⚔ Traditional'],['tourney','🏆 Tourney'],['houseWars','🏰 House Wars'],['got','👑 Game of Thrones'],['trial','7️⃣ Trial of Seven'],['sevenK','🗺️ Seven Kingdoms']];
+  const STAT_MODES = [['traditional','⚔ Traditional'],['tourney','🏆 Tourney'],['houseWars','🏰 House Wars'],['got','👑 Game of Thrones'],['trial','7️⃣ Trial of Seven'],['sevenK','🗺️ Seven Kingdoms'],['deckmaster','🂠 Deckmaster']];
   let recRows = [], recWinRate = 0, recTitle = 'COMBAT RECORD', showWinBar = true, modeNote = null;
   if (statMode === 'houseWars') {
     const sel = houseFilter === 'all' ? { games: hw.games||0, wins: hw.wins||0 } : ((hw.byHouse||{})[houseFilter] || { games:0, wins:0 });
@@ -8606,7 +8614,7 @@ function CollectorCardStats({ save }) {
     const m=MS[statMode]||{}; const g=m.games||0, w=m.wins||0, l=Math.max(0,g-w), wr=g?Math.round(w/g*100):0;
     const avg=g?Math.floor((m.totalScore||0)/g*10)/10:0;
     recRows=[['Games',g,GOLD],['Wins',w,GRN],['Losses',l,RED],['Win Rate',wr+'%',GOLD],[statMode==='trial'?'Avg KG':'Avg Score',avg,GOLD],['Best',m.maxStreak||0,YEL]];
-    recWinRate=wr; recTitle = statMode==='tourney'?'TOURNEY':(statMode==='trial'?'TRIAL OF SEVEN':'COMBAT RECORD');
+    recWinRate=wr; recTitle = statMode==='tourney'?'TOURNEY':(statMode==='trial'?'TRIAL OF SEVEN':(statMode==='deckmaster'?'DECKMASTER':'COMBAT RECORD'));
   }
   // ── Collection progress ──
   const allCards = getCollCards();
@@ -8737,7 +8745,7 @@ function CollectorCardStats({ save }) {
             const ct = T[card.tier] || { color:'#888' };
             return (
               <div key={card.id} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4, fontSize:'0.7rem' }}>
-                <CollTierBadge tier={card.tier} />
+                <CollTierBadge tier={card.tier} level={card._godLevel} />
                 <div style={{ flex:1, color:ct.color }}>{card.name}</div>
                 <div style={{ fontFamily:'Cinzel,serif', color:'var(--text2)' }}>{cardPlays[card.id]} plays</div>
               </div>
@@ -8753,7 +8761,7 @@ function CollectorCardStats({ save }) {
             const ct = T[card.tier] || { color:'#888' };
             return (
               <div key={card.id} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4, fontSize:'0.7rem' }}>
-                <CollTierBadge tier={card.tier} />
+                <CollTierBadge tier={card.tier} level={card._godLevel} />
                 <div style={{ flex:1, color:ct.color }}>{card.name}</div>
                 <div style={{ fontFamily:'Cinzel,serif', color:'var(--gold)' }}>{card.avg} avg</div>
               </div>
@@ -9041,7 +9049,7 @@ function CollectorDailySection({ save, onUpdate }) {
                   <div key={e.i} onClick={() => { if (!disabled) chooseSpinCard(e.i); }} style={{ border:`2px solid ${ct.color}`, borderRadius:6, padding:'7px 9px', background:ct.bg, cursor:disabled ? 'not-allowed' : 'pointer', opacity:disabled ? 0.4 : 1 }}>
                     <div style={{ fontSize:'0.66rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
-                      <CollTierBadge tier={c.tier} />
+                      <CollTierBadge tier={c.tier} level={c._godLevel} />
                       <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.72rem' }}>{c.overall}</span>
                     </div>
                   </div>
@@ -9479,7 +9487,7 @@ function CollectorStore({ save, onUpdate }) {
                   <div key={i} onClick={()=>setTradeSelected(i)} style={{ border:`2px solid ${sel?'#fff':ct.color}`, borderRadius:6, padding:'6px 8px', background:sel?'rgba(255,255,255,0.12)':ct.bg, cursor:'pointer' }}>
                     <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
-                      <CollTierBadge tier={c.tier} />
+                      <CollTierBadge tier={c.tier} level={c._godLevel} />
                       <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.7rem' }}>{c.overall}</span>
                     </div>
                   </div>
@@ -9530,7 +9538,7 @@ function CollectorStore({ save, onUpdate }) {
                     <button onClick={(ev)=>{ ev.stopPropagation(); setDetailCard(c); }} title="View card" style={{ position:'absolute', top:2, right:3, background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, zIndex:2 }}>ⓘ</button>
                     <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:14 }}>{c.name}</div>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
-                      <CollTierBadge tier={c.tier} />
+                      <CollTierBadge tier={c.tier} level={c._godLevel} />
                       <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold)', fontSize:'0.7rem' }}>💰 {val}G</span>
                     </div>
                   </div>
@@ -9567,7 +9575,7 @@ function CollectorStore({ save, onUpdate }) {
                     <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:14 }}>{c.name}</div>
                     <div style={{ fontSize:'0.5rem', color:'#e05555', fontWeight:700, margin:'2px 0', lineHeight:1.3 }}>⚠ {n.devolvedFrom>0?`Devolved (was ${(T[collTierName(n.devolvedFrom)]||{}).label||collTierName(n.devolvedFrom)})`:''}{n.devolvedFrom>0&&n.degrade<0?' · ':''}{n.degrade<0?`Degraded ${n.degrade}`:''}</div>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
-                      <CollTierBadge tier={c.tier} />
+                      <CollTierBadge tier={c.tier} level={c._godLevel} />
                       <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: repairable?'var(--gold)':'var(--text2)', fontSize:'0.7rem' }}>{repairable?`⚒️ ${cost}G`:'unfixable'}</span>
                     </div>
                   </div>
@@ -9681,7 +9689,7 @@ function CollectorTrialLineup({ save, onConfirm, onCancel }) {
               {sel && <div style={{ position:'absolute', top:4, right:6, color:'var(--gold)', fontWeight:900 }}>✓</div>}
               <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.72rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:14 }}>{e.card.name}</div>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:5 }}>
-                <CollTierBadge tier={e.card.tier} />
+                <CollTierBadge tier={e.card.tier} level={e.card._godLevel} />
                 <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold)' }}>⚔ {trialKG(e.card)}</span>
               </div>
               <button onClick={(ev)=>{ ev.stopPropagation(); setDetailCard(e.card); }} style={{ marginTop:5, width:'100%', background:'none', border:'1px solid var(--border)', color:'var(--text2)', borderRadius:4, fontSize:'0.55rem', cursor:'pointer', padding:'2px 0' }}>ⓘ stats</button>
@@ -9776,7 +9784,7 @@ function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
             {card ? (<>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{card.name}</div>
-                <div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} /></div>
+                <div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} level={card._godLevel} /></div>
               </div>
               <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold)', fontSize:'0.95rem' }}>⚔ {trialKG(card)}</span>
               <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(card); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer' }}>ⓘ</button>
@@ -9796,7 +9804,7 @@ function CollectorTrialGame({ playerCards, cpuCards, onEnd }) {
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.84rem', color:ct.color, fontWeight:800, lineHeight:1.15 }}>{drawnCard.name}</div>
                 <div style={{ fontSize:'0.56rem', color:'var(--text2)', marginTop:2 }}>{drawnCard.identity||drawnCard.name} · {drawnCard.gender==='F'?'♀':'♂'} · Age {drawnCard.age}</div>
-                <div style={{ marginTop:4 }}><CollTierBadge tier={drawnCard.tier} /></div>
+                <div style={{ marginTop:4 }}><CollTierBadge tier={drawnCard.tier} level={drawnCard._godLevel} /></div>
               </div>
               <div style={{ textAlign:'center', flexShrink:0 }}>
                 <div style={{ fontFamily:'Cinzel,serif', fontWeight:800, color:'var(--gold)', fontSize:'1.5rem', lineHeight:1 }}>⚔ {trialKG(drawnCard)}</div>
@@ -9834,7 +9842,7 @@ function CollectorTrialResult({ result, onWinPull, onHome }) {
       <div className="scroll" style={{ flex:1, padding:'8px 14px' }}>
         {Object.keys(board).map(sid => { const c=board[sid]; if(!c) return null; const ct=T[c.tier]||{color:'#888'}; return (
           <div key={sid} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:'1px solid var(--border)' }}>
-            <div style={{ flex:1, minWidth:0 }}><div style={{ fontSize:'0.7rem', color:ct.color, fontWeight:700 }}>{c.name}</div><div style={{ marginTop:1 }}><CollTierBadge tier={c.tier} /></div></div>
+            <div style={{ flex:1, minWidth:0 }}><div style={{ fontSize:'0.7rem', color:ct.color, fontWeight:700 }}>{c.name}</div><div style={{ marginTop:1 }}><CollTierBadge tier={c.tier} level={c._godLevel} /></div></div>
             <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold)' }}>⚔ {trialKG(c)}</span>
           </div>
         ); })}
@@ -10077,7 +10085,7 @@ function CollectorSevenKingdoms({ save, onUpdate, onDone, onSpin }) {
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:ct.color, fontWeight:800, lineHeight:1.15 }}>{drawnCard.name}</div>
                 <div style={{ fontSize:'0.54rem', color:'var(--text2)', marginTop:2 }}>{drawnCard.identity||drawnCard.name} · {drawnCard.gender==='F'?'♀':'♂'} · Age {drawnCard.age} · {(drawnCard.houses||[]).join(', ')}</div>
-                <div style={{ marginTop:3 }}><CollTierBadge tier={drawnCard.tier} /></div>
+                <div style={{ marginTop:3 }}><CollTierBadge tier={drawnCard.tier} level={drawnCard._godLevel} /></div>
               </div>
               <div style={{ textAlign:'center', flexShrink:0 }}>
                 <div style={{ fontFamily:'Cinzel,serif', fontWeight:800, color:ct.color, fontSize:'1.3rem', lineHeight:1 }}>{drawnCard.overall}</div>
@@ -10158,7 +10166,7 @@ function CollectorWinPull({ winPullCards, onPick, onSkip, kingsguard, owned }) {
                   <span style={{ fontSize:'0.55rem', color:'var(--text2)' }}>{card.houses?.[0]}</span>
                   <span style={{ fontSize:'0.5rem', fontWeight:700, color: own?'#4caf50':'var(--text2)' }}>{own?'Owned':'Not Owned'}</span>
                 </div>
-                <CollTierBadge tier={card.tier} />
+                <CollTierBadge tier={card.tier} level={card._godLevel} />
                 <div style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, textAlign:'right', fontSize:'1rem', marginTop:4 }}>{scoreOf(card)}</div>
               </div>
             );
@@ -10249,7 +10257,7 @@ function CollectorDeckViewer({ cards, title, positions, defaultMode, onClose }) 
                   <div style={{ fontSize:'0.66rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
                   <div style={{ fontSize:'0.52rem', color:'var(--text2)' }}>{c.identity||''}{c.houses&&c.houses[0]?(' · '+c.houses[0]):''}</div>
                 </div>
-                <CollTierBadge tier={c.tier} />
+                <CollTierBadge tier={c.tier} level={c._godLevel} />
                 {f.sort==='position'
                   ? <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: collScoreColor(ps, f.posId), fontSize:'0.82rem', width:42, textAlign:'right' }}>{Math.round(ps*10)/10}</span>
                   : <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.82rem', width:42, textAlign:'right' }}>{c.overall}</span>}
@@ -10640,7 +10648,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
               <button onClick={()=>setDetailCard(null)} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'1.1rem', cursor:'pointer', lineHeight:1 }}>✕</button>
             </div>
             <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
-              <CollTierBadge tier={dc.tier} />
+              <CollTierBadge tier={dc.tier} level={dc._godLevel} />
               <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>Overall {dc.overall}</span>
               <span style={{ marginLeft:'auto', fontSize:'0.55rem', color:'var(--text2)' }}>{dc.houses?.[0]}</span>
             </div>
@@ -10760,7 +10768,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
                   <div style={{ flex:1 }}>
                     <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:(T[drawnCard.tier]||{}).color||'var(--gold)', fontWeight:700 }}>{drawnCard.name}</div>
                     <div style={{ fontSize:'0.6rem', color:'var(--text2)' }}>{drawnCard.houses?.[0]} · Overall: {drawnCard.overall}</div>
-                    <CollTierBadge tier={drawnCard.tier} />
+                    <CollTierBadge tier={drawnCard.tier} level={drawnCard._godLevel} />
                   </div>
                   {rerollsLeft > 0 && rerollsUsed < GAME_REROLL_LIMIT && !heldDisplaced && (
                     <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.6rem' }} onClick={doReroll}>
@@ -10833,7 +10841,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
                           <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(placed); }} title="View card" style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, flexShrink:0 }}>ⓘ</button>
                         </div>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
-                          <CollTierBadge tier={placed.tier} />
+                          <CollTierBadge tier={placed.tier} level={placed._godLevel} />
                           <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor(score, pos.id) }}>{Math.floor(score*10)/10}</span>
                         </div>
                       </>
@@ -10874,7 +10882,7 @@ function CollectorGame({ save, wager, onEnd, onUpdate, numCpus = 1 }) {
                           <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(card); }} title="View card" style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, flexShrink:0 }}>ⓘ</button>
                         </div>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:2 }}>
-                          <CollTierBadge tier={card.tier} />
+                          <CollTierBadge tier={card.tier} level={card._godLevel} />
                           <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{Math.floor(score*10)/10}</span>
                         </div>
                       </>
@@ -11054,7 +11062,7 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
                     <>
                       <div style={{ fontSize:'0.62rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{card.name}</div>
                       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
-                        <CollTierBadge tier={card.tier} />
+                        <CollTierBadge tier={card.tier} level={card._godLevel} />
                         <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor(sc, pos.id) }}>{sc}</span>
                       </div>
                     </>
@@ -11089,7 +11097,7 @@ function CollectorGameResult({ result, save, onWinPull, onHome }) {
                       <button onClick={()=>setDetailCard(card)} title="View card" style={{ position:'absolute', top:4, right:5, background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, lineHeight:1, zIndex:2 }}>ⓘ</button>
                       <div style={{ fontSize:'0.6rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:14 }}>{card.name}</div>
                       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
-                        <CollTierBadge tier={card.tier} />
+                        <CollTierBadge tier={card.tier} level={card._godLevel} />
                         <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.7rem' }}>{card.overall}</span>
                       </div>
                     </div>
@@ -11174,7 +11182,7 @@ function CollDetailModal({ card, onClose, owned, positions }) {
           <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'1.1rem', cursor:'pointer', lineHeight:1 }}>✕</button>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
-          <CollTierBadge tier={card.tier} />
+          <CollTierBadge tier={card.tier} level={card._godLevel} />
           <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>Overall {card.overall}</span>
           {owned !== undefined && <span style={{ fontSize:'0.55rem', fontWeight:700, color: owned?'#4caf50':'var(--text2)', border:`1px solid ${owned?'#4caf50':'var(--border)'}`, borderRadius:4, padding:'1px 5px' }}>{owned?'Owned':'Not Owned'}</span>}
           <span style={{ marginLeft:'auto', fontSize:'0.55rem', color:'var(--text2)' }}>{(card.houses||[]).join(' · ')}</span>
@@ -11317,7 +11325,7 @@ function CollectorHouseWarsLineup({ save, userHouse, cpuHouse, onConfirm, onBack
                 {sel && <div style={{ position:'absolute', top:4, right:6, color:'var(--gold)', fontWeight:900 }}>✓</div>}
                 <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.72rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:14 }}>{e.card.name}</div>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:5 }}>
-                  <CollTierBadge tier={e.card.tier} />
+                  <CollTierBadge tier={e.card.tier} level={e.card._godLevel} />
                   <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{e.card.overall}</span>
                 </div>
                 <button onClick={(ev)=>{ ev.stopPropagation(); setDetailCard(e.card); }} style={{ marginTop:5, width:'100%', background:'none', border:'1px solid var(--border)', color:'var(--text2)', borderRadius:4, fontSize:'0.55rem', cursor:'pointer', padding:'2px 0' }}>ⓘ stats</button>
@@ -11466,7 +11474,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
                 <>
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{card.name}</div>
-                    <div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} /></div>
+                    <div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} level={card._godLevel} /></div>
                   </div>
                   <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:collScoreColor((card.scores&&card.scores[p.id])||0, p.id), fontSize:'0.95rem' }}>{Math.round(((card.scores&&card.scores[p.id])||0)*10)/10}</span>
                   <button onClick={(e)=>{ e.stopPropagation(); setDetailCard(card); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer', padding:0, flexShrink:0 }}>ⓘ</button>
@@ -11489,7 +11497,7 @@ function CollectorHouseWarsGame({ playerCards, cpuCards, userHouse, cpuHouse, on
           <div>
             <div style={{ fontSize:'0.6rem', color:'var(--text2)', textAlign:'center', marginBottom:6 }}>Fate drew — tap a seat to place {showCpu?'(switch to P1 Court)':''}</div>
             <div className="card" style={{ borderColor:ct.color, padding:'8px 10px', display:'flex', alignItems:'center', gap:10 }}>
-              <div style={{ flex:1 }}><div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:ct.color, fontWeight:700 }}>{drawnCard.name}</div><div style={{ marginTop:3 }}><CollTierBadge tier={drawnCard.tier} /></div></div>
+              <div style={{ flex:1 }}><div style={{ fontFamily:'Cinzel,serif', fontSize:'0.8rem', color:ct.color, fontWeight:700 }}>{drawnCard.name}</div><div style={{ marginTop:3 }}><CollTierBadge tier={drawnCard.tier} level={drawnCard._godLevel} /></div></div>
               <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{drawnCard.overall}</span>
               <button onClick={()=>setDetailCard(drawnCard)} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.72rem', cursor:'pointer' }}>ⓘ</button>
             </div>
@@ -11565,7 +11573,7 @@ function CollectorHouseWarsResult({ result, onClaim, onDiscard }) {
             {placed.map(({ p, card }) => { const ct = T[card.tier]||{color:'#888'}; const sel = discardSel === card.id; return (
               <div key={p.id} onClick={() => setDiscardSel(card.id)} className="card" style={{ marginBottom:7, padding:'8px 10px', cursor:'pointer', borderColor: sel?'#e05555':ct.color, boxShadow: sel?'0 0 12px rgba(224,85,85,0.6)':'none', display:'flex', alignItems:'center', gap:10 }}>
                 <div style={{ width:78, flexShrink:0, fontFamily:'Cinzel,serif', fontSize:'0.6rem', color:'var(--text2)' }}>{p.label}</div>
-                <div style={{ flex:1, minWidth:0 }}><div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{card.name}</div><div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} /></div></div>
+                <div style={{ flex:1, minWidth:0 }}><div style={{ fontFamily:'Cinzel,serif', fontSize:'0.74rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{card.name}</div><div style={{ marginTop:2 }}><CollTierBadge tier={card.tier} level={card._godLevel} /></div></div>
                 <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color }}>{card.overall}</span>
                 {sel && <span style={{ color:'#e05555', fontWeight:900 }}>✓</span>}
               </div>
@@ -11665,7 +11673,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
             <div key={e.i} onClick={()=>{ if(!disabled) onPickCard(e.i); }} style={{ border:`2px solid ${ct.color}`, borderRadius:6, padding:'7px 9px', background:ct.bg, cursor:disabled?'not-allowed':'pointer', opacity:disabled?0.4:1 }}>
               <div style={{ fontSize:'0.66rem', color:ct.color, fontWeight:700, lineHeight:1.2 }}>{c.name}</div>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
-                <CollTierBadge tier={c.tier} />
+                <CollTierBadge tier={c.tier} level={c._godLevel} />
                 <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.72rem' }}>{c.overall}</span>
               </div>
             </div>
@@ -11718,7 +11726,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
         <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.92rem', color:ct.color, fontWeight:800, lineHeight:1.15, textAlign:'center' }}>{card.name}</div>
         <div style={{ fontSize:'0.52rem', color:'var(--text2)', textAlign:'center', marginTop:2 }}>{card.identity||card.name} · {card.gender==='F'?'♀ Female':'♂ Male'} · Age {card.age}</div>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:9, marginTop:6 }}>
-          <CollTierBadge tier={card.tier} />
+          <CollTierBadge tier={card.tier} level={card._godLevel} />
           <span style={{ fontFamily:'Cinzel,serif', fontWeight:800, color:ct.color, fontSize:'1.05rem' }}>{card.overall}</span>
         </div>
         {!!(card.houses||[]).length && <div style={{ fontSize:'0.46rem', color:'var(--text2)', textAlign:'center', marginTop:3 }}>{(card.houses||[]).join(' · ')}</div>}
@@ -11900,7 +11908,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
                 {own && <div style={{ position:'absolute', top:3, right:5, fontSize:'0.5rem', color:'var(--gold)' }}>OWNED ✦</div>}
                 <div style={{ fontSize:'0.66rem', color:ct.color, fontWeight:700, lineHeight:1.2, paddingRight:own?28:0 }}>{c.name}</div>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
-                  <CollTierBadge tier={c.tier} /><span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.72rem' }}>{c.overall}</span>
+                  <CollTierBadge tier={c.tier} level={c._godLevel} /><span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:ct.color, fontSize:'0.72rem' }}>{c.overall}</span>
                 </div>
               </div>
             ); })}
@@ -11961,7 +11969,7 @@ function CollectorWheel({ onDone, streak, spinsLeft, house }) {
               <button onClick={()=>setDetail(true)} title="Preview card" style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.9rem', cursor:'pointer', padding:0, lineHeight:1, flexShrink:0 }}>ⓘ</button>
             </div>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:6 }}>
-              <CollTierBadge tier={won.tier} />
+              <CollTierBadge tier={won.tier} level={won._godLevel} />
               <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color:(T[won.tier]||{}).color||'var(--gold)' }}>{won.overall}</span>
             </div>
           </div>
@@ -12169,7 +12177,7 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
                               <button onClick={(e)=>{ e.stopPropagation(); setDetail(c); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.6rem', cursor:'pointer', padding:0 }}>ⓘ</button>
                             </div>
                             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
-                              <CollTierBadge tier={c.tier} />
+                              <CollTierBadge tier={c.tier} level={c._godLevel} />
                               <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.56rem', fontWeight:700, color:ct.color }}>{c.overall}</span>
                             </div>
                           </div>
@@ -12192,7 +12200,7 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
                               <span style={{ color:'var(--text2)', fontSize:'0.6rem' }}>ⓘ</span>
                             </div>
                             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
-                              <CollTierBadge tier={c.tier} />
+                              <CollTierBadge tier={c.tier} level={c._godLevel} />
                               <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.56rem', fontWeight:700, color:ct.color }}>{c.overall}</span>
                             </div>
                           </div>
@@ -12318,7 +12326,7 @@ function CollectorDeckmasterResult({ result, onHome }) {
                   <div key={i} className="card fade-in" style={{ borderColor:ct.color, padding:'7px 9px', display:'flex', alignItems:'center', gap:8 }}>
                     <div style={{ flex:1, minWidth:0 }}>
                       <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.68rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{s.card.name}</div>
-                      <div style={{ marginTop:3 }}><CollTierBadge tier={s.card.tier} /></div>
+                      <div style={{ marginTop:3 }}><CollTierBadge tier={s.card.tier} level={s.card._godLevel} /></div>
                     </div>
                     <span style={{ fontSize:'0.55rem', color: s.lost ? '#e05555' : '#4caf50', fontWeight:700 }}>{s.lost ? '− lost' : (s.evolved ? '✦ evolved!' : '+ gained')}</span>
                     <button onClick={()=>setDetail(s.card)} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.68rem', cursor:'pointer' }}>ⓘ</button>
@@ -12346,17 +12354,18 @@ function EvolveOverlay({ from, to, onDone }) {
   if (!from || !to) return null;
   const fc = (T[from.tier]||{}), tc = (T[to.tier]||{});
   const isGod = to.tier === 'god';
+  const godLevel = to._godLevel || (isGod ? 1 : 0);
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.92)', zIndex:400, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, textAlign:'center' }}>
       <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.35rem', fontWeight:800, letterSpacing:'0.1em', marginBottom:20, color: tc.color||'var(--gold)', textShadow:`0 0 20px ${tc.color||'#f0c84a'}` }}>
-        {isGod ? '✨ GOD TIER! ✨' : '✦ EVOLVE! ✦'}
+        {isGod ? `✨ GOD TIER${godLevel>=2?' '+godLevel:''}! ✨` : '✦ EVOLVE! ✦'}
       </div>
       {phase === 0 ? (
         <div style={{ display:'flex', alignItems:'center', gap:8 }} className="evolve-pulse">
           {[0,1].map(i => (
             <div key={i} className="card" style={{ width:108, padding:'10px 8px', borderColor:fc.color||'#888', opacity:0.85 }}>
               <div style={{ fontSize:'0.58rem', color:fc.color||'#aaa', fontWeight:700, lineHeight:1.2 }}>{from.name}</div>
-              <div style={{ marginTop:5 }}><CollTierBadge tier={from.tier} /></div>
+              <div style={{ marginTop:5 }}><CollTierBadge tier={from.tier} level={from._godLevel} /></div>
             </div>
           ))}
         </div>
@@ -12365,10 +12374,10 @@ function EvolveOverlay({ from, to, onDone }) {
           <div className="card" style={{ borderColor: tc.color||'var(--gold)', boxShadow:`0 0 28px ${tc.color||'#f0c84a'}`, marginBottom:16 }}>
             <div style={{ fontFamily:'Cinzel,serif', fontSize:'1rem', color: tc.color||'var(--gold)', fontWeight:700 }}>{to.name}</div>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:8 }}>
-              <CollTierBadge tier={to.tier} />
+              <CollTierBadge tier={to.tier} level={godLevel} />
               <span style={{ fontFamily:'Cinzel,serif', fontWeight:700, color: tc.color||'var(--gold)', fontSize:'1.05rem' }}>{to.overall}</span>
             </div>
-            {isGod && <div style={{ fontSize:'0.58rem', color:'var(--text2)', marginTop:6, fontStyle:'italic' }}>×2 to all position scores</div>}
+            {isGod && <div style={{ fontSize:'0.58rem', color:'var(--text2)', marginTop:6, fontStyle:'italic' }}>God Tier {godLevel} · ×{Math.pow(2, godLevel)} to all position scores</div>}
           </div>
           <button className="btn btn-gold" style={{ width:'100%' }} onClick={onDone}>Continue ✓</button>
         </div>
