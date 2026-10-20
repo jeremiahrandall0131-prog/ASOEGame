@@ -7440,17 +7440,54 @@ function dmSpinnerFaces(n) {
   return ['Younger than 25', 'Older than 25'].concat(COLL_POS.map(p => p.label + ' over 25'));
 }
 
-// CPU reroll strategy: VOID a spin that nets points to the user — eager when behind, in the endgame,
-// or when the user could close out; never burns a reroll to deny a single early point.
+// Per-game CPU reroll TEMPERAMENT, rolled fresh each match so no two games feel the same. `bias`
+// shifts how big a swing it takes before the CPU spends a reroll (lower = more trigger-happy).
+const DM_CPU_PERSONAS = [
+  { id:'ruthless',    w:3, bias:-1 }, // fights for every point, spends rerolls freely, kicks you while down
+  { id:'measured',    w:4, bias:0 },  // sensible, balanced
+  { id:'calculating', w:3, bias:1 },  // hoards rerolls, strikes only at genuine threats / the finish
+];
+function dmPickCpuPersona() {
+  const tot = DM_CPU_PERSONAS.reduce((s, p) => s + p.w, 0);
+  let r = Math.random() * tot;
+  for (const p of DM_CPU_PERSONAS) { if ((r -= p.w) < 0) return p; }
+  return DM_CPU_PERSONAS[1];
+}
+
+// Whether the CPU VOIDS this spin. Reads the WHOLE situation — the score gap, how big the player's
+// single-round swing is, how close either side is to the target, and how many rounds/rerolls are left
+// — then flexes it through the game's persona. It protects game point, treats a big single-round swing
+// as almost always worth denying (back-to-back rerolls included), claws back hard when behind or late,
+// kicks a trailing player when it costs little, and sits on its rerolls when comfortably ahead with
+// time to spare. st: { userScore, cpuScore, round, cpuRerollsLeft, persona }.
 function dmCpuWantsReroll(userPts, cpuPts, st) {
-  if (st.cpuRerollsLeft <= 0) return false;
-  const net = userPts - cpuPts;
-  if (net <= 0) return false;
-  if (st.userScore + userPts >= DM_TARGET) return true; // never let the user walk into the win
-  let thresh = 3;
-  if (st.cpuScore < st.userScore) thresh -= 1;          // behind — fight harder
-  if (st.userScore >= DM_TARGET - 10) thresh -= 1;      // user threatening to close out (scales with the target)
-  if (DM_MAX_ROUNDS - st.round <= 5) thresh -= 1;       // endgame — spend them
+  const left = st.cpuRerollsLeft || 0;
+  if (left <= 0 || userPts <= 0) return false;                 // nothing worth (or able) to deny
+  const net = userPts - cpuPts;                                // player's NET gain on the CPU this round
+  const userAfter = st.userScore + userPts, cpuAfter = st.cpuScore + cpuPts;
+  const gap = st.cpuScore - st.userScore;                      // + CPU ahead, − CPU behind
+  const roundsLeft = Math.max(0, DM_MAX_ROUNDS - st.round);
+  const userToWin = Math.max(1, DM_TARGET - st.userScore);     // player's remaining climb to the target
+  const bias = (st.persona && st.persona.bias) || 0;           // −1 ruthless … +1 calculating
+
+  // 1) Game point — the player would reach the target AND not trail after it. Deny (almost) always.
+  if (userAfter >= DM_TARGET && userAfter >= cpuAfter) return true;
+  if (net <= 0) return false;                                  // the CPU matched/beat the player — keep it
+
+  // 2) Momentum — a big single-round swing (big outright, or a big chunk of the player's climb to the
+  //    target) is almost always worth killing, unless a hoarder is sitting on a commanding early lead.
+  const bigSwing = net >= 4 || userPts >= userToWin * 0.6;
+  if (bigSwing && !(bias > 0 && gap >= 8 && roundsLeft > 8)) return true;
+
+  // 3) Otherwise weigh it: how big a net swing justifies spending a reroll right now.
+  let thresh = 3 + bias;                                        // baseline: ruthless 2 / measured 3 / calculating 4
+  if (gap < 0) thresh -= 2;                                     // behind → comeback mode, fight for every point
+  else if (gap <= 3) thresh -= 1;                               // slim lead → stay sharp
+  else if (gap >= 8 && roundsLeft > 8) thresh += 2;             // comfortably ahead with time → hoard, stay passive
+  if (userAfter >= DM_TARGET - 8 || st.userScore >= st.cpuScore - 3) thresh -= 1; // player closing in
+  if (roundsLeft <= 4) thresh -= 1;                             // endgame → use them or lose them
+  if (left === 1 && roundsLeft > 6 && gap >= 0 && net < 3) return false; // guard the last reroll early
+
   return net >= Math.max(1, thresh);
 }
 
@@ -11947,6 +11984,7 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
   const [selected, setSelected] = React.useState(() => new Set());  // userDeck indices chosen to field
   const [userRerolls, setUserRerolls] = React.useState(startCap);
   const [cpuRerolls, setCpuRerolls] = React.useState(3);
+  const cpuPersona = React.useState(() => dmPickCpuPersona())[0]; // this game's CPU reroll temperament
   const [msg, setMsg] = React.useState('');
   const [reels, setReels] = React.useState([null, null, null]);
   const [detail, setDetail] = React.useState(null);
@@ -12003,7 +12041,7 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
   }
   function finalizeRound() {
     if (phase !== 'select') return;
-    if (dmCpuWantsReroll(userPts, cpuPts, { userScore, cpuScore, round, cpuRerollsLeft: cpuRerolls })) {
+    if (dmCpuWantsReroll(userPts, cpuPts, { userScore, cpuScore, round, cpuRerollsLeft: cpuRerolls, persona: cpuPersona })) {
       setCpuRerolls(r => r - 1);
       setMsg('⚔ The CPU voided the spin!');
       startSpin();
