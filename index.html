@@ -7335,6 +7335,139 @@ function genFeaturedHouse() {
   return { house, cards };
 }
 
+// ─── Deckmaster ──────────────────────────────────────────────────────────────
+// A 1-v-1 race to 50 points over up to 30 rounds. Each round spins THREE wheels for a
+// (House|Identity) × (Gender|Tier) × (Age|Position) requirement, and each side scores +1 for
+// every one of its still-UNUSED cards that satisfies ALL THREE. The CPU gets a deck of the same
+// size within ±2% of your total Overall. Each side has up to 3 rerolls to VOID a spin (yours come
+// from your real reroll bank). First to 50 wins; else most points after 30 rounds. The winner spins
+// to STEAL cards from the loser's deck — one, plus one more per 5-point win margin.
+const DM_TARGET = 50;
+const DM_MAX_ROUNDS = 30;
+const DM_PIVOT = 25;                 // Age & Position use a STRICT 25 pivot (exactly 25 = neither under nor over)
+const DM_TIERS = ['god','mythic','legendary','hero','rare','uncommon','starter'];
+
+// Validity pool = the achievable card space (base Card Index + a God ×2 version of every Mythic),
+// so a spin combo is only ever shown when at least ONE achievable card satisfies all three
+// stipulations — no impossible combos (Night's Watch + Female with none in the game, Cersei + Male,
+// a Starter with a 25+ position, …). collCpuPool() is already memoised.
+function dmValidityPool() { return collCpuPool(); }
+
+// Does a card satisfy ONE spinner stipulation? (Age/Position use a STRICT 25 pivot — exactly 25 = no.)
+function dmCardMeets(card, s) {
+  if (!card || !s) return false;
+  switch (s.type) {
+    case 'house':    return Array.isArray(card.houses) && card.houses.indexOf(s.value) !== -1;
+    case 'identity': return card.charId === s.value;
+    case 'gender':   return card.gender === s.value;
+    case 'tier':     return card.tier === s.value;
+    case 'age':      return s.value === 'under' ? (card.age || 0) < DM_PIVOT : (card.age || 0) > DM_PIVOT;
+    case 'position': { const v = (card.scores && card.scores[s.pos]) || 0; return s.dir === 'under' ? v < DM_PIVOT : v > DM_PIVOT; }
+    default: return false;
+  }
+}
+function dmComboMeets(card, c) { return dmCardMeets(card, c.s1) && dmCardMeets(card, c.s2) && dmCardMeets(card, c.s3); }
+function dmComboPossible(c) { const pool = dmValidityPool(); for (let i = 0; i < pool.length; i++) if (dmComboMeets(pool[i], c)) return true; return false; }
+
+let _dmIdentities = null;
+function dmIdentities() {
+  if (_dmIdentities) return _dmIdentities;
+  const seen = {}, out = [];
+  getCollCards().forEach(c => { if (c.charId && !seen[c.charId]) { seen[c.charId] = true; out.push({ id: c.charId, name: c.identity || c.name }); } });
+  _dmIdentities = out; return out;
+}
+const _dmPick = a => a[Math.floor(Math.random() * a.length)];
+
+// Roll ONE spinner (each has two equally-likely kinds).
+function dmRollSpinner(n) {
+  if (n === 1) {
+    if (Math.random() < 0.5) return { type: 'house', value: _dmPick(collHouseOptions()) };
+    const id = _dmPick(dmIdentities()); return { type: 'identity', value: id.id, name: id.name };
+  }
+  if (n === 2) {
+    if (Math.random() < 0.5) return { type: 'gender', value: Math.random() < 0.5 ? 'M' : 'F' };
+    return { type: 'tier', value: _dmPick(DM_TIERS) };
+  }
+  if (Math.random() < 0.5) return { type: 'age', value: Math.random() < 0.5 ? 'under' : 'over' };
+  const p = _dmPick(COLL_POS); return { type: 'position', pos: p.id, posLabel: p.label, dir: Math.random() < 0.5 ? 'under' : 'over' };
+}
+// Guaranteed-possible fallback: derive a combo from one real card (used only if rejection sampling fails).
+function dmComboFromCard(card) {
+  const s1 = (Math.random() < 0.5 && card.houses && card.houses.length)
+    ? { type: 'house', value: _dmPick(card.houses) }
+    : { type: 'identity', value: card.charId, name: card.identity || card.name };
+  const s2 = Math.random() < 0.5 ? { type: 'gender', value: card.gender } : { type: 'tier', value: card.tier };
+  let s3;
+  if (Math.random() < 0.5 && (card.age || 0) !== DM_PIVOT) {
+    s3 = { type: 'age', value: (card.age || 0) < DM_PIVOT ? 'under' : 'over' };
+  } else {
+    const ps = COLL_POS.filter(p => ((card.scores && card.scores[p.id]) || 0) !== DM_PIVOT);
+    const p = ps.length ? _dmPick(ps) : _dmPick(COLL_POS);
+    const v = (card.scores && card.scores[p.id]) || 0;
+    s3 = { type: 'position', pos: p.id, posLabel: p.label, dir: v < DM_PIVOT ? 'under' : 'over' };
+  }
+  return { s1, s2, s3 };
+}
+// Roll a full 3-spinner combo guaranteed satisfiable by ≥1 achievable card (rejection sampling + fallback).
+function dmRollCombo() {
+  for (let a = 0; a < 300; a++) {
+    const c = { s1: dmRollSpinner(1), s2: dmRollSpinner(2), s3: dmRollSpinner(3) };
+    if (dmComboPossible(c)) return c;
+  }
+  return dmComboFromCard(_dmPick(dmValidityPool()));
+}
+
+function dmStipLabel(s) {
+  if (!s) return '?';
+  switch (s.type) {
+    case 'house': return s.value;
+    case 'identity': return s.name || s.value;
+    case 'gender': return s.value === 'F' ? '♀ Female' : '♂ Male';
+    case 'tier': return ((window.COLLECTOR_TIERS || {})[s.value] || {}).label || s.value;
+    case 'age': return s.value === 'under' ? 'Younger than 25' : 'Older than 25';
+    case 'position': return (s.posLabel || s.pos) + (s.dir === 'under' ? ' under 25' : ' over 25');
+    default: return '?';
+  }
+}
+function dmStipKind(s) { return !s ? '' : (s.type === 'house' || s.type === 'identity') ? (s.type === 'house' ? 'House' : 'Identity')
+  : (s.type === 'gender') ? 'Gender' : (s.type === 'tier') ? 'Tier' : (s.type === 'age') ? 'Age' : 'Position'; }
+// Short label pool a reel can flicker through while "spinning" (purely cosmetic).
+function dmSpinnerFaces(n) {
+  if (n === 1) return collHouseOptions();
+  if (n === 2) return ['♂ Male', '♀ Female'].concat(DM_TIERS.map(t => ((window.COLLECTOR_TIERS || {})[t] || {}).label || t));
+  return ['Younger than 25', 'Older than 25'].concat(COLL_POS.map(p => p.label + ' over 25'));
+}
+
+// CPU reroll strategy: VOID a spin that nets points to the user — eager when behind, in the endgame,
+// or when the user could close out; never burns a reroll to deny a single early point.
+function dmCpuWantsReroll(userPts, cpuPts, st) {
+  if (st.cpuRerollsLeft <= 0) return false;
+  const net = userPts - cpuPts;
+  if (net <= 0) return false;
+  if (st.userScore + userPts >= DM_TARGET) return true; // never let the user walk into the win
+  let thresh = 3;
+  if (st.cpuScore < st.userScore) thresh -= 1;          // behind — fight harder
+  if (st.userScore >= 40) thresh -= 1;                  // user threatening to close out
+  if (DM_MAX_ROUNDS - st.round <= 5) thresh -= 1;       // endgame — spend them
+  return net >= Math.max(1, thresh);
+}
+
+// CPU's Deckmaster deck: same card count as the player, total Overall within ±2%.
+function genDeckmasterCpuDeck(userCards) {
+  const n = (userCards || []).length;
+  const sum = (userCards || []).reduce((s, c) => s + ((c && c.overall) || 0), 0);
+  return genCpuDeck(sum, n);
+}
+// One end-game STEAL spin over a deck of card objects: pick a tier present in the deck, then a random
+// card of that tier (skipping already-taken indices). Returns { tier, card, index } or null.
+function dmRollSteal(deck, excludeIdx) {
+  const avail = (deck || []).map((c, i) => ({ c, i })).filter(x => x.c && !excludeIdx.has(x.i));
+  if (!avail.length) return null;
+  const tier = _dmPick([...new Set(avail.map(x => x.c.tier))]);
+  const pick = _dmPick(avail.filter(x => x.c.tier === tier));
+  return { tier, card: pick.c, index: pick.i };
+}
+
 function collDefaultSave() {
   return { gold:500, rerolls:10, owned:[], lastDailyPull:null, lastDailyReward:null, lastDailySpin:null,
            freeRepairs:0, freeSpins:{}, // Daily Spin rewards: banked free Blacksmith repairs + free Lottery spins (by tier)
@@ -11796,6 +11929,275 @@ function CollectorWheel({ onDone, streak, spinsLeft, house }) {
   );
 }
 
+// ─── Deckmaster: the match ──────────────────────────────────────────────────
+function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
+  const T = window.COLLECTOR_TIERS || {};
+  const userDeck = React.useState(() => (save.owned || []).map(id => ({ id, card: getCollCard(id) })).filter(x => x.card))[0];
+  const cpuDeck = cpuCards || [];
+  const startCap = Math.min(3, save.rerolls || 0);
+  const [round, setRound] = React.useState(1);
+  const [userScore, setUserScore] = React.useState(0);
+  const [cpuScore, setCpuScore] = React.useState(0);
+  const [combo, setCombo] = React.useState(null);
+  const [phase, setPhase] = React.useState('spin');       // spin | select | done
+  const [usedUser, setUsedUser] = React.useState(() => new Set());  // indices into userDeck
+  const [usedCpu, setUsedCpu] = React.useState(() => new Set());    // indices into cpuDeck
+  const [selected, setSelected] = React.useState(() => new Set());  // userDeck indices chosen to field
+  const [userRerolls, setUserRerolls] = React.useState(startCap);
+  const [cpuRerolls, setCpuRerolls] = React.useState(3);
+  const [msg, setMsg] = React.useState('');
+  const [reels, setReels] = React.useState([null, null, null]);
+  const [detail, setDetail] = React.useState(null);
+  const [confirmQuit, setConfirmQuit] = React.useState(false);
+  const spinRef = React.useRef(0);
+
+  const userMatches = React.useMemo(
+    () => combo ? userDeck.map((x, i) => ({ x, i })).filter(o => !usedUser.has(o.i) && dmComboMeets(o.x.card, combo)) : [],
+    [combo, usedUser, userDeck]);
+  const cpuMatches = React.useMemo(
+    () => combo ? cpuDeck.map((c, i) => ({ c, i })).filter(o => !usedCpu.has(o.i) && dmComboMeets(o.c, combo)) : [],
+    [combo, usedCpu, cpuDeck]);
+  const userPts = userMatches.filter(o => selected.has(o.i)).length;
+  const cpuPts = cpuMatches.length;
+
+  function startSpin() {
+    setPhase('spin');
+    const sid = ++spinRef.current;
+    const faces = [dmSpinnerFaces(1), dmSpinnerFaces(2), dmSpinnerFaces(3)];
+    const iv = setInterval(() => setReels([
+      faces[0][Math.floor(Math.random() * faces[0].length)],
+      faces[1][Math.floor(Math.random() * faces[1].length)],
+      faces[2][Math.floor(Math.random() * faces[2].length)],
+    ]), 80);
+    setTimeout(() => {
+      clearInterval(iv);
+      if (spinRef.current !== sid) return;
+      const c = dmRollCombo();
+      const sel = new Set();
+      userDeck.forEach((x, i) => { if (!usedUser.has(i) && dmComboMeets(x.card, c)) sel.add(i); });
+      setCombo(c);
+      setReels([dmStipLabel(c.s1), dmStipLabel(c.s2), dmStipLabel(c.s3)]);
+      setSelected(sel);
+      setPhase('select');
+    }, 1400);
+  }
+  React.useEffect(() => { startSpin(); return () => { spinRef.current++; }; }, []);
+
+  function toggleSel(i) { setSelected(s => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; }); }
+
+  function doUserReroll() {
+    if (userRerolls <= 0 || phase !== 'select') return;
+    setUserRerolls(r => r - 1);
+    setMsg('You voided the spin — respinning…');
+    startSpin();
+  }
+  function finish(uScore, cScore, rerollsLeft) {
+    setPhase('done');
+    onEnd({ userScore: uScore, cpuScore: cScore, cpuCards: cpuDeck, rerollsUsed: startCap - rerollsLeft });
+  }
+  function finalizeRound() {
+    if (phase !== 'select') return;
+    if (dmCpuWantsReroll(userPts, cpuPts, { userScore, cpuScore, round, cpuRerollsLeft: cpuRerolls })) {
+      setCpuRerolls(r => r - 1);
+      setMsg('⚔ The CPU voided the spin!');
+      startSpin();
+      return;
+    }
+    const nUser = userScore + userPts, nCpu = cpuScore + cpuPts;
+    const nUsedUser = new Set(usedUser); userMatches.forEach(o => { if (selected.has(o.i)) nUsedUser.add(o.i); });
+    const nUsedCpu = new Set(usedCpu); cpuMatches.forEach(o => nUsedCpu.add(o.i));
+    setUserScore(nUser); setCpuScore(nCpu); setUsedUser(nUsedUser); setUsedCpu(nUsedCpu); setMsg('');
+    const bothOut = nUsedUser.size >= userDeck.length && nUsedCpu.size >= cpuDeck.length;
+    if (nUser >= DM_TARGET || nCpu >= DM_TARGET || round >= DM_MAX_ROUNDS || bothOut) { finish(nUser, nCpu, userRerolls); return; }
+    setRound(r => r + 1);
+    startSpin();
+  }
+
+  const uPct = Math.min(100, (userScore / DM_TARGET) * 100);
+  const cPct = Math.min(100, (cpuScore / DM_TARGET) * 100);
+  const spinning = phase === 'spin';
+  const allSel = userMatches.length > 0 && selected.size === userMatches.length;
+
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {detail && <CollDetailModal card={detail} owned={true} onClose={() => setDetail(null)} />}
+      {confirmQuit && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmQuit(false)}>
+          <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
+            <div style={{ fontFamily:'Cinzel,serif', color:'#e05555', fontSize:'0.95rem', marginBottom:8 }}>Leave Deckmaster?</div>
+            <div style={{ fontSize:'0.72rem', color:'var(--text2)', marginBottom:14 }}>You'll forfeit this match — no Gold and no steal, but no cards are lost either.</div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={()=>setConfirmQuit(false)}>Keep Playing</button>
+              <button className="btn btn-sm" style={{ flex:1, background:'#7a1010', color:'#fff', border:'1px solid #b01a1a' }} onClick={()=>onEnd(null)}>Leave</button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div style={{ display:'flex', alignItems:'center', padding:'8px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
+        <button onClick={()=>setConfirmQuit(true)} title="Quit" style={{ width:30, height:30, borderRadius:'50%', background:'#7a1010', border:'1px solid #b01a1a', color:'#fff', cursor:'pointer', fontWeight:900, flexShrink:0 }}>✕</button>
+        <div style={{ flex:1, textAlign:'center' }}>
+          <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.78rem', color:'var(--gold)' }}>🂠 DECKMASTER · Round {Math.min(round, DM_MAX_ROUNDS)}/{DM_MAX_ROUNDS}</div>
+          <div style={{ fontSize:'0.52rem', color:'var(--text2)' }}>First to {DM_TARGET} points</div>
+        </div>
+        <div style={{ width:30 }} />
+      </div>
+      <div style={{ padding:'8px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
+        {[['You', userScore, 'var(--p1,#3aa0ff)', uPct], ['CPU', cpuScore, 'var(--p2,#e05555)', cPct]].map(row => (
+          <div key={row[0]} style={{ marginBottom:4 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.6rem', fontFamily:'Cinzel,serif', color:row[2], marginBottom:2 }}>
+              <span>{row[0]}</span><span style={{ fontWeight:700 }}>{row[1]}</span>
+            </div>
+            <div style={{ height:7, background:'rgba(0,0,0,0.4)', borderRadius:4, overflow:'hidden' }}>
+              <div style={{ height:'100%', width:row[3]+'%', background:row[2], transition:'width 0.4s' }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ padding:'12px 12px 4px' }}>
+        <div style={{ display:'flex', gap:8 }}>
+          {[0,1,2].map(idx => {
+            const stip = combo ? [combo.s1, combo.s2, combo.s3][idx] : null;
+            const kinds = [['House','Identity'], ['Gender','Tier'], ['Age','Position']][idx];
+            return (
+              <div key={idx} style={{ flex:1, textAlign:'center' }}>
+                <div style={{ fontSize:'0.46rem', color:'var(--text2)', fontFamily:'Cinzel,serif', letterSpacing:'0.04em', marginBottom:3 }}>{kinds[0]} / {kinds[1]}</div>
+                <div style={{ minHeight:54, borderRadius:8, border:`2px solid ${spinning?'var(--border2)':'var(--gold)'}`, background:'var(--bg2)', display:'flex', alignItems:'center', justifyContent:'center', padding:'6px 4px', boxShadow: spinning?'none':'0 0 10px rgba(212,168,48,0.4)' }}>
+                  <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.62rem', fontWeight:700, color: spinning?'var(--text2)':'var(--gold2,#f0c84a)', lineHeight:1.2 }}>
+                    {spinning ? (reels[idx] || '…') : (stip ? dmStipLabel(stip) : '…')}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {!spinning && combo && (
+          <div style={{ fontSize:'0.58rem', color:'var(--text2)', textAlign:'center', marginTop:8, lineHeight:1.45 }}>
+            Field every card that is <b style={{color:'var(--gold)'}}>{dmStipLabel(combo.s1)}</b> · <b style={{color:'var(--gold)'}}>{dmStipLabel(combo.s2)}</b> · <b style={{color:'var(--gold)'}}>{dmStipLabel(combo.s3)}</b>
+          </div>
+        )}
+      </div>
+      <div className="scroll" style={{ flex:1, padding:'8px 12px', minHeight:0 }}>
+        {msg && <div style={{ fontSize:'0.64rem', color:'var(--gold)', textAlign:'center', marginBottom:8 }}>{msg}</div>}
+        {phase === 'select' && (
+          userMatches.length === 0
+            ? <div style={{ fontSize:'0.66rem', color:'var(--text2)', textAlign:'center', fontStyle:'italic', padding:'16px 0' }}>None of your cards match this spin.</div>
+            : (
+              <>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                  <div style={{ fontSize:'0.56rem', color:'var(--text2)' }}>Your matches — tap to field (+1 each). Used cards are locked out for the game.</div>
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.52rem', padding:'2px 7px', flexShrink:0 }} onClick={()=>setSelected(allSel?new Set():new Set(userMatches.map(o=>o.i)))}>{allSel?'None':'All'}</button>
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:6 }}>
+                  {userMatches.map(o => {
+                    const c = o.x.card, ct = T[c.tier] || { color:'#888' }, on = selected.has(o.i);
+                    return (
+                      <div key={o.i} onClick={()=>toggleSel(o.i)} className="card" style={{ cursor:'pointer', padding:'6px 8px', borderColor:on?'var(--gold)':ct.color, boxShadow:on?'0 0 8px rgba(212,168,48,0.5)':'none', position:'relative', opacity:on?1:0.75 }}>
+                        {on && <div style={{ position:'absolute', top:3, right:5, color:'var(--gold)', fontWeight:900, fontSize:'0.7rem' }}>✓</div>}
+                        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.63rem', color:ct.color, fontWeight:700, lineHeight:1.15, paddingRight:12, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.name}</div>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
+                          <CollTierBadge tier={c.tier} />
+                          <button onClick={(e)=>{ e.stopPropagation(); setDetail(c); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.66rem', cursor:'pointer', padding:0 }}>ⓘ</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )
+        )}
+      </div>
+      <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+        {phase === 'select' ? (
+          <>
+            <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.66rem', fontFamily:'Cinzel,serif', marginBottom:8 }}>
+              <span style={{ color:'var(--p1,#3aa0ff)', fontWeight:700 }}>You +{userPts}</span>
+              <span style={{ color:'var(--text2)' }}>↻ {userRerolls} left</span>
+              <span style={{ color:'var(--p2,#e05555)', fontWeight:700 }}>CPU +{cpuPts}</span>
+            </div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button className="btn btn-ghost btn-sm" disabled={userRerolls<=0} style={{ flex:1, opacity:userRerolls<=0?0.45:1, cursor:userRerolls<=0?'not-allowed':'pointer' }} onClick={doUserReroll}>↻ Reroll</button>
+              <button className="btn btn-gold btn-sm" style={{ flex:2 }} onClick={finalizeRound}>✓ Finalize Round</button>
+            </div>
+          </>
+        ) : (
+          <div style={{ textAlign:'center', fontFamily:'Cinzel,serif', color:'var(--gold)', fontSize:'0.82rem', padding:'8px' }}>Spinning…</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Deckmaster: scorecard → the steal spinner(s) ───────────────────────────
+function CollectorDeckmasterResult({ result, onHome }) {
+  const T = window.COLLECTOR_TIERS || {};
+  const { userScore, cpuScore, winner, margin, goldGain, spins, steals } = result;
+  const [shown, setShown] = React.useState(0);
+  const [flick, setFlick] = React.useState(null);
+  const [detail, setDetail] = React.useState(null);
+  const faces = React.useState(() => DM_TIERS.map(t => (T[t]||{}).label || t))[0];
+
+  React.useEffect(() => {
+    if (!steals || !steals.length || shown >= steals.length) return;
+    const iv = setInterval(() => setFlick(faces[Math.floor(Math.random()*faces.length)]), 90);
+    const to = setTimeout(() => { clearInterval(iv); setFlick(null); setShown(s => s + 1); }, 1150);
+    return () => { clearInterval(iv); clearTimeout(to); };
+  }, [shown, steals, faces]);
+
+  const tie = winner === 'tie';
+  const userWon = winner === 'user';
+  const bannerCol = tie ? 'var(--text)' : userWon ? 'var(--gold2,#f0c84a)' : '#e05555';
+  const allRevealed = !steals || shown >= steals.length;
+
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {detail && <CollDetailModal card={detail} owned={userWon} onClose={()=>setDetail(null)} />}
+      <div className="nav-bar"><div style={{ flex:1, textAlign:'center' }}><div className="nav-title" style={{ fontSize:'0.85rem' }}>🂠 DECKMASTER</div></div></div>
+      <div className="scroll" style={{ flex:1, padding:'16px', textAlign:'center' }}>
+        <div style={{ fontFamily:'Cinzel,serif', fontSize:'1.6rem', fontWeight:800, color:bannerCol, textShadow:`0 0 18px ${bannerCol}`, marginBottom:2 }}>
+          {tie ? 'DRAW' : userWon ? 'VICTORY' : 'DEFEAT'}
+        </div>
+        <div style={{ display:'flex', justifyContent:'center', gap:18, alignItems:'baseline', margin:'10px 0' }}>
+          <div><div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>YOU</div><div style={{ fontFamily:'Cinzel,serif', fontSize:'1.8rem', fontWeight:800, color:'var(--p1,#3aa0ff)' }}>{userScore}</div></div>
+          <div style={{ fontSize:'0.7rem', color:'var(--text2)' }}>vs</div>
+          <div><div style={{ fontSize:'0.55rem', color:'var(--text2)' }}>CPU</div><div style={{ fontFamily:'Cinzel,serif', fontSize:'1.8rem', fontWeight:800, color:'var(--p2,#e05555)' }}>{cpuScore}</div></div>
+        </div>
+        <div style={{ fontSize:'0.78rem', color:'var(--gold)', marginBottom:3 }}>🪙 +{goldGain} Gold</div>
+        {!tie && <div style={{ fontSize:'0.58rem', color:'var(--text2)', marginBottom:12 }}>Won by {margin} · {spins} steal spin{spins!==1?'s':''}</div>}
+        {!tie && spins > 0 && (
+          <div className="card" style={{ borderColor:bannerCol, marginTop:6, textAlign:'left' }}>
+            <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.72rem', color:bannerCol, fontWeight:700, marginBottom:8, textAlign:'center' }}>
+              {userWon ? "🎡 Raiding the CPU's deck" : '🎡 The CPU raids your deck'}
+            </div>
+            {!allRevealed && (
+              <div style={{ minHeight:38, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold2,#f0c84a)', fontSize:'0.9rem' }}>{flick || '…'}</div>
+            )}
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              {steals.slice(0, shown).map((s, i) => {
+                const ct = T[s.card.tier] || { color:'#888' };
+                return (
+                  <div key={i} className="card fade-in" style={{ borderColor:ct.color, padding:'7px 9px', display:'flex', alignItems:'center', gap:8 }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.68rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{s.card.name}</div>
+                      <div style={{ marginTop:3 }}><CollTierBadge tier={s.card.tier} /></div>
+                    </div>
+                    <span style={{ fontSize:'0.55rem', color: s.lost ? '#e05555' : '#4caf50', fontWeight:700 }}>{s.lost ? '− lost' : (s.evolved ? '✦ evolved!' : '+ gained')}</span>
+                    <button onClick={()=>setDetail(s.card)} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.68rem', cursor:'pointer' }}>ⓘ</button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{ padding:'12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
+        <button className="btn btn-gold" disabled={!allRevealed} style={{ width:'100%', padding:'13px', opacity:allRevealed?1:0.5, cursor:allRevealed?'pointer':'not-allowed' }} onClick={onHome}>
+          {allRevealed ? 'Continue →' : 'Spinning…'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Evolve animation (shown when a duplicate merges into a higher tier) ────
 function EvolveOverlay({ from, to, onDone }) {
   const T = window.COLLECTOR_TIERS || {};
@@ -11867,6 +12269,9 @@ function CollectorHub({ onHome }) {
   const [trialResult, setTrialResult] = React.useState(null);
   const [trialWager, setTrialWager] = React.useState(0);      // optional wager (same rules as Traditional)
   const [winPullKG, setWinPullKG] = React.useState(false);    // win-pull screen shows Kingsguard (Trial)
+  // Deckmaster active-game state
+  const [dmCpuDeck, setDmCpuDeck] = React.useState(null);     // CPU's generated deck (card objects)
+  const [dmResult, setDmResult] = React.useState(null);       // { userScore, cpuScore, winner, margin, goldGain, spins, steals }
 
   // A cloud pull (cross-device sync) writes the latest deck/gold/stats to localStorage and
   // fires 'asoe-cloud-sync'. Reload from it so the hub doesn't keep stale in-memory state
@@ -12000,6 +12405,53 @@ function CollectorHub({ onHome }) {
     setShowModeChoice(false); setScreen('sevenK');
   }
   function handleSevenKingdomsSpin() { setWheelHouse(null); setWheelSpinsLeft(1); setScreen('wheel'); } // 20+ squares filled reward
+  function startDeckmaster() {
+    if ((save.owned || []).length < 10) return;
+    const userCards = (save.owned || []).map(id => getCollCard(id)).filter(Boolean);
+    setDmCpuDeck(genDeckmasterCpuDeck(userCards)); // same count, ±2% total Overall
+    setShowModeChoice(false); setScreen('deckmasterGame');
+  }
+  function handleDeckmasterEnd(result) {
+    if (!result) { setDmCpuDeck(null); setScreen('hub'); return; } // quit — no reward, no penalty
+    const { userScore, cpuScore, cpuCards, rerollsUsed } = result;
+    const winner = userScore > cpuScore ? 'user' : cpuScore > userScore ? 'cpu' : 'tie';
+    const margin = Math.abs(userScore - cpuScore);
+    const spins = winner === 'tie' ? 0 : 1 + Math.floor(margin / 5); // +1 steal spin per 5-point margin
+    const goldGain = winner === 'user' ? (50 + margin * 5) : 20;      // win = 50 + 5×margin; else +20 completion
+    const ns = { ...save };
+    ns.rerolls = Math.max(0, (ns.rerolls || 0) - (rerollsUsed || 0)); // your real rerolls were spent
+    ns.gold = (ns.gold || 0) + goldGain;
+    ns.modeStats = collRecordMode(ns.modeStats, 'deckmaster', { win: winner === 'user', score: userScore });
+    const steals = [];
+    if (winner === 'user') {                     // raid the CPU deck → add to your collection (dupes Evolve)
+      const used = new Set(); let owned = (ns.owned || []).slice();
+      for (let s = 0; s < spins; s++) {
+        const roll = dmRollSteal(cpuCards, used);
+        if (!roll) break;
+        used.add(roll.index);
+        const res = collAcquire(owned, roll.card.id); owned = res.owned;
+        steals.push({ card: roll.card, tier: roll.tier, evolved: res.evolved });
+      }
+      ns.owned = owned;
+    } else if (winner === 'cpu') {               // CPU raids your deck → you surrender cards (never below 10)
+      let owned = (ns.owned || []).slice();
+      const deckObjs = owned.map(id => getCollCard(id)); // index-aligned to owned
+      const removeIdx = new Set();
+      for (let s = 0; s < spins; s++) {
+        if (owned.length - removeIdx.size <= 10) break; // keep a playable deck
+        const roll = dmRollSteal(deckObjs, removeIdx);
+        if (!roll) break;
+        removeIdx.add(roll.index);
+        steals.push({ card: roll.card, tier: roll.tier, lost: true });
+      }
+      ns.owned = owned.filter((_, i) => !removeIdx.has(i));
+    }
+    saveCollSave(ns); setSave(ns);
+    try { checkCollectorAchievements(ns, null).forEach(id => window.dispatchEvent(new CustomEvent('asoe-achievement', { detail: id }))); } catch (e) {}
+    setDmResult({ userScore, cpuScore, winner, margin, goldGain, spins, steals });
+    setDmCpuDeck(null);
+    setScreen('deckmasterResult');
+  }
 
   function handleStartGame(wager) {
     setGameWager(wager);
@@ -12212,6 +12664,10 @@ function CollectorHub({ onHome }) {
         rules:'A solo 5×5 bingo board with a free center. Every square demands a card meeting a random requirement (House, tier, age, position, first letter, or Overall band). Over 25 draws, place each card where it fits; a card that fits nowhere is discarded. No rerolls. Needs 25+ cards.',
         rewards:'+2 Gold for every square you fill, +20 Gold for each completed line, +2,000 Gold for a full blackout, and a Spin the Wheel for filling 20+ squares.',
         risks:'None — solo play, no wager and no cards at stake; a card that fits no open square is simply discarded.' },
+      { id:'deckmaster', label:'Deckmaster', icon:'🂠', col:'#c77dff', start:startDeckmaster, locked:false,
+        rules:'A 1-v-1 race to 50 points over up to 30 rounds. Each round spins THREE wheels — House/Identity, Gender/Tier, and Age/Position (a strict 25 pivot) — and you score +1 for every one of your still-unused cards that matches ALL THREE (each card fields only once per game). The CPU fields a deck your exact size, within ±2% of your total Overall. You each get up to 3 rerolls to VOID a spin (yours come from your reroll bank). First to 50 wins; otherwise the highest score after 30 rounds.',
+        rewards:'A flat +20 Gold for finishing. A win instead pays 50 Gold + 5 Gold for every point of your winning margin, and lets you SPIN to steal a card from the CPU’s deck — plus one more steal for every 5-point margin (a tier wheel, then a card wheel).',
+        risks:'Lose and the CPU raids YOUR deck the same way — one card, plus one per 5-point margin — though it never drops you below a 10-card deck.' },
     ];
     const sel = MODES.find(m => m.id === selectedMode);
     const renderBtn = (m) => (
@@ -12253,8 +12709,8 @@ function CollectorHub({ onHome }) {
         <div className="scroll" style={{ flex:1, padding:'14px' }}>
           <div style={{ fontSize:'0.62rem', color:'var(--text2)', textAlign:'center', marginBottom:12 }}>Pick a mode (tap <b>?</b> for how it plays), then hit Play.</div>
           <div style={{ display:'flex', gap:10, alignItems:'stretch' }}>
-            <div style={{ flex:1, display:'flex', flexDirection:'column', gap:10 }}>{MODES.slice(0,3).map(renderBtn)}</div>
-            <div style={{ flex:1, display:'flex', flexDirection:'column', gap:10 }}>{MODES.slice(3).map(renderBtn)}</div>
+            <div style={{ flex:1, display:'flex', flexDirection:'column', gap:10 }}>{MODES.slice(0,4).map(renderBtn)}</div>
+            <div style={{ flex:1, display:'flex', flexDirection:'column', gap:10 }}>{MODES.slice(4).map(renderBtn)}</div>
           </div>
         </div>
         <div style={{ padding:'12px 14px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
@@ -12280,6 +12736,8 @@ function CollectorHub({ onHome }) {
   if (screen === 'trialGame' && trialLineup) return <CollectorTrialGame playerCards={trialLineup} cpuCards={trialCpu||[]} onEnd={handleTrialEnd} />;
   if (screen === 'trialResult' && trialResult) return <CollectorTrialResult result={trialResult} onWinPull={handleTrialWinPull} onHome={() => { if (save.pendingWinPull) autoResolveWinPull(save); setScreen('hub'); setTrialResult(null); }} />;
   if (screen === 'sevenK') return <CollectorSevenKingdoms save={save} onUpdate={handleUpdate} onDone={() => setScreen('hub')} onSpin={handleSevenKingdomsSpin} />;
+  if (screen === 'deckmasterGame' && dmCpuDeck) return <CollectorDeckmasterGame save={save} cpuCards={dmCpuDeck} onEnd={handleDeckmasterEnd} />;
+  if (screen === 'deckmasterResult' && dmResult) return <CollectorDeckmasterResult result={dmResult} onHome={() => { setDmResult(null); setScreen('hub'); }} />;
   if (screen === 'wheel') return <React.Fragment>{evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={() => setEvolveAnim(null)} />}<CollectorWheel key={wheelSpinsLeft} spinsLeft={wheelSpinsLeft} house={wheelHouse} onDone={handleWheelDone} streak={gameResult ? gameResult.winStreak : 5} /></React.Fragment>;
 
   return (
