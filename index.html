@@ -9214,10 +9214,12 @@ function CollectorStore({ save, onUpdate }) {
     if (!pool.length) { msg('No other card of that tier to trade for!'); return; }
     setPendingBuy({ label:`Trade ${card.name} for a random ${(T[card.tier]||{}).label||card.tier} card? (${TRADE_COST}G)`, action: () => {
       const got = pool[Math.floor(Math.random()*pool.length)];
-      const o = [...(save.owned||[])]; o.splice(index, 1); o.push(got.id);
-      const newSave = { ...save, gold:(save.gold||0)-TRADE_COST, owned:o };
+      const afterRemove = [...(save.owned||[])]; afterRemove.splice(index, 1);
+      const res = collAcquire(afterRemove, got.id); // dup → Evolve (and show the animation)
+      const newSave = { ...save, gold:(save.gold||0)-TRADE_COST, owned: res.owned };
       saveCollSave(newSave); onUpdate(newSave); setTradeSelected(null);
-      msg(`Traded ${card.name} → ${got.name}!`);
+      if (res.evolved) setEvolveAnim({ from: res.from, to: res.card });
+      msg(res.evolved ? `Traded ${card.name} → ${got.name}, and it Evolved!` : `Traded ${card.name} → ${got.name}!`);
     }});
   }
 
@@ -11594,6 +11596,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
   const [summary, setSummary] = React.useState('');
   const [reward, setReward] = React.useState(null);
   const [rewardEvolved, setRewardEvolved] = React.useState(false);
+  const [evolveAnim, setEvolveAnim] = React.useState(null); // { from, to } → the Evolve animation on a duplicate win
   const [idQuery, setIdQuery] = React.useState('');
   const [idChar, setIdChar] = React.useState(null);
   const [detailCard, setDetailCard] = React.useState(null);
@@ -11626,7 +11629,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
     let next = 'done';
     if (k === 'gold') { commit({ ...save, gold: (save.gold||0) + c.amount }); setSummary(`${c.amount>=0?'+':''}${c.amount} Gold`); }
     else if (k === 'rerolls') { commit({ ...save, rerolls: (save.rerolls||0) + c.amount }); setSummary(`${c.amount>=0?'+':''}${c.amount} Rerolls`); } // NOT clamped — balance can go negative
-    else if (k === 'randomCard') { const got = gotRandomTierCard(c.tier); if (got) { const res = collAcquire(save.owned||[], got.id); commit({ ...save, owned: res.owned }); setReward(res.evolved?res.card:got); setRewardEvolved(res.evolved); } }
+    else if (k === 'randomCard') { const got = gotRandomTierCard(c.tier); if (got) { const res = collAcquire(save.owned||[], got.id); commit({ ...save, owned: res.owned }); setReward(res.evolved?res.card:got); setRewardEvolved(res.evolved); if (res.evolved) setEvolveAnim({ from: res.from, to: res.card }); } }
     else if (k === 'massEvolve') { commit({ ...save, owned: gotMassEvolve(save.owned) }); setSummary('Every card in your deck leveled up a tier!'); }
     else if (k === 'massUpgrade') { commit({ ...save, owned: gotMassUpgrade(save.owned) }); setSummary('+1 to every position score, on every card.'); }
     else if (k === 'massDevolve') { commit({ ...save, owned: gotMassDevolve(save.owned) }); setSummary('Every card dropped a tier (Starters spared).'); }
@@ -11648,7 +11651,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
   function doLose(i) { const o=[...(save.owned||[])]; const cc=getCollCard(o[i]); o.splice(i,1); finishChoice({ ...save, owned:o }, `Surrendered ${cc?cc.name:'a card'}.`, cc); }
   function doDevolve(i) { const o=[...(save.owned||[])]; const cc=getCollCard(o[i]); const t=collDevolveTargetId(cc); if(!t)return; o[i]=t; finishChoice({ ...save, owned:o }, `${cc?cc.name:'Card'} devolved a tier.`); }
   function doDegrade(i) { const o=[...(save.owned||[])]; const cc=getCollCard(o[i]); o[i]=collApplyMod(o[i],-3); finishChoice({ ...save, owned:o }, `−3 to every position of ${cc?cc.name:'your card'}.`); }
-  function doIdentityClaim(id) { const res=collAcquire(save.owned||[], id); setRewardEvolved(res.evolved); finishChoice({ ...save, owned:res.owned }, null, res.evolved?res.card:getCollCard(id)); }
+  function doIdentityClaim(id) { const res=collAcquire(save.owned||[], id); setRewardEvolved(res.evolved); if (res.evolved) setEvolveAnim({ from: res.from, to: res.card }); finishChoice({ ...save, owned:res.owned }, null, res.evolved?res.card:getCollCard(id)); }
 
   // ── card-picker for the choice effects ──
   const isLossChoice = GOT_LOSS_CHOICE_KINDS.has(stage);
@@ -11675,6 +11678,7 @@ function CollectorGoT({ save, onUpdate, onDone, onSpin }) {
   const cardBack = (i) => i % 2 === 0 ? '👑' : '⚔️';
   const wrap = (children) => (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {evolveAnim && <EvolveOverlay from={evolveAnim.from} to={evolveAnim.to} onDone={()=>setEvolveAnim(null)} />}
       {detailCard && <CollDetailModal card={detailCard} onClose={()=>setDetailCard(null)} />}
       {showDeckView && <CollectorDeckViewer cards={(save.owned||[]).map(getCollCard).filter(Boolean)} title="Your Deck" onClose={()=>setShowDeckView(false)} />}
       <div className="nav-bar"><div style={{ flex:1, textAlign:'center' }}>
@@ -12003,6 +12007,10 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
     (collTierRank(b.x.card.tier) - collTierRank(a.x.card.tier)) ||
     ((b.x.card.overall || 0) - (a.x.card.overall || 0)) ||
     String(a.x.card.name).localeCompare(String(b.x.card.name))), [userMatches]);
+  const sortedCpuMatches = React.useMemo(() => cpuMatches.slice().sort((a, b) =>
+    (collTierRank(b.c.tier) - collTierRank(a.c.tier)) ||
+    ((b.c.overall || 0) - (a.c.overall || 0)) ||
+    String(a.c.name).localeCompare(String(b.c.name))), [cpuMatches]);
   const userPts = userMatches.filter(o => selected.has(o.i)).length;
   const cpuPts = cpuMatches.length;
   const cardsLeft = userDeck.length - usedUser.size;
@@ -12058,8 +12066,9 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
     const nUsedUser = new Set(usedUser); userMatches.forEach(o => { if (selected.has(o.i)) nUsedUser.add(o.i); });
     const nUsedCpu = new Set(usedCpu); cpuMatches.forEach(o => nUsedCpu.add(o.i));
     setUserScore(nUser); setCpuScore(nCpu); setUsedUser(nUsedUser); setUsedCpu(nUsedCpu); setMsg('');
-    const bothOut = nUsedUser.size >= userDeck.length && nUsedCpu.size >= cpuDeck.length;
-    if (nUser >= DM_TARGET || nCpu >= DM_TARGET || round >= DM_MAX_ROUNDS || bothOut) { finish(nUser, nCpu, userRerolls); return; }
+    // End if EITHER side has run out of selectable cards (whoever leads wins), or on target / round cap.
+    const eitherOut = nUsedUser.size >= userDeck.length || nUsedCpu.size >= cpuDeck.length;
+    if (nUser >= DM_TARGET || nCpu >= DM_TARGET || round >= DM_MAX_ROUNDS || eitherOut) { finish(nUser, nCpu, userRerolls); return; }
     setRound(r => r + 1);
     startSpin();
   }
@@ -12135,35 +12144,64 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
           </div>
         )}
       </div>
-      <div className="scroll" style={{ flex:1, padding:'8px 12px', minHeight:0 }}>
-        {msg && <div style={{ fontSize:'0.64rem', color:'var(--gold)', textAlign:'center', marginBottom:8 }}>{msg}</div>}
+      <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0, padding:'6px 10px 2px' }}>
+        {msg && <div style={{ fontSize:'0.62rem', color:'var(--gold)', textAlign:'center', marginBottom:4 }}>{msg}</div>}
         {phase === 'select' && (
-          userMatches.length === 0
-            ? <div style={{ fontSize:'0.66rem', color:'var(--text2)', textAlign:'center', fontStyle:'italic', padding:'16px 0' }}>None of your cards match this spin.</div>
-            : (
-              <>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-                  <div style={{ fontSize:'0.56rem', color:'var(--text2)' }}>Your matches (<b style={{color:'var(--gold)'}}>{userMatches.length}</b>) — tap to field (+1 each); each card fields once per game.</div>
-                  <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.52rem', padding:'2px 7px', flexShrink:0 }} onClick={()=>setSelected(allSel?new Set():new Set(userMatches.map(o=>o.i)))}>{allSel?'None':'All'}</button>
+          <>
+            <div style={{ fontSize:'0.5rem', color:'var(--text2)', textAlign:'center', marginBottom:4 }}>Tap your cards to field (+1 each) · each card fields once per game</div>
+            <div style={{ flex:1, display:'flex', gap:8, minHeight:0 }}>
+              {/* YOU — eligible cards, tap to field */}
+              <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
+                  <span style={{ fontSize:'0.58rem', fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--p1,#3aa0ff)' }}>YOU · {userMatches.length}</span>
+                  {userMatches.length > 0 && <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.46rem', padding:'1px 6px' }} onClick={()=>setSelected(allSel?new Set():new Set(userMatches.map(o=>o.i)))}>{allSel?'None':'All'}</button>}
                 </div>
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:6 }}>
-                  {sortedMatches.map(o => {
-                    const c = o.x.card, ct = T[c.tier] || { color:'#888' }, on = selected.has(o.i);
-                    return (
-                      <div key={o.i} onClick={()=>toggleSel(o.i)} className="card" style={{ cursor:'pointer', padding:'6px 8px', borderColor:on?'var(--gold)':ct.color, boxShadow:on?'0 0 8px rgba(212,168,48,0.5)':'none', position:'relative', opacity:on?1:0.7 }}>
-                        {on && <div style={{ position:'absolute', top:3, right:5, color:'var(--gold)', fontWeight:900, fontSize:'0.7rem' }}>✓</div>}
-                        <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.63rem', color:ct.color, fontWeight:700, lineHeight:1.15, paddingRight:12, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.name}</div>
-                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4, gap:4 }}>
-                          <CollTierBadge tier={c.tier} />
-                          <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', fontWeight:700, color:ct.color }}>{c.overall}</span>
-                          <button onClick={(e)=>{ e.stopPropagation(); setDetail(c); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.66rem', cursor:'pointer', padding:0, marginLeft:'auto' }}>ⓘ</button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="scroll" style={{ flex:1, overflowY:'auto', minHeight:0, display:'flex', flexDirection:'column', gap:5, paddingRight:2 }}>
+                  {userMatches.length === 0
+                    ? <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontStyle:'italic', textAlign:'center', padding:'12px 2px' }}>No matching cards</div>
+                    : sortedMatches.map(o => {
+                        const c = o.x.card, ct = T[c.tier] || { color:'#888' }, on = selected.has(o.i);
+                        return (
+                          <div key={o.i} onClick={()=>toggleSel(o.i)} className="card" style={{ cursor:'pointer', padding:'5px 7px', borderColor:on?'var(--gold)':ct.color, boxShadow:on?'0 0 7px rgba(212,168,48,0.5)':'none', opacity:on?1:0.6 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:3 }}>
+                              <span style={{ color:'var(--gold)', fontWeight:900, fontSize:'0.58rem', visibility:on?'visible':'hidden' }}>✓</span>
+                              <div style={{ flex:1, minWidth:0, fontFamily:'Cinzel,serif', fontSize:'0.58rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.name}</div>
+                              <button onClick={(e)=>{ e.stopPropagation(); setDetail(c); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.6rem', cursor:'pointer', padding:0 }}>ⓘ</button>
+                            </div>
+                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
+                              <CollTierBadge tier={c.tier} />
+                              <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.56rem', fontWeight:700, color:ct.color }}>{c.overall}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                 </div>
-              </>
-            )
+              </div>
+              {/* CPU — the cards it will field this round (view-only) */}
+              <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0, borderLeft:'1px solid var(--border)', paddingLeft:8 }}>
+                <div style={{ marginBottom:4 }}><span style={{ fontSize:'0.58rem', fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--p2,#e05555)' }}>CPU · {cpuMatches.length}</span></div>
+                <div className="scroll" style={{ flex:1, overflowY:'auto', minHeight:0, display:'flex', flexDirection:'column', gap:5, paddingRight:2 }}>
+                  {cpuMatches.length === 0
+                    ? <div style={{ fontSize:'0.55rem', color:'var(--text2)', fontStyle:'italic', textAlign:'center', padding:'12px 2px' }}>No matching cards</div>
+                    : sortedCpuMatches.map(o => {
+                        const c = o.c, ct = T[c.tier] || { color:'#888' };
+                        return (
+                          <div key={o.i} onClick={()=>setDetail(c)} className="card" style={{ cursor:'pointer', padding:'5px 7px', borderColor:ct.color }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:3 }}>
+                              <div style={{ flex:1, minWidth:0, fontFamily:'Cinzel,serif', fontSize:'0.58rem', color:ct.color, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.name}</div>
+                              <span style={{ color:'var(--text2)', fontSize:'0.6rem' }}>ⓘ</span>
+                            </div>
+                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:3 }}>
+                              <CollTierBadge tier={c.tier} />
+                              <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.56rem', fontWeight:700, color:ct.color }}>{c.overall}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                </div>
+              </div>
+            </div>
+          </>
         )}
       </div>
       <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
@@ -12221,13 +12259,21 @@ function CollectorDeckmasterResult({ result, onHome }) {
     return () => timers.forEach(([k, id]) => k === 'i' ? clearInterval(id) : clearTimeout(id));
   }, [shown, steals, loserPool, tierFaces]);
 
+  // Any stolen card that was a duplicate Evolved — play the full Evolve animation for each, once the
+  // steal reels finish, before Continue unlocks (so an Evolve is always clearly shown).
+  const evolveList = React.useMemo(() => (steals || []).filter(s => s.evolved && s.evolveTo), [steals]);
+  const [evolveIdx, setEvolveIdx] = React.useState(0);
+
   const tie = winner === 'tie';
   const userWon = winner === 'user';
   const bannerCol = tie ? 'var(--text)' : userWon ? 'var(--gold2,#f0c84a)' : '#e05555';
   const allRevealed = !steals || shown >= steals.length;
+  const evolveActive = allRevealed && evolveIdx < evolveList.length;
+  const canContinue = allRevealed && evolveIdx >= evolveList.length;
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+      {evolveActive && <EvolveOverlay from={evolveList[evolveIdx].evolveFrom || evolveList[evolveIdx].card} to={evolveList[evolveIdx].evolveTo} onDone={() => setEvolveIdx(i => i + 1)} />}
       {detail && <CollDetailModal card={detail} owned={userWon} onClose={()=>setDetail(null)} />}
       <div className="nav-bar"><div style={{ flex:1, textAlign:'center' }}><div className="nav-title" style={{ fontSize:'0.85rem' }}>🂠 DECKMASTER</div></div></div>
       <div className="scroll" style={{ flex:1, padding:'16px', textAlign:'center' }}>
@@ -12284,8 +12330,8 @@ function CollectorDeckmasterResult({ result, onHome }) {
         )}
       </div>
       <div style={{ padding:'12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
-        <button className="btn btn-gold" disabled={!allRevealed} style={{ width:'100%', padding:'13px', opacity:allRevealed?1:0.5, cursor:allRevealed?'pointer':'not-allowed' }} onClick={onHome}>
-          {allRevealed ? 'Continue →' : 'Spinning…'}
+        <button className="btn btn-gold" disabled={!canContinue} style={{ width:'100%', padding:'13px', opacity:canContinue?1:0.5, cursor:canContinue?'pointer':'not-allowed' }} onClick={onHome}>
+          {canContinue ? 'Continue →' : (allRevealed ? 'Evolving…' : 'Spinning…')}
         </button>
       </div>
     </div>
@@ -12527,7 +12573,7 @@ function CollectorHub({ onHome }) {
         if (!roll) break;
         used.add(roll.index);
         const res = collAcquire(owned, roll.card.id); owned = res.owned;
-        steals.push({ card: roll.card, tier: roll.tier, evolved: res.evolved });
+        steals.push({ card: roll.card, tier: roll.tier, evolved: res.evolved, evolveTo: res.evolved ? res.card : null, evolveFrom: res.evolved ? res.from : null });
       }
       ns.owned = owned;
     } else if (winner === 'cpu') {               // CPU raids your deck → you surrender cards (never below 10)
