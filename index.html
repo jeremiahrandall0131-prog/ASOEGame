@@ -11989,6 +11989,7 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
   const [reels, setReels] = React.useState([null, null, null]);
   const [detail, setDetail] = React.useState(null);
   const [confirmQuit, setConfirmQuit] = React.useState(false);
+  const [showDeck, setShowDeck] = React.useState(false);
   const spinRef = React.useRef(0);
 
   const userMatches = React.useMemo(
@@ -11997,8 +11998,14 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
   const cpuMatches = React.useMemo(
     () => combo ? cpuDeck.map((c, i) => ({ c, i })).filter(o => !usedCpu.has(o.i) && dmComboMeets(o.c, combo)) : [],
     [combo, usedCpu, cpuDeck]);
+  // Matches sorted best-first: tier (God→Starter), then Overall, then name.
+  const sortedMatches = React.useMemo(() => userMatches.slice().sort((a, b) =>
+    (collTierRank(b.x.card.tier) - collTierRank(a.x.card.tier)) ||
+    ((b.x.card.overall || 0) - (a.x.card.overall || 0)) ||
+    String(a.x.card.name).localeCompare(String(b.x.card.name))), [userMatches]);
   const userPts = userMatches.filter(o => selected.has(o.i)).length;
   const cpuPts = cpuMatches.length;
+  const cardsLeft = userDeck.length - usedUser.size;
 
   function startSpin() {
     setPhase('spin');
@@ -12057,14 +12064,13 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
     startSpin();
   }
 
-  const uPct = Math.min(100, (userScore / DM_TARGET) * 100);
-  const cPct = Math.min(100, (cpuScore / DM_TARGET) * 100);
   const spinning = phase === 'spin';
   const allSel = userMatches.length > 0 && selected.size === userMatches.length;
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'var(--bg)' }}>
       {detail && <CollDetailModal card={detail} owned={true} onClose={() => setDetail(null)} />}
+      {showDeck && <CollectorDeckViewer cards={userDeck.map(x => x.card)} title="Your Deck" onClose={() => setShowDeck(false)} />}
       {confirmQuit && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:360, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }} onClick={()=>setConfirmQuit(false)}>
           <div onClick={e=>e.stopPropagation()} className="card" style={{ maxWidth:320, width:'100%', borderColor:'#b01a1a', textAlign:'center' }}>
@@ -12081,21 +12087,30 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
         <button onClick={()=>setConfirmQuit(true)} title="Quit" style={{ width:30, height:30, borderRadius:'50%', background:'#7a1010', border:'1px solid #b01a1a', color:'#fff', cursor:'pointer', fontWeight:900, flexShrink:0 }}>✕</button>
         <div style={{ flex:1, textAlign:'center' }}>
           <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.78rem', color:'var(--gold)' }}>🂠 DECKMASTER · Round {Math.min(round, DM_MAX_ROUNDS)}/{DM_MAX_ROUNDS}</div>
-          <div style={{ fontSize:'0.52rem', color:'var(--text2)' }}>First to {DM_TARGET} points</div>
+          <div style={{ fontSize:'0.52rem', color:'var(--text2)' }}>First to {DM_TARGET} · {cardsLeft} card{cardsLeft!==1?'s':''} left</div>
         </div>
-        <div style={{ width:30 }} />
+        <button onClick={()=>setShowDeck(true)} title="View your deck" style={{ width:30, height:30, borderRadius:'50%', background:'var(--bg3,#0a0a14)', border:'1px solid var(--border2)', color:'var(--gold)', cursor:'pointer', fontSize:'0.95rem', flexShrink:0, lineHeight:1 }}>🃏</button>
       </div>
       <div style={{ padding:'8px 12px', background:'var(--bg2)', borderBottom:'1px solid var(--border)' }}>
-        {[['You', userScore, 'var(--p1,#3aa0ff)', uPct], ['CPU', cpuScore, 'var(--p2,#e05555)', cPct]].map(row => (
-          <div key={row[0]} style={{ marginBottom:4 }}>
-            <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.6rem', fontFamily:'Cinzel,serif', color:row[2], marginBottom:2 }}>
-              <span>{row[0]}</span><span style={{ fontWeight:700 }}>{row[1]}</span>
+        {[
+          { label:'You', score:userScore, add:userPts, col:'var(--p1,#3aa0ff)', rr:userRerolls },
+          { label:'CPU', score:cpuScore, add:cpuPts, col:'var(--p2,#e05555)', rr:cpuRerolls },
+        ].map(r => {
+          const proj = r.score + r.add, willWin = proj >= DM_TARGET, showProj = phase === 'select' && r.add > 0;
+          const pct = Math.min(100, (r.score / DM_TARGET) * 100), projPct = Math.min(100, (proj / DM_TARGET) * 100);
+          return (
+            <div key={r.label} style={{ marginBottom:5 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:'0.6rem', fontFamily:'Cinzel,serif', color:r.col, marginBottom:2 }}>
+                <span>{r.label} <span style={{ color:'var(--text2)', fontSize:'0.5rem' }}>🎲{r.rr}</span></span>
+                <span style={{ fontWeight:700 }}>{r.score}{showProj && <span style={{ color: willWin ? 'var(--gold2,#f0c84a)' : r.col }}> → {proj}{willWin ? ' ✓' : ''}</span>}</span>
+              </div>
+              <div style={{ position:'relative', height:8, background:'rgba(0,0,0,0.4)', borderRadius:4, overflow:'hidden' }}>
+                {showProj && projPct > pct && <div style={{ position:'absolute', top:0, left:0, bottom:0, width:projPct+'%', background: willWin ? 'var(--gold2,#f0c84a)' : r.col, opacity:0.4 }} />}
+                <div style={{ position:'absolute', top:0, left:0, bottom:0, width:pct+'%', background:r.col, transition:'width 0.4s' }} />
+              </div>
             </div>
-            <div style={{ height:7, background:'rgba(0,0,0,0.4)', borderRadius:4, overflow:'hidden' }}>
-              <div style={{ height:'100%', width:row[3]+'%', background:row[2], transition:'width 0.4s' }} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <div style={{ padding:'12px 12px 4px' }}>
         <div style={{ display:'flex', gap:8 }}>
@@ -12128,19 +12143,20 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
             : (
               <>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-                  <div style={{ fontSize:'0.56rem', color:'var(--text2)' }}>Your matches — tap to field (+1 each). Used cards are locked out for the game.</div>
+                  <div style={{ fontSize:'0.56rem', color:'var(--text2)' }}>Your matches (<b style={{color:'var(--gold)'}}>{userMatches.length}</b>) — tap to field (+1 each); each card fields once per game.</div>
                   <button className="btn btn-ghost btn-sm" style={{ fontSize:'0.52rem', padding:'2px 7px', flexShrink:0 }} onClick={()=>setSelected(allSel?new Set():new Set(userMatches.map(o=>o.i)))}>{allSel?'None':'All'}</button>
                 </div>
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:6 }}>
-                  {userMatches.map(o => {
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:6 }}>
+                  {sortedMatches.map(o => {
                     const c = o.x.card, ct = T[c.tier] || { color:'#888' }, on = selected.has(o.i);
                     return (
-                      <div key={o.i} onClick={()=>toggleSel(o.i)} className="card" style={{ cursor:'pointer', padding:'6px 8px', borderColor:on?'var(--gold)':ct.color, boxShadow:on?'0 0 8px rgba(212,168,48,0.5)':'none', position:'relative', opacity:on?1:0.75 }}>
+                      <div key={o.i} onClick={()=>toggleSel(o.i)} className="card" style={{ cursor:'pointer', padding:'6px 8px', borderColor:on?'var(--gold)':ct.color, boxShadow:on?'0 0 8px rgba(212,168,48,0.5)':'none', position:'relative', opacity:on?1:0.7 }}>
                         {on && <div style={{ position:'absolute', top:3, right:5, color:'var(--gold)', fontWeight:900, fontSize:'0.7rem' }}>✓</div>}
                         <div style={{ fontFamily:'Cinzel,serif', fontSize:'0.63rem', color:ct.color, fontWeight:700, lineHeight:1.15, paddingRight:12, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.name}</div>
-                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4, gap:4 }}>
                           <CollTierBadge tier={c.tier} />
-                          <button onClick={(e)=>{ e.stopPropagation(); setDetail(c); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.66rem', cursor:'pointer', padding:0 }}>ⓘ</button>
+                          <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.6rem', fontWeight:700, color:ct.color }}>{c.overall}</span>
+                          <button onClick={(e)=>{ e.stopPropagation(); setDetail(c); }} style={{ background:'none', border:'none', color:'var(--text2)', fontSize:'0.66rem', cursor:'pointer', padding:0, marginLeft:'auto' }}>ⓘ</button>
                         </div>
                       </div>
                     );
@@ -12153,13 +12169,13 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
       <div style={{ padding:'10px 12px', background:'var(--bg2)', borderTop:'1px solid var(--border)' }}>
         {phase === 'select' ? (
           <>
-            <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.66rem', fontFamily:'Cinzel,serif', marginBottom:8 }}>
-              <span style={{ color:'var(--p1,#3aa0ff)', fontWeight:700 }}>You +{userPts}</span>
-              <span style={{ color:'var(--text2)' }}>↻ {userRerolls} left</span>
-              <span style={{ color:'var(--p2,#e05555)', fontWeight:700 }}>CPU +{cpuPts}</span>
+            <div style={{ fontSize:'0.5rem', color:'var(--text2)', textAlign:'center', marginBottom:3, letterSpacing:'0.04em' }}>IF THIS ROUND IS FINALIZED</div>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:'0.62rem', fontFamily:'Cinzel,serif', marginBottom:8 }}>
+              <span style={{ color:'var(--p1,#3aa0ff)' }}>You {userScore} +{userPts} = <b style={{ color: userScore+userPts>=DM_TARGET?'var(--gold2,#f0c84a)':'var(--p1,#3aa0ff)', fontSize:'0.74rem' }}>{userScore+userPts}</b></span>
+              <span style={{ color:'var(--p2,#e05555)' }}>CPU {cpuScore} +{cpuPts} = <b style={{ color: cpuScore+cpuPts>=DM_TARGET?'var(--gold2,#f0c84a)':'var(--p2,#e05555)', fontSize:'0.74rem' }}>{cpuScore+cpuPts}</b></span>
             </div>
             <div style={{ display:'flex', gap:8 }}>
-              <button className="btn btn-ghost btn-sm" disabled={userRerolls<=0} style={{ flex:1, opacity:userRerolls<=0?0.45:1, cursor:userRerolls<=0?'not-allowed':'pointer' }} onClick={doUserReroll}>↻ Reroll</button>
+              <button className="btn btn-ghost btn-sm" disabled={userRerolls<=0} style={{ flex:1, opacity:userRerolls<=0?0.45:1, cursor:userRerolls<=0?'not-allowed':'pointer' }} onClick={doUserReroll}>🎲 Reroll{userRerolls>0?` · ${userRerolls}`:''}</button>
               <button className="btn btn-gold btn-sm" style={{ flex:2 }} onClick={finalizeRound}>✓ Finalize Round</button>
             </div>
           </>
@@ -12174,18 +12190,36 @@ function CollectorDeckmasterGame({ save, cpuCards, onEnd }) {
 // ─── Deckmaster: scorecard → the steal spinner(s) ───────────────────────────
 function CollectorDeckmasterResult({ result, onHome }) {
   const T = window.COLLECTOR_TIERS || {};
-  const { userScore, cpuScore, winner, margin, goldGain, spins, steals } = result;
+  const { userScore, cpuScore, winner, margin, goldGain, spins, steals, loserPool } = result;
   const [shown, setShown] = React.useState(0);
-  const [flick, setFlick] = React.useState(null);
+  const [sub, setSub] = React.useState('tier');     // 'tier' reel → 'card' reel
+  const [tierFlick, setTierFlick] = React.useState(null);
+  const [cardFlick, setCardFlick] = React.useState(null);
   const [detail, setDetail] = React.useState(null);
-  const faces = React.useState(() => DM_TIERS.map(t => (T[t]||{}).label || t))[0];
+  const tierFaces = React.useState(() => DM_TIERS.map(t => (T[t]||{}).label || t))[0];
 
+  // Two-stage steal spinner per card: a TIER reel settles on the stolen card's tier, then a CARD reel
+  // (that tier's cards from the loser's deck) settles on the card itself, then it drops into the list.
   React.useEffect(() => {
     if (!steals || !steals.length || shown >= steals.length) return;
-    const iv = setInterval(() => setFlick(faces[Math.floor(Math.random()*faces.length)]), 90);
-    const to = setTimeout(() => { clearInterval(iv); setFlick(null); setShown(s => s + 1); }, 1150);
-    return () => { clearInterval(iv); clearTimeout(to); };
-  }, [shown, steals, faces]);
+    const steal = steals[shown];
+    const tierLabel = (T[steal.tier] || {}).label || steal.tier;
+    const cardFaces = (loserPool || []).filter(c => c && c.tier === steal.tier).map(c => c.name);
+    const timers = [];
+    setSub('tier'); setTierFlick(null); setCardFlick(null);
+    const ti = setInterval(() => setTierFlick(tierFaces[Math.floor(Math.random() * tierFaces.length)]), 80);
+    timers.push(['i', ti]);
+    timers.push(['t', setTimeout(() => {
+      clearInterval(ti); setTierFlick(tierLabel); setSub('card');
+      const ci = setInterval(() => setCardFlick(cardFaces.length ? cardFaces[Math.floor(Math.random() * cardFaces.length)] : steal.card.name), 70);
+      timers.push(['i', ci]);
+      timers.push(['t', setTimeout(() => {
+        clearInterval(ci); setCardFlick(steal.card.name);
+        timers.push(['t', setTimeout(() => setShown(s => s + 1), 560)]);
+      }, 820)]);
+    }, 820)]);
+    return () => timers.forEach(([k, id]) => k === 'i' ? clearInterval(id) : clearTimeout(id));
+  }, [shown, steals, loserPool, tierFaces]);
 
   const tie = winner === 'tie';
   const userWon = winner === 'user';
@@ -12213,7 +12247,23 @@ function CollectorDeckmasterResult({ result, onHome }) {
               {userWon ? "🎡 Raiding the CPU's deck" : '🎡 The CPU raids your deck'}
             </div>
             {!allRevealed && (
-              <div style={{ minHeight:38, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Cinzel,serif', fontWeight:700, color:'var(--gold2,#f0c84a)', fontSize:'0.9rem' }}>{flick || '…'}</div>
+              <div style={{ marginBottom:10 }}>
+                <div style={{ fontSize:'0.5rem', color:'var(--text2)', textAlign:'center', letterSpacing:'0.05em', marginBottom:4 }}>SPIN {shown+1} OF {steals.length}</div>
+                <div style={{ display:'flex', gap:8 }}>
+                  <div style={{ flex:1, textAlign:'center' }}>
+                    <div style={{ fontSize:'0.46rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginBottom:3 }}>TIER</div>
+                    <div style={{ minHeight:40, borderRadius:8, border:`2px solid ${sub==='tier'?'var(--border2)':'var(--gold)'}`, background:'var(--bg2)', display:'flex', alignItems:'center', justifyContent:'center', padding:'4px', boxShadow: sub==='tier'?'none':'0 0 8px rgba(212,168,48,0.4)' }}>
+                      <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.7rem', fontWeight:700, color: sub==='tier'?'var(--text2)':'var(--gold2,#f0c84a)' }}>{tierFlick || '…'}</span>
+                    </div>
+                  </div>
+                  <div style={{ flex:2, textAlign:'center' }}>
+                    <div style={{ fontSize:'0.46rem', color:'var(--text2)', fontFamily:'Cinzel,serif', marginBottom:3 }}>CARD</div>
+                    <div style={{ minHeight:40, borderRadius:8, border:'2px solid var(--border2)', background:'var(--bg2)', display:'flex', alignItems:'center', justifyContent:'center', padding:'4px' }}>
+                      <span style={{ fontFamily:'Cinzel,serif', fontSize:'0.68rem', fontWeight:700, color:'var(--gold2,#f0c84a)', lineHeight:1.15 }}>{sub==='card' ? (cardFlick || '…') : '—'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
             <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
               {steals.slice(0, shown).map((s, i) => {
@@ -12495,7 +12545,9 @@ function CollectorHub({ onHome }) {
     }
     saveCollSave(ns); setSave(ns);
     try { checkCollectorAchievements(ns, null).forEach(id => window.dispatchEvent(new CustomEvent('asoe-achievement', { detail: id }))); } catch (e) {}
-    setDmResult({ userScore, cpuScore, winner, margin, goldGain, spins, steals });
+    // The loser's card pool the steal wheels flicker through (CPU deck on a win, your deck on a loss).
+    const loserPool = winner === 'user' ? (cpuCards || []) : winner === 'cpu' ? (save.owned || []).map(id => getCollCard(id)).filter(Boolean) : [];
+    setDmResult({ userScore, cpuScore, winner, margin, goldGain, spins, steals, loserPool });
     setDmCpuDeck(null);
     setScreen('deckmasterResult');
   }
